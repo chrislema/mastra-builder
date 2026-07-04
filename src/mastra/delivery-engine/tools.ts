@@ -277,50 +277,98 @@ export const aggregateJudgmentTool = createTool({
   execute: async (input) => aggregateJudgment(input as Parameters<typeof aggregateJudgment>[0]),
 });
 
-export const mirrorDeliveryStateTool = createTool({
-  id: 'mirror-delivery-state',
+const persistDeliveryStateInputSchema = z.object({
+  repoPath: z.string(),
+});
+
+const deliveryScorePersistenceSchema = z.object({
+  ok: z.boolean(),
+  runId: z.string(),
+  judgmentCount: z.number(),
+  scoresSubmitted: z.number(),
+  scoresSkipped: z.number(),
+  observabilityScoresSubmitted: z.number(),
+});
+
+const deliveryStatePersistenceOutputSchema = z.object({
+  ok: z.boolean(),
+  runId: z.string(),
+  status: z.string(),
+  stage: z.string(),
+  eventCount: z.number(),
+  logsSubmitted: z.number(),
+});
+
+const deliveryStateRecordListInputSchema = z.object({
+  repoPath: z.string().optional(),
+  runId: z.string().optional(),
+  page: z.number().int().min(0).default(0),
+  perPage: z.number().int().min(1).max(100).default(25),
+});
+
+async function persistDeliveryStateRecords(repoPath: string, mastra?: unknown) {
+  const statePersistence = await persistDeliveryStateWithMastra({
+    repoPath,
+    mastra: mastra as Parameters<typeof persistDeliveryStateWithMastra>[0]['mastra'],
+  });
+  const scorePersistence = await mirrorDeliveryJudgmentScoresWithMastra({
+    repoPath,
+    mastra: mastra as Parameters<typeof mirrorDeliveryJudgmentScoresWithMastra>[0]['mastra'],
+  });
+  return { statePersistence, scorePersistence };
+}
+
+async function listDeliveryStateRecords(
+  input: z.infer<typeof deliveryStateRecordListInputSchema>,
+  mastra?: unknown,
+) {
+  const store = await getDeliveryObservabilityStore(
+    mastra as Parameters<typeof getDeliveryObservabilityStore>[0],
+  );
+  if (!store) throw new Error('Mastra observability storage is not configured');
+  return listDeliveryStateMirrorLogs({ store, ...input });
+}
+
+export const persistDeliveryStateTool = createTool({
+  id: 'persist-delivery-state',
   description: 'Persist the current delivery run projection, events, and rubric judgments into Mastra storage.',
-  inputSchema: z.object({
-    repoPath: z.string(),
-  }),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    runId: z.string(),
-    status: z.string(),
-    stage: z.string(),
-    eventCount: z.number(),
-    logsSubmitted: z.number(),
-    scoreMirror: z.object({
-      ok: z.boolean(),
-      runId: z.string(),
-      judgmentCount: z.number(),
-      scoresSubmitted: z.number(),
-      scoresSkipped: z.number(),
-      observabilityScoresSubmitted: z.number(),
-    }),
+  inputSchema: persistDeliveryStateInputSchema,
+  outputSchema: deliveryStatePersistenceOutputSchema.extend({
+    scorePersistence: deliveryScorePersistenceSchema,
   }),
   execute: async ({ repoPath }, context) => {
-    const stateMirror = await persistDeliveryStateWithMastra({ repoPath, mastra: context?.mastra });
-    const scoreMirror = await mirrorDeliveryJudgmentScoresWithMastra({ repoPath, mastra: context?.mastra });
-    return { ...stateMirror, scoreMirror };
+    const { statePersistence, scorePersistence } = await persistDeliveryStateRecords(repoPath, context?.mastra);
+    return { ...statePersistence, scorePersistence };
+  },
+});
+
+export const listDeliveryStateRecordsTool = createTool({
+  id: 'list-delivery-state-records',
+  description: 'List native delivery state records from Mastra observability storage.',
+  inputSchema: deliveryStateRecordListInputSchema,
+  outputSchema: z.any(),
+  execute: async (input, context) => listDeliveryStateRecords(input, context?.mastra),
+});
+
+export const mirrorDeliveryStateTool = createTool({
+  id: 'mirror-delivery-state',
+  description: 'Compatibility alias for persist-delivery-state.',
+  inputSchema: persistDeliveryStateInputSchema,
+  outputSchema: deliveryStatePersistenceOutputSchema.extend({
+    scoreMirror: deliveryScorePersistenceSchema,
+  }),
+  execute: async ({ repoPath }, context) => {
+    const { statePersistence, scorePersistence } = await persistDeliveryStateRecords(repoPath, context?.mastra);
+    return { ...statePersistence, scoreMirror: scorePersistence };
   },
 });
 
 export const listDeliveryStateMirrorsTool = createTool({
   id: 'list-delivery-state-mirrors',
-  description: 'List native delivery state records from Mastra observability storage.',
-  inputSchema: z.object({
-    repoPath: z.string().optional(),
-    runId: z.string().optional(),
-    page: z.number().int().min(0).default(0),
-    perPage: z.number().int().min(1).max(100).default(25),
-  }),
+  description: 'Compatibility alias for list-delivery-state-records.',
+  inputSchema: deliveryStateRecordListInputSchema,
   outputSchema: z.any(),
-  execute: async ({ repoPath, runId, page, perPage }, context) => {
-    const store = await getDeliveryObservabilityStore(context?.mastra);
-    if (!store) throw new Error('Mastra observability storage is not configured');
-    return listDeliveryStateMirrorLogs({ store, repoPath, runId, page, perPage });
-  },
+  execute: async (input, context) => listDeliveryStateRecords(input, context?.mastra),
 });
 
 export const deliveryStateTools = {
@@ -336,6 +384,8 @@ export const deliveryStateTools = {
   getDeliveryRunStatusTool,
   runDeterministicCheckTool,
   aggregateJudgmentTool,
+  persistDeliveryStateTool,
+  listDeliveryStateRecordsTool,
   mirrorDeliveryStateTool,
   listDeliveryStateMirrorsTool,
 };
