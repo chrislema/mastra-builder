@@ -4,15 +4,20 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import {
+  buildDeliveryJudgmentScoreEvents,
+  buildDeliveryJudgmentScorePayloads,
   buildDeliveryStateMirrorLogs,
   listDeliveryStateMirrorLogs,
+  mirrorDeliveryJudgmentScoresToStores,
   mirrorDeliveryStateToObservability,
   type DeliveryObservabilityStore,
+  type DeliveryScoresStore,
 } from '../../src/mastra/delivery-engine/observability.ts';
 import {
   finishDeliveryRun,
   initializeDeliveryRun,
   recordDeliveryArtifact,
+  recordDeliveryJudgment,
   startDeliveryStage,
   updateDeliveryTask,
   writeDeliveryArtifact,
@@ -91,4 +96,78 @@ test('delivery state mirror writes and lists through the observability store sha
 
   const listed = await listDeliveryStateMirrorLogs({ store, repoPath, runId: summary.runId });
   assert.equal(listed.logs.length, written.length);
+});
+
+test('delivery judgment mirror writes rubric scores to Mastra score stores', async () => {
+  const repoPath = createRepo();
+  recordDeliveryJudgment({
+    repoPath,
+    subject: '.delivery/artifacts/task-plan.json',
+    rubric: 'task-plan',
+    path: '.delivery/artifacts/judgments/task-plan.judgment.json',
+    overall: 0.91,
+    passed: true,
+  });
+  recordDeliveryJudgment({
+    repoPath,
+    subject: '.delivery/artifacts/note-T1.json',
+    rubric: 'implementation',
+    path: '.delivery/artifacts/judgments/implementation-T1.judgment.json',
+    overall: 0.42,
+    passed: false,
+  });
+
+  const payloads = buildDeliveryJudgmentScorePayloads(repoPath);
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[0].scorerId, 'delivery-rubric:task-plan');
+  assert.equal(payloads[0].entityType, 'WORKFLOW');
+  assert.equal(payloads[0].score, 0.91);
+  assert.equal((payloads[0].metadata as Record<string, unknown>).deliveryJudgmentPath, '.delivery/artifacts/judgments/task-plan.judgment.json');
+
+  const events = buildDeliveryJudgmentScoreEvents(repoPath);
+  assert.equal(events.length, 2);
+  assert.equal(events[0].entityType, 'workflow_run');
+  assert.equal(events[0].scoreSource, 'delivery-rubric-judge');
+
+  const savedScores: Record<string, any>[] = [];
+  const scoreStore: DeliveryScoresStore = {
+    async listScoresByRunId() {
+      return { scores: [], pagination: { total: 0 } };
+    },
+    async saveScore(score) {
+      savedScores.push(score as Record<string, any>);
+      return {
+        score: {
+          ...score,
+          id: `score-${savedScores.length}`,
+          createdAt: new Date(),
+          updatedAt: null,
+        } as never,
+      };
+    },
+  };
+  const observabilityScores: Record<string, any>[] = [];
+  const observabilityStore: DeliveryObservabilityStore = {
+    async batchCreateLogs() {},
+    async batchCreateScores({ scores }) {
+      observabilityScores.push(...(scores as Record<string, any>[]));
+    },
+    async listLogs() {
+      return { logs: [] };
+    },
+  };
+
+  const summary = await mirrorDeliveryJudgmentScoresToStores({
+    repoPath,
+    scoresStore: scoreStore,
+    observabilityStore,
+  });
+
+  assert.equal(summary.ok, true);
+  assert.equal(summary.judgmentCount, 2);
+  assert.equal(summary.scoresSubmitted, 2);
+  assert.equal(summary.observabilityScoresSubmitted, 2);
+  assert.equal(savedScores[1].scorerId, 'delivery-rubric:implementation');
+  assert.equal(savedScores[1].score, 0.42);
+  assert.equal(observabilityScores[1].tags.includes('failed'), true);
 });

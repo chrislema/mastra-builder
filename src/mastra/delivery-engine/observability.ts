@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import type { SaveScorePayload, ScoreRowData } from '@mastra/core/evals';
 import { getDeliveryRunStatus, readDeliveryEvents, readDeliveryRun, type DeliveryRun } from './state';
 
 type DeliveryObservabilityLog = Record<string, unknown>;
+type DeliveryObservabilityScore = Record<string, unknown>;
 
 export type DeliveryObservabilityStore = {
   batchCreateLogs(args: { logs: DeliveryObservabilityLog[] }): Promise<void>;
+  batchCreateScores?(args: { scores: DeliveryObservabilityScore[] }): Promise<void>;
   listLogs(args: {
     filters?: Record<string, unknown>;
     pagination?: { page: number; perPage: number };
@@ -13,10 +16,18 @@ export type DeliveryObservabilityStore = {
   }): Promise<{ logs: DeliveryObservabilityLog[]; pagination?: Record<string, unknown> }>;
 };
 
+export type DeliveryScoresStore = {
+  saveScore(score: SaveScorePayload): Promise<{ score: ScoreRowData }>;
+  listScoresByRunId?(args: {
+    runId: string;
+    pagination: { page: number; perPage: number };
+  }): Promise<{ scores: ScoreRowData[]; pagination?: Record<string, unknown> }>;
+};
+
 type MastraLike = {
   getStorage?: () =>
     | {
-        getStore(storeName: 'observability'): Promise<DeliveryObservabilityStore | undefined>;
+        getStore(storeName: string): Promise<unknown>;
       }
     | undefined;
   getLogger?: () => { warn(message: string, ...args: unknown[]): void };
@@ -31,10 +42,20 @@ export type DeliveryStateMirrorSummary = {
   logsSubmitted: number;
 };
 
+export type DeliveryJudgmentScoreMirrorSummary = {
+  ok: boolean;
+  runId: string;
+  judgmentCount: number;
+  scoresSubmitted: number;
+  scoresSkipped: number;
+  observabilityScoresSubmitted: number;
+};
+
 const deliverySource = 'delivery-engine';
 const deliveryExecutionSource = 'mastra-delivery';
 const deliveryServiceName = 'builders';
 const deliveryWorkflowEntity = 'delivery-workflow';
+const deliveryScoreSource = 'delivery-rubric-judge';
 
 const stableHash = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
@@ -137,6 +158,111 @@ export function buildDeliveryStateMirrorLogs(repoPath: string) {
   };
 }
 
+const deliveryRubricScorerId = (rubric: string) => `delivery-rubric:${rubric}`;
+const deliveryJudgmentScoreKey = (scorerId: string, path: unknown) => `${scorerId}:${String(path ?? '')}`;
+
+export function buildDeliveryJudgmentScorePayloads(repoPath: string): SaveScorePayload[] {
+  const run = readDeliveryRun(repoPath);
+  const resourceId = resolve(repoPath);
+
+  return run.judgments.map((judgment) => {
+    const scorerId = deliveryRubricScorerId(judgment.rubric);
+    const score = judgment.overall ?? 0;
+    const reason = `${judgment.rubric} judgment ${judgment.passed ? 'passed' : 'failed'} with score ${score}.`;
+
+    return {
+      runId: run.run_id,
+      entityId: run.run_id,
+      entityType: 'WORKFLOW',
+      entity: {
+        id: deliveryWorkflowEntity,
+        type: 'workflow',
+        runId: run.run_id,
+      },
+      scorerId,
+      scorer: {
+        id: scorerId,
+        name: `Delivery Rubric: ${judgment.rubric}`,
+        description: 'Mirrored Delivery Engine rubric judgment.',
+      },
+      source: 'LIVE',
+      score,
+      reason,
+      input: {
+        subject: judgment.subject,
+        rubric: judgment.rubric,
+      },
+      output: judgment,
+      additionalContext: {
+        repoPath: resourceId,
+        deliveryRunStatus: run.status,
+        deliveryStage: run.stage,
+      },
+      metadata: {
+        repoPath: resourceId,
+        stateSource: '.delivery',
+        mirrorVersion: 1,
+        deliveryJudgmentPath: judgment.path,
+        deliveryJudgmentSubject: judgment.subject,
+        deliveryRubric: judgment.rubric,
+        deliveryPassed: judgment.passed,
+      },
+      resourceId,
+      structuredOutput: true,
+    };
+  });
+}
+
+export function buildDeliveryJudgmentScoreEvents(repoPath: string): DeliveryObservabilityScore[] {
+  const run = readDeliveryRun(repoPath);
+  const resourceId = resolve(repoPath);
+
+  return run.judgments.map((judgment) => {
+    const scorerId = deliveryRubricScorerId(judgment.rubric);
+    const scoreId = `delivery:${run.run_id}:score:${stableHash({
+      scorerId,
+      subject: judgment.subject,
+      path: judgment.path,
+    })}`;
+    const score = judgment.overall ?? 0;
+
+    return {
+      scoreId,
+      timestamp: toDate(run.finished_at ?? run.started_at, new Date().toISOString()),
+      entityType: 'workflow_run',
+      entityId: run.run_id,
+      entityName: deliveryWorkflowEntity,
+      rootEntityType: 'workflow_run',
+      rootEntityId: run.run_id,
+      rootEntityName: deliveryWorkflowEntity,
+      resourceId,
+      runId: run.run_id,
+      executionSource: deliveryExecutionSource,
+      serviceName: deliveryServiceName,
+      scorerId,
+      scorerName: `Delivery Rubric: ${judgment.rubric}`,
+      source: deliverySource,
+      scoreSource: deliveryScoreSource,
+      score,
+      reason: `${judgment.rubric} judgment ${judgment.passed ? 'passed' : 'failed'} with score ${score}.`,
+      tags: ['delivery-judgment', `rubric:${judgment.rubric}`, judgment.passed ? 'passed' : 'failed'],
+      metadata: {
+        repoPath: resourceId,
+        stateSource: '.delivery',
+        mirrorVersion: 1,
+        deliveryJudgmentPath: judgment.path,
+        deliveryJudgmentSubject: judgment.subject,
+        deliveryRubric: judgment.rubric,
+        deliveryPassed: judgment.passed,
+      },
+      scope: {
+        subject: judgment.subject,
+        path: judgment.path,
+      },
+    };
+  });
+}
+
 export async function mirrorDeliveryStateToObservability({
   repoPath,
   store,
@@ -157,9 +283,73 @@ export async function mirrorDeliveryStateToObservability({
   };
 }
 
+async function existingDeliveryJudgmentScoreKeys(store: DeliveryScoresStore, runId: string) {
+  if (!store.listScoresByRunId) return new Set<string>();
+  const listed = await store.listScoresByRunId({
+    runId,
+    pagination: { page: 0, perPage: 1000 },
+  });
+
+  return new Set(
+    listed.scores.map((score) =>
+      deliveryJudgmentScoreKey(score.scorerId, (score.metadata as Record<string, unknown> | undefined)?.deliveryJudgmentPath),
+    ),
+  );
+}
+
+export async function mirrorDeliveryJudgmentScoresToStores({
+  repoPath,
+  scoresStore,
+  observabilityStore,
+}: {
+  repoPath: string;
+  scoresStore: DeliveryScoresStore;
+  observabilityStore?: DeliveryObservabilityStore;
+}): Promise<DeliveryJudgmentScoreMirrorSummary> {
+  const run = readDeliveryRun(repoPath);
+  const payloads = buildDeliveryJudgmentScorePayloads(repoPath);
+  const existingKeys = await existingDeliveryJudgmentScoreKeys(scoresStore, run.run_id);
+  let scoresSubmitted = 0;
+  let scoresSkipped = 0;
+
+  for (const payload of payloads) {
+    const key = deliveryJudgmentScoreKey(
+      payload.scorerId,
+      (payload.metadata as Record<string, unknown> | undefined)?.deliveryJudgmentPath,
+    );
+    if (existingKeys.has(key)) {
+      scoresSkipped += 1;
+      continue;
+    }
+
+    await scoresStore.saveScore(payload);
+    existingKeys.add(key);
+    scoresSubmitted += 1;
+  }
+
+  const scoreEvents = buildDeliveryJudgmentScoreEvents(repoPath);
+  if (observabilityStore?.batchCreateScores && scoreEvents.length) {
+    await observabilityStore.batchCreateScores({ scores: scoreEvents });
+  }
+
+  return {
+    ok: true,
+    runId: run.run_id,
+    judgmentCount: payloads.length,
+    scoresSubmitted,
+    scoresSkipped,
+    observabilityScoresSubmitted: observabilityStore?.batchCreateScores ? scoreEvents.length : 0,
+  };
+}
+
 export async function getDeliveryObservabilityStore(mastra?: MastraLike) {
   const storage = mastra?.getStorage?.();
-  return storage?.getStore('observability');
+  return (await storage?.getStore('observability')) as DeliveryObservabilityStore | undefined;
+}
+
+export async function getDeliveryScoresStore(mastra?: MastraLike) {
+  const storage = mastra?.getStorage?.();
+  return (await storage?.getStore('scores')) as DeliveryScoresStore | undefined;
 }
 
 export async function mirrorDeliveryStateWithMastra({
@@ -174,6 +364,47 @@ export async function mirrorDeliveryStateWithMastra({
   return mirrorDeliveryStateToObservability({ repoPath, store });
 }
 
+export async function mirrorDeliveryJudgmentScoresWithMastra({
+  repoPath,
+  mastra,
+}: {
+  repoPath: string;
+  mastra?: MastraLike;
+}) {
+  const [scoresStore, observabilityStore] = await Promise.all([
+    getDeliveryScoresStore(mastra),
+    getDeliveryObservabilityStore(mastra),
+  ]);
+  if (!scoresStore) throw new Error('Mastra scores storage is not configured');
+  return mirrorDeliveryJudgmentScoresToStores({ repoPath, scoresStore, observabilityStore });
+}
+
+export async function safeMirrorDeliveryJudgmentScoresWithMastra({
+  repoPath,
+  mastra,
+}: {
+  repoPath: string;
+  mastra?: MastraLike;
+}) {
+  try {
+    return await mirrorDeliveryJudgmentScoresWithMastra({ repoPath, mastra });
+  } catch (error) {
+    mastra?.getLogger?.().warn('Failed to mirror delivery judgments to Mastra scores', {
+      repoPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      ok: false,
+      runId: '',
+      judgmentCount: 0,
+      scoresSubmitted: 0,
+      scoresSkipped: 0,
+      observabilityScoresSubmitted: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export async function safeMirrorDeliveryStateWithMastra({
   repoPath,
   mastra,
@@ -182,7 +413,9 @@ export async function safeMirrorDeliveryStateWithMastra({
   mastra?: MastraLike;
 }) {
   try {
-    return await mirrorDeliveryStateWithMastra({ repoPath, mastra });
+    const summary = await mirrorDeliveryStateWithMastra({ repoPath, mastra });
+    await safeMirrorDeliveryJudgmentScoresWithMastra({ repoPath, mastra });
+    return summary;
   } catch (error) {
     mastra?.getLogger?.().warn('Failed to mirror delivery state to Mastra observability', {
       repoPath,
