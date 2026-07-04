@@ -11,6 +11,7 @@ import {
   listDeliveryStateRecords,
   persistDeliveryJudgmentScoresToStores,
   persistDeliveryStateToObservability,
+  readDeliverySnapshotFromMastraStorage,
   readDeliveryRunStatusFromMastraStorage,
   type DeliveryObservabilityStore,
   type DeliveryScoresStore,
@@ -112,6 +113,60 @@ test('delivery state persistence writes and lists through the observability stor
   assert.equal(listed.logs.length, summary.logsSubmitted);
 });
 
+test('delivery snapshot reads page past unrelated observability rows', async () => {
+  const repoPath = createRepo();
+  const written: Record<string, any>[] = [];
+  const store: DeliveryObservabilityStore = {
+    async batchCreateLogs({ logs }) {
+      written.push(...(logs as Record<string, any>[]));
+    },
+    async listLogs({ filters, pagination, orderBy }) {
+      assert.deepEqual(orderBy, { field: 'timestamp', direction: 'DESC' });
+      assert.equal(filters?.source, undefined);
+      assert.equal(filters?.serviceName, 'builders');
+      assert.ok((pagination?.perPage ?? 0) <= 100);
+
+      const page = pagination?.page ?? 0;
+      const perPage = pagination?.perPage ?? 25;
+      const filtered = written
+        .filter((log) => {
+          if (filters?.serviceName && log.serviceName !== filters.serviceName) return false;
+          if (filters?.resourceId && log.resourceId !== filters.resourceId) return false;
+          return true;
+        })
+        .sort((left, right) => new Date(right.timestamp as Date).getTime() - new Date(left.timestamp as Date).getTime());
+
+      return {
+        logs: filtered.slice(page * perPage, page * perPage + perPage),
+        pagination: {
+          total: filtered.length,
+          page,
+          perPage,
+          hasMore: (page + 1) * perPage < filtered.length,
+        },
+      };
+    },
+  };
+
+  const summary = await persistDeliveryStateToObservability({ repoPath, store });
+  const now = Date.now();
+  written.push(
+    ...Array.from({ length: 125 }, (_, index) => ({
+      serviceName: 'builders',
+      resourceId: resolve(repoPath),
+      runId: `noise-${index}`,
+      timestamp: new Date(now + 1000 + index),
+      data: { kind: 'snapshot' },
+      metadata: { stateSource: 'other', projectionSource: '.delivery' },
+    })),
+  );
+
+  const storedSnapshot = await readDeliverySnapshotFromMastraStorage({ store, repoPath, runId: summary.runId });
+  assert.equal(storedSnapshot?.run.run_id, summary.runId);
+  assert.equal(storedSnapshot?.run.status, 'complete');
+  assert.equal(storedSnapshot?.events.some((event) => event.type === 'run_init'), true);
+});
+
 test('delivery status reads prefer Mastra storage snapshots over the local projection', async () => {
   const repoPath = createRepo();
   const written: Record<string, any>[] = [];
@@ -150,6 +205,10 @@ test('delivery state listing is compatible with real DuckDB observability storag
     const store = (await duckdb.getStore('observability')) as DeliveryObservabilityStore;
     await (store as DeliveryObservabilityStore & { init?: () => Promise<void> }).init?.();
     await persistDeliveryStateToObservability({ repoPath, store });
+
+    const storedSnapshot = await readDeliverySnapshotFromMastraStorage({ store, repoPath });
+    assert.equal(storedSnapshot?.run.status, 'complete');
+    assert.equal(storedSnapshot?.events.some((event) => event.type === 'run_init'), true);
 
     const storedStatus = await readDeliveryRunStatusFromMastraStorage({ store, repoPath });
     assert.deepEqual(storedStatus?.tasks, ['T1:complete']);

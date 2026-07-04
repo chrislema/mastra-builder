@@ -68,6 +68,9 @@ const deliveryExecutionSource = 'mastra-delivery';
 const deliveryServiceName = 'builders';
 const deliveryWorkflowEntity = 'delivery-workflow';
 const deliveryScoreSource = 'delivery-rubric-judge';
+const mastraStorageMaxPageSize = 100;
+const maxDeliveryStateReadPages = 100;
+const maxDeliveryScoreReadPages = 100;
 
 const stableHash = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
@@ -76,6 +79,15 @@ const toDate = (value: unknown, fallback: string) => {
   const date = new Date(typeof value === 'string' ? value : fallback);
   return Number.isNaN(date.getTime()) ? new Date(fallback) : date;
 };
+
+const normalizePage = (page: number) => (Number.isFinite(page) ? Math.max(0, Math.trunc(page)) : 0);
+
+const normalizePageSize = (perPage: number) => {
+  const normalized = Number.isFinite(perPage) ? Math.max(1, Math.trunc(perPage)) : mastraStorageMaxPageSize;
+  return Math.min(normalized, mastraStorageMaxPageSize);
+};
+
+const hasMorePages = (pagination?: Record<string, unknown>) => pagination?.hasMore === true;
 
 function statusFromRun(run: DeliveryRun): DeliveryRunStatusSummary {
   return {
@@ -148,7 +160,7 @@ export function buildDeliveryStateLogsFromSnapshot({ repoPath, run, events }: De
   const snapshot = baseDeliveryLog({
     run,
     repoPath,
-    timestamp: toDate(run.finished_at ?? run.started_at, new Date().toISOString()),
+    timestamp: new Date(),
     logId: `delivery:${run.run_id}:snapshot:${snapshotFingerprint}`,
     message: `Delivery run ${run.status} at ${run.stage}`,
     tags: ['delivery-state', 'delivery-snapshot', `status:${run.status}`, `stage:${run.stage}`],
@@ -370,6 +382,39 @@ function isDeliveryStateLog(log: DeliveryObservabilityLog, runId?: string) {
   return data?.kind === 'snapshot' || data?.kind === 'event';
 }
 
+async function listDeliveryStateRecordsUntilSnapshot({
+  store,
+  repoPath,
+  runId,
+  collectLegacyEvents = false,
+}: {
+  store: DeliveryObservabilityStore;
+  repoPath?: string;
+  runId?: string;
+  collectLegacyEvents?: boolean;
+}) {
+  const logs: DeliveryObservabilityLog[] = [];
+  let snapshotLog: DeliveryObservabilityLog | undefined;
+
+  for (let page = 0; page < maxDeliveryStateReadPages; page += 1) {
+    const listed = await listDeliveryStateRecords({
+      store,
+      repoPath,
+      runId,
+      page,
+      perPage: mastraStorageMaxPageSize,
+    });
+    logs.push(...listed.logs);
+    snapshotLog ??= logs.find((log) => (log.data as Record<string, unknown> | undefined)?.kind === 'snapshot');
+
+    const snapshotData = snapshotLog?.data as Record<string, unknown> | undefined;
+    if (snapshotLog && (!collectLegacyEvents || Array.isArray(snapshotData?.events))) break;
+    if (!hasMorePages(listed.pagination)) break;
+  }
+
+  return { logs, snapshotLog };
+}
+
 export async function readDeliverySnapshotFromMastraStorage({
   store,
   repoPath,
@@ -379,14 +424,12 @@ export async function readDeliverySnapshotFromMastraStorage({
   repoPath?: string;
   runId?: string;
 }): Promise<DeliveryStateSnapshot | undefined> {
-  const listed = await listDeliveryStateRecords({
+  const { logs, snapshotLog } = await listDeliveryStateRecordsUntilSnapshot({
     store,
     repoPath,
     runId,
-    page: 0,
-    perPage: 1000,
+    collectLegacyEvents: true,
   });
-  const snapshotLog = listed.logs.find((log) => (log.data as Record<string, unknown> | undefined)?.kind === 'snapshot');
   const data = snapshotLog?.data as Record<string, unknown> | undefined;
   const run = data?.run as DeliveryRun | undefined;
   if (!run?.run_id) return undefined;
@@ -394,7 +437,7 @@ export async function readDeliverySnapshotFromMastraStorage({
   const embeddedEvents = data.events as DeliveryEvent[] | undefined;
   if (Array.isArray(embeddedEvents)) return { run, events: embeddedEvents };
 
-  const events = listed.logs
+  const events = logs
     .flatMap((log) => {
       const eventData = log.data as Record<string, unknown> | undefined;
       if (eventData?.kind !== 'event') return [];
@@ -420,31 +463,29 @@ export async function readDeliveryRunStatusFromMastraStorage({
   repoPath?: string;
   runId?: string;
 }): Promise<DeliveryRunStatusSummary | undefined> {
-  const listed = await listDeliveryStateRecords({
+  const { snapshotLog } = await listDeliveryStateRecordsUntilSnapshot({
     store,
     repoPath,
     runId,
-    page: 0,
-    perPage: 100,
   });
-
-  for (const log of listed.logs) {
-    const status = statusFromSnapshotLog(log);
-    if (status) return status;
-  }
-
-  return undefined;
+  return snapshotLog ? statusFromSnapshotLog(snapshotLog) : undefined;
 }
 
 async function existingDeliveryJudgmentScoreKeys(store: DeliveryScoresStore, runId: string) {
   if (!store.listScoresByRunId) return new Set<string>();
-  const listed = await store.listScoresByRunId({
-    runId,
-    pagination: { page: 0, perPage: 1000 },
-  });
+  const scores: ScoreRowData[] = [];
+
+  for (let page = 0; page < maxDeliveryScoreReadPages; page += 1) {
+    const listed = await store.listScoresByRunId({
+      runId,
+      pagination: { page, perPage: mastraStorageMaxPageSize },
+    });
+    scores.push(...listed.scores);
+    if (!hasMorePages(listed.pagination)) break;
+  }
 
   return new Set(
-    listed.scores.map((score) =>
+    scores.map((score) =>
       deliveryJudgmentScoreKey(score.scorerId, (score.metadata as Record<string, unknown> | undefined)?.deliveryJudgmentPath),
     ),
   );
@@ -623,6 +664,8 @@ export async function listDeliveryStateRecords({
   page?: number;
   perPage?: number;
 }) {
+  const normalizedPage = normalizePage(page);
+  const normalizedPerPage = normalizePageSize(perPage);
   const listed = await store.listLogs({
     filters: {
       // DuckDB's current observability log table accepts `source` in the input schema
@@ -631,7 +674,7 @@ export async function listDeliveryStateRecords({
       serviceName: deliveryServiceName,
       ...(repoPath ? { resourceId: resolve(repoPath) } : {}),
     },
-    pagination: { page, perPage },
+    pagination: { page: normalizedPage, perPage: normalizedPerPage },
     orderBy: { field: 'timestamp', direction: 'DESC' },
   });
   return {

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { deliveryApiRoutes } from '../../src/mastra/delivery-engine/routes.ts';
 import {
@@ -8,6 +10,7 @@ import {
   startDeliveryWorkflowRun,
   startDeliveryWorkflowRunAsync,
 } from '../../src/mastra/delivery-engine/runner.ts';
+import { initializeDeliveryRun, readDeliveryRun } from '../../src/mastra/delivery-engine/state.ts';
 
 test('delivery workflow runner creates a resource-scoped workflow run', async () => {
   const captured: {
@@ -89,6 +92,31 @@ test('delivery workflow runner honors explicit resource and run ids', async () =
     runId: 'external-run',
     resourceId: 'delivery:external',
   });
+});
+
+test('delivery workflow runner closes initialized delivery state after a failed workflow result', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-runner-failed-'));
+  writeFileSync(join(repoPath, 'vision.md'), '# Vision\n');
+  writeFileSync(join(repoPath, 'spec.md'), '# Spec\n');
+  initializeDeliveryRun({ repoPath, visionPath: 'vision.md', specPath: 'spec.md' });
+
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => ({
+          runId: 'failed-run',
+          start: async () => ({ status: 'failed', error: { message: 'boom' } }),
+        }),
+      }) as any,
+  };
+
+  const response = await startDeliveryWorkflowRun(host, { repoPath });
+
+  assert.equal((response.result as Record<string, unknown>).status, 'failed');
+  const deliveryRun = readDeliveryRun(repoPath);
+  assert.equal(deliveryRun.status, 'failed');
+  assert.equal(deliveryRun.stage, 'done');
+  assert.equal(typeof deliveryRun.finished_at, 'string');
 });
 
 test('delivery workflow async runner starts without waiting for completion', async () => {

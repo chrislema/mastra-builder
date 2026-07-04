@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { createDeliveryRequestContext } from './context';
+import { finishDeliveryRunState } from './state-service';
+import type { MastraLike } from './observability';
 import { deliveryWorkflow } from './workflow';
 
 export { createDeliveryRequestContext as createDeliveryWorkflowRequestContext } from './context';
@@ -36,7 +38,7 @@ export type DeliveryWorkflowRunOptions = z.output<typeof deliveryWorkflowRunInpu
 
 type DeliveryWorkflowHost = {
   getWorkflow: (id: 'deliveryWorkflow') => typeof deliveryWorkflow;
-};
+} & MastraLike;
 
 export function deliveryWorkflowResourceId(repoPath: string) {
   const repo = resolve(repoPath);
@@ -88,9 +90,12 @@ async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: Del
 }
 
 export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
-  const { run, resourceId, startOptions } = await prepareDeliveryWorkflowRun(host, input);
+  const { run, repoPath, resourceId, startOptions } = await prepareDeliveryWorkflowRun(host, input);
 
   const result = await run.start(startOptions);
+  if ((result as { status?: unknown }).status === 'failed') {
+    await closeFailedDeliveryRun({ host, repoPath });
+  }
 
   return {
     workflowId: 'delivery-workflow' as const,
@@ -98,6 +103,17 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
     resourceId,
     result,
   };
+}
+
+async function closeFailedDeliveryRun({ host, repoPath }: { host: DeliveryWorkflowHost; repoPath: string }) {
+  try {
+    await finishDeliveryRunState({ repoPath, status: 'failed', mastra: host });
+  } catch (error) {
+    host.getLogger?.().warn('Failed to mark delivery run failed after workflow failure', {
+      repoPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export async function startDeliveryWorkflowRunAsync(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
