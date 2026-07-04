@@ -12,7 +12,7 @@ working memory, and custom API routes.
 
 - `deliveryWorkflow`
 - role agents: planner, architect, engineer, designer, tester, deployer, judge
-- delivery state tools for `.delivery/`, including observability mirror/list tools
+- delivery state tools for `.delivery/`, including observability persistence/list tools
 - delivery scorers for handoff readiness, workflow completion, rubric floor, judgment
   pass rate, and deterministic check pass rate
 - `deliveryMemory`, a thread-scoped Mastra working-memory contract for live run coordination
@@ -20,7 +20,7 @@ working memory, and custom API routes.
   completion claims, token limiting, Unicode normalization, and secret redaction
 - a dynamic delivery workspace rooted by `requestContext.repoPath`
 - custom route `POST /delivery/run` for starting a resource-scoped delivery workflow run
-- storage-backed observability for final delivery run state snapshots and event mirrors
+- storage-backed observability for final delivery run state snapshots and events
 
 The default weather scaffold has been removed.
 
@@ -121,7 +121,7 @@ The workflow currently runs:
 7. Deployer runs mock or real deployment and writes a deployment report.
 8. Deployment gate runs deterministic checks, judges the deployment report, and finalizes the run.
 9. The run finishes as `complete`, `failed`, or `stuck`.
-10. Final `.delivery` run state is mirrored into Mastra observability storage.
+10. Final `.delivery` run state is persisted into Mastra observability storage.
 
 Judgment math is always computed in TypeScript. Models only produce raw gate and dimension
 scores.
@@ -135,7 +135,7 @@ inside the target repo. Mastra also gets first-class observability records:
   configured observability store.
 - `list-delivery-state-records` queries those records by `repoPath` and/or `runId`.
 - `mirror-delivery-state` and `list-delivery-state-mirrors` remain compatibility aliases.
-- The workflow automatically mirrors terminal states after finalizing a run.
+- The workflow automatically persists terminal states after finalizing a run.
 
 ## Native Scoring
 

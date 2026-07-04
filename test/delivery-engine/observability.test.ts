@@ -6,10 +6,10 @@ import test from 'node:test';
 import {
   buildDeliveryJudgmentScoreEvents,
   buildDeliveryJudgmentScorePayloads,
-  buildDeliveryStateMirrorLogs,
-  listDeliveryStateMirrorLogs,
-  mirrorDeliveryJudgmentScoresToStores,
-  mirrorDeliveryStateToObservability,
+  buildDeliveryStatePersistenceLogs,
+  listDeliveryStateRecords,
+  persistDeliveryJudgmentScoresToStores,
+  persistDeliveryStateToObservability,
   readDeliveryRunStatusFromMastraStorage,
   type DeliveryObservabilityStore,
   type DeliveryScoresStore,
@@ -41,9 +41,9 @@ const createRepo = () => {
   return repoPath;
 };
 
-test('delivery state mirror logs include a snapshot plus append-only events', () => {
+test('delivery state persistence logs include a snapshot plus append-only events', () => {
   const repoPath = createRepo();
-  const { run, events, logs } = buildDeliveryStateMirrorLogs(repoPath);
+  const { run, events, logs } = buildDeliveryStatePersistenceLogs(repoPath);
 
   assert.equal(logs.length, events.length + 1);
 
@@ -66,7 +66,7 @@ test('delivery state mirror logs include a snapshot plus append-only events', ()
   assert.equal(eventLog.tags.includes('delivery-event'), true);
 });
 
-test('delivery state mirror writes and lists through the observability store shape', async () => {
+test('delivery state persistence writes and lists through the observability store shape', async () => {
   const repoPath = createRepo();
   const written: Record<string, any>[] = [];
   const store: DeliveryObservabilityStore = {
@@ -92,12 +92,12 @@ test('delivery state mirror writes and lists through the observability store sha
     },
   };
 
-  const summary = await mirrorDeliveryStateToObservability({ repoPath, store });
+  const summary = await persistDeliveryStateToObservability({ repoPath, store });
   assert.equal(summary.ok, true);
   assert.equal(summary.status, 'complete');
   assert.equal(summary.logsSubmitted, written.length);
 
-  const listed = await listDeliveryStateMirrorLogs({ store, repoPath, runId: summary.runId });
+  const listed = await listDeliveryStateRecords({ store, repoPath, runId: summary.runId });
   assert.equal(listed.logs.length, written.length);
 });
 
@@ -120,7 +120,7 @@ test('delivery status reads prefer Mastra storage snapshots over the local proje
     },
   };
 
-  await mirrorDeliveryStateToObservability({ repoPath, store });
+  await persistDeliveryStateToObservability({ repoPath, store });
   updateDeliveryTask({ repoPath, id: 'T2', status: 'stuck', owner: 'engineer' });
 
   const storedStatus = await readDeliveryRunStatusFromMastraStorage({ store, repoPath });
@@ -128,7 +128,7 @@ test('delivery status reads prefer Mastra storage snapshots over the local proje
   assert.equal(storedStatus?.status, 'complete');
 });
 
-test('delivery judgment mirror writes rubric scores to Mastra score stores', async () => {
+test('delivery judgment persistence writes rubric scores to Mastra score stores', async () => {
   const repoPath = createRepo();
   recordDeliveryJudgment({
     repoPath,
@@ -187,7 +187,7 @@ test('delivery judgment mirror writes rubric scores to Mastra score stores', asy
     },
   };
 
-  const summary = await mirrorDeliveryJudgmentScoresToStores({
+  const summary = await persistDeliveryJudgmentScoresToStores({
     repoPath,
     scoresStore: scoreStore,
     observabilityStore,

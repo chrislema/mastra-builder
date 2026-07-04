@@ -34,7 +34,7 @@ export type MastraLike = {
   getLogger?: () => { warn(message: string, ...args: unknown[]): void };
 };
 
-export type DeliveryStateMirrorSummary = {
+export type DeliveryStatePersistenceSummary = {
   ok: boolean;
   runId: string;
   status: DeliveryRun['status'];
@@ -43,7 +43,9 @@ export type DeliveryStateMirrorSummary = {
   logsSubmitted: number;
 };
 
-export type DeliveryJudgmentScoreMirrorSummary = {
+export type DeliveryStateMirrorSummary = DeliveryStatePersistenceSummary;
+
+export type DeliveryJudgmentScorePersistenceSummary = {
   ok: boolean;
   runId: string;
   judgmentCount: number;
@@ -51,6 +53,8 @@ export type DeliveryJudgmentScoreMirrorSummary = {
   scoresSkipped: number;
   observabilityScoresSubmitted: number;
 };
+
+export type DeliveryJudgmentScoreMirrorSummary = DeliveryJudgmentScorePersistenceSummary;
 
 export type DeliveryRunStatusSummary = ReturnType<typeof getDeliveryRunStatus>;
 
@@ -125,7 +129,7 @@ const baseDeliveryLog = ({
     repoPath: resolve(repoPath),
     stateSource: 'mastra-storage',
     projectionSource: '.delivery',
-    mirrorVersion: 1,
+    projectionVersion: 1,
   },
 });
 
@@ -180,13 +184,15 @@ export function buildDeliveryStateLogsFromSnapshot({ repoPath, run, events }: De
   };
 }
 
-export function buildDeliveryStateMirrorLogs(repoPath: string) {
+export function buildDeliveryStatePersistenceLogs(repoPath: string) {
   return buildDeliveryStateLogsFromSnapshot({
     repoPath,
     run: readDeliveryRun(repoPath),
     events: readDeliveryEvents(repoPath),
   });
 }
+
+export const buildDeliveryStateMirrorLogs = buildDeliveryStatePersistenceLogs;
 
 const deliveryRubricScorerId = (rubric: string) => `delivery-rubric:${rubric}`;
 const deliveryJudgmentScoreKey = (scorerId: string, path: unknown) => `${scorerId}:${String(path ?? '')}`;
@@ -213,7 +219,7 @@ export function buildDeliveryJudgmentScorePayloads(repoPath: string): SaveScoreP
       scorer: {
         id: scorerId,
         name: `Delivery Rubric: ${judgment.rubric}`,
-        description: 'Mirrored Delivery Engine rubric judgment.',
+        description: 'Persisted Delivery Engine rubric judgment.',
       },
       source: 'LIVE',
       score,
@@ -232,7 +238,7 @@ export function buildDeliveryJudgmentScorePayloads(repoPath: string): SaveScoreP
         repoPath: resourceId,
         stateSource: 'mastra-storage',
         projectionSource: '.delivery',
-        mirrorVersion: 1,
+        projectionVersion: 1,
         deliveryJudgmentPath: judgment.path,
         deliveryJudgmentSubject: judgment.subject,
         deliveryRubric: judgment.rubric,
@@ -281,7 +287,7 @@ export function buildDeliveryJudgmentScoreEvents(repoPath: string): DeliveryObse
         repoPath: resourceId,
         stateSource: 'mastra-storage',
         projectionSource: '.delivery',
-        mirrorVersion: 1,
+        projectionVersion: 1,
         deliveryJudgmentPath: judgment.path,
         deliveryJudgmentSubject: judgment.subject,
         deliveryRubric: judgment.rubric,
@@ -295,14 +301,14 @@ export function buildDeliveryJudgmentScoreEvents(repoPath: string): DeliveryObse
   });
 }
 
-export async function mirrorDeliveryStateToObservability({
+export async function persistDeliveryStateToObservability({
   repoPath,
   store,
 }: {
   repoPath: string;
   store: DeliveryObservabilityStore;
-}): Promise<DeliveryStateMirrorSummary> {
-  const { run, events, logs } = buildDeliveryStateMirrorLogs(repoPath);
+}): Promise<DeliveryStatePersistenceSummary> {
+  const { run, events, logs } = buildDeliveryStatePersistenceLogs(repoPath);
   await store.batchCreateLogs({ logs });
 
   return {
@@ -315,7 +321,8 @@ export async function mirrorDeliveryStateToObservability({
   };
 }
 
-export const persistDeliveryStateToMastraStorage = mirrorDeliveryStateToObservability;
+export const mirrorDeliveryStateToObservability = persistDeliveryStateToObservability;
+export const persistDeliveryStateToMastraStorage = persistDeliveryStateToObservability;
 
 export async function persistDeliverySnapshotToMastraStorage({
   repoPath,
@@ -325,7 +332,7 @@ export async function persistDeliverySnapshotToMastraStorage({
 }: DeliveryStateSnapshot & {
   repoPath: string;
   store: DeliveryObservabilityStore;
-}): Promise<DeliveryStateMirrorSummary> {
+}): Promise<DeliveryStatePersistenceSummary> {
   const { logs } = buildDeliveryStateLogsFromSnapshot({ repoPath, run, events });
   await store.batchCreateLogs({ logs });
 
@@ -361,7 +368,7 @@ export async function readDeliverySnapshotFromMastraStorage({
   repoPath?: string;
   runId?: string;
 }): Promise<DeliveryStateSnapshot | undefined> {
-  const listed = await listDeliveryStateMirrorLogs({
+  const listed = await listDeliveryStateRecords({
     store,
     repoPath,
     runId,
@@ -402,7 +409,7 @@ export async function readDeliveryRunStatusFromMastraStorage({
   repoPath?: string;
   runId?: string;
 }): Promise<DeliveryRunStatusSummary | undefined> {
-  const listed = await listDeliveryStateMirrorLogs({
+  const listed = await listDeliveryStateRecords({
     store,
     repoPath,
     runId,
@@ -432,7 +439,7 @@ async function existingDeliveryJudgmentScoreKeys(store: DeliveryScoresStore, run
   );
 }
 
-export async function mirrorDeliveryJudgmentScoresToStores({
+export async function persistDeliveryJudgmentScoresToStores({
   repoPath,
   scoresStore,
   observabilityStore,
@@ -440,7 +447,7 @@ export async function mirrorDeliveryJudgmentScoresToStores({
   repoPath: string;
   scoresStore: DeliveryScoresStore;
   observabilityStore?: DeliveryObservabilityStore;
-}): Promise<DeliveryJudgmentScoreMirrorSummary> {
+}): Promise<DeliveryJudgmentScorePersistenceSummary> {
   const run = readDeliveryRun(repoPath);
   const payloads = buildDeliveryJudgmentScorePayloads(repoPath);
   const existingKeys = await existingDeliveryJudgmentScoreKeys(scoresStore, run.run_id);
@@ -476,6 +483,8 @@ export async function mirrorDeliveryJudgmentScoresToStores({
     observabilityScoresSubmitted: observabilityStore?.batchCreateScores ? scoreEvents.length : 0,
   };
 }
+
+export const mirrorDeliveryJudgmentScoresToStores = persistDeliveryJudgmentScoresToStores;
 
 export async function getDeliveryObservabilityStore(mastra?: MastraLike) {
   const storage = mastra?.getStorage?.();
@@ -515,7 +524,7 @@ export async function readDeliveryRunStatusWithMastra({
   return readDeliveryRunStatusFromMastraStorage({ store, repoPath, runId });
 }
 
-export async function mirrorDeliveryJudgmentScoresWithMastra({
+export async function persistDeliveryJudgmentScoresWithMastra({
   repoPath,
   mastra,
 }: {
@@ -527,10 +536,12 @@ export async function mirrorDeliveryJudgmentScoresWithMastra({
     getDeliveryObservabilityStore(mastra),
   ]);
   if (!scoresStore) throw new Error('Mastra scores storage is not configured');
-  return mirrorDeliveryJudgmentScoresToStores({ repoPath, scoresStore, observabilityStore });
+  return persistDeliveryJudgmentScoresToStores({ repoPath, scoresStore, observabilityStore });
 }
 
-export async function safeMirrorDeliveryJudgmentScoresWithMastra({
+export const mirrorDeliveryJudgmentScoresWithMastra = persistDeliveryJudgmentScoresWithMastra;
+
+export async function safePersistDeliveryJudgmentScoresWithMastra({
   repoPath,
   mastra,
 }: {
@@ -538,9 +549,9 @@ export async function safeMirrorDeliveryJudgmentScoresWithMastra({
   mastra?: MastraLike;
 }) {
   try {
-    return await mirrorDeliveryJudgmentScoresWithMastra({ repoPath, mastra });
+    return await persistDeliveryJudgmentScoresWithMastra({ repoPath, mastra });
   } catch (error) {
-    mastra?.getLogger?.().warn('Failed to mirror delivery judgments to Mastra scores', {
+    mastra?.getLogger?.().warn('Failed to persist delivery judgments to Mastra scores', {
       repoPath,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -556,6 +567,8 @@ export async function safeMirrorDeliveryJudgmentScoresWithMastra({
   }
 }
 
+export const safeMirrorDeliveryJudgmentScoresWithMastra = safePersistDeliveryJudgmentScoresWithMastra;
+
 export async function safePersistDeliveryStateWithMastra({
   repoPath,
   mastra,
@@ -565,7 +578,7 @@ export async function safePersistDeliveryStateWithMastra({
 }) {
   try {
     const summary = await persistDeliveryStateWithMastra({ repoPath, mastra });
-    await safeMirrorDeliveryJudgmentScoresWithMastra({ repoPath, mastra });
+    await safePersistDeliveryJudgmentScoresWithMastra({ repoPath, mastra });
     return summary;
   } catch (error) {
     mastra?.getLogger?.().warn('Failed to persist delivery state to Mastra storage', {
@@ -586,7 +599,7 @@ export async function safePersistDeliveryStateWithMastra({
 
 export const safeMirrorDeliveryStateWithMastra = safePersistDeliveryStateWithMastra;
 
-export async function listDeliveryStateMirrorLogs({
+export async function listDeliveryStateRecords({
   store,
   repoPath,
   runId,
@@ -609,3 +622,5 @@ export async function listDeliveryStateMirrorLogs({
     orderBy: { field: 'timestamp', direction: 'DESC' },
   });
 }
+
+export const listDeliveryStateMirrorLogs = listDeliveryStateRecords;

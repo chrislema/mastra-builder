@@ -5,8 +5,8 @@ import { runDeterministicCheck } from './checks';
 import { aggregateJudgment } from './judgment';
 import {
   getDeliveryObservabilityStore,
-  listDeliveryStateMirrorLogs,
-  mirrorDeliveryJudgmentScoresWithMastra,
+  listDeliveryStateRecords,
+  persistDeliveryJudgmentScoresWithMastra,
   persistDeliveryStateWithMastra,
 } from './observability';
 import {
@@ -267,9 +267,9 @@ async function persistDeliveryStateRecords(repoPath: string, mastra?: unknown) {
     repoPath,
     mastra: mastra as Parameters<typeof persistDeliveryStateWithMastra>[0]['mastra'],
   });
-  const scorePersistence = await mirrorDeliveryJudgmentScoresWithMastra({
+  const scorePersistence = await persistDeliveryJudgmentScoresWithMastra({
     repoPath,
-    mastra: mastra as Parameters<typeof mirrorDeliveryJudgmentScoresWithMastra>[0]['mastra'],
+    mastra: mastra as Parameters<typeof persistDeliveryJudgmentScoresWithMastra>[0]['mastra'],
   });
   return { statePersistence, scorePersistence };
 }
@@ -282,7 +282,7 @@ async function listDeliveryStateRecords(
     mastra as Parameters<typeof getDeliveryObservabilityStore>[0],
   );
   if (!store) throw new Error('Mastra observability storage is not configured');
-  return listDeliveryStateMirrorLogs({ store, ...input });
+  return listDeliveryStateRecords({ store, ...input });
 }
 
 export const persistDeliveryStateTool = createTool({
