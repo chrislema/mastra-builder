@@ -50,11 +50,17 @@ project should become the native Mastra version.
   - deterministic gate precedence
   - task-plan judge artifacts
   - recorded `.delivery/run.json` judgments
+- Added architect review stage:
+  - structured `review-report` output
+  - review-report rubric judgment
+  - blocked-plan planner bounce loop
+  - bounded retries before stuck state
 
 Checkpoint commit:
 
 - `6220908 Port delivery engine foundation to Mastra`
 - `11037bb Add delivery engine port roadmap`
+- `f59419c Add native rubric judgment harness`
 
 ## Next Slices
 
@@ -83,7 +89,7 @@ Natural commit:
 
 - `Add native rubric judgment harness`
 
-### 2. Architect Review Stage
+### 2. Architect Review Stage (Completed)
 
 Goal: extend `deliveryWorkflow` past planning.
 
