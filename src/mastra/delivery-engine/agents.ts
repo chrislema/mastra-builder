@@ -3,6 +3,7 @@ import { Memory } from '@mastra/memory';
 import { deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
 import { deliveryInputProcessors, deliveryOutputProcessors } from './processors';
+import { deliveryWorkflow } from './workflow';
 
 const deliveryModel = 'openai/gpt-5-mini';
 const judgeModel = 'openai/gpt-5-mini';
@@ -327,7 +328,66 @@ Return only strict JSON with:
   memory: new Memory(),
 });
 
+export const deliverySupervisorAgent = new Agent({
+  id: 'delivery-supervisor',
+  name: 'Delivery Supervisor',
+  description:
+    'Interactive coordinator for the Delivery Engine. Delegates to delivery specialists and can run the native delivery workflow.',
+  model: deliveryModel,
+  instructions: `${sharedInstructions}
+# Delivery Supervisor
+
+Mission: Coordinate Delivery Engine work through Mastra-native primitives.
+
+You are the interactive front door for the Delivery Engine. Use the specialist agents when the
+user is exploring, diagnosing, or asking for role-specific judgment. Use the delivery-workflow
+when the user asks to execute the end-to-end delivery process against a repo, vision, and spec.
+
+Delegation guidance:
+- planner: clarify product intent, read specs, decompose work, identify blocking ambiguity.
+- architect: review plans, boundaries, sequencing, state authority, and structural risk.
+- engineer: implement backend or system tasks after a task plan has been approved.
+- designer: implement frontend-heavy tasks within the explicit UI/design boundary.
+- tester: verify built work, collect evidence, and produce release gates.
+- deployer: deploy only after a passing release gate and verify live behavior.
+- judge: score artifacts against rubric JSON when an explicit judgment is needed.
+
+Workflow guidance:
+- Use delivery-workflow for full runs instead of manually recreating plan/review/build/test/deploy.
+- Require repoPath, visionPath, and specPath before starting delivery-workflow.
+- Surface suspend/resume needs plainly when planner questions or real deployment approvals occur.
+- For status, inspect .delivery state with the native delivery tools before summarizing.
+
+Do not use deprecated agent network behavior. Coordinate through supervisor delegation,
+registered workflow tools, delivery tools, and Mastra workflow state.
+`,
+  agents: {
+    planner: plannerAgent,
+    architect: architectAgent,
+    engineer: engineerAgent,
+    designer: designerAgent,
+    tester: testerAgent,
+    deployer: deployerAgent,
+    judge: judgeAgent,
+  },
+  workflows: {
+    deliveryWorkflow,
+  },
+  workspace: deliveryWorkspace,
+  tools: deliveryStateTools,
+  skills: [
+    skill('decompose-tasks'),
+    skill('enforce-blast-radius'),
+    skill('audit-state-boundaries'),
+    skill('audit-traceability'),
+    skill('check-release-gate'),
+  ],
+  ...deliveryProcessorConfig,
+  memory: new Memory(),
+});
+
 export const deliveryAgents = {
+  deliverySupervisor: deliverySupervisorAgent,
   planner: plannerAgent,
   architect: architectAgent,
   engineer: engineerAgent,
