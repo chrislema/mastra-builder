@@ -3,7 +3,7 @@ import { Memory } from '@mastra/memory';
 import { deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
 import { deliveryInputProcessors, deliveryOutputProcessors } from './processors';
-import { deliveryWorkflow } from './workflow';
+import { deliveryBuildTaskWorkflow, deliveryWorkflow } from './workflow';
 
 const deliveryModel = 'openai/gpt-5-mini';
 const judgeModel = 'openai/gpt-5-mini';
@@ -373,6 +373,7 @@ registered workflow tools, delivery tools, and Mastra workflow state.
   },
   workflows: {
     deliveryWorkflow,
+    deliveryBuildTaskWorkflow,
   },
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,

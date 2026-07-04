@@ -9,7 +9,7 @@ import { deliveryAgents } from './delivery-engine/agents';
 import { deliveryProcessors } from './delivery-engine/processors';
 import { deliveryScorers } from './delivery-engine/scorers';
 import { deliveryStateTools } from './delivery-engine/tools';
-import { deliveryWorkflow } from './delivery-engine/workflow';
+import { deliveryBuildTaskWorkflow, deliveryWorkflow } from './delivery-engine/workflow';
 import { deliveryWorkspace } from './delivery-engine/workspace';
 
 export {
@@ -21,7 +21,7 @@ export {
 } from './delivery-engine/evals';
 
 export const mastra = new Mastra({
-  workflows: { deliveryWorkflow },
+  workflows: { deliveryWorkflow, deliveryBuildTaskWorkflow },
   agents: deliveryAgents,
   processors: deliveryProcessors,
   scorers: deliveryScorers,

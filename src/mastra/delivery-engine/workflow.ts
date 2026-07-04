@@ -1665,7 +1665,7 @@ const finalizeBuildTaskAttemptLoopStep = createStep({
   }),
 });
 
-const executeBuildTaskWorkflow = createWorkflow({
+export const deliveryBuildTaskWorkflow = createWorkflow({
   id: 'delivery-build-task',
   description: 'Nested workflow that executes one implementation task with role boundary and judgment gates.',
   inputSchema: buildTaskWorkItemSchema,
@@ -2252,7 +2252,7 @@ export const deliveryWorkflow = createWorkflow({
   .then(finalizeReviewLoopStep)
   .then(syncReviewStateStep)
   .then(prepareBuildTasksStep)
-  .foreach(executeBuildTaskWorkflow, { concurrency: 1 })
+  .foreach(deliveryBuildTaskWorkflow, { concurrency: 1 })
   .then(aggregateBuildTaskResultsStep)
   .then(syncBuildStateStep)
   .then(prepareReleaseGateLoopStep)
