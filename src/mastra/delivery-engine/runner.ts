@@ -24,6 +24,13 @@ export const deliveryWorkflowRunResponseSchema = z.object({
   result: z.any(),
 });
 
+export const deliveryWorkflowRunAsyncResponseSchema = z.object({
+  workflowId: z.literal('delivery-workflow'),
+  runId: z.string(),
+  resourceId: z.string(),
+  status: z.literal('started'),
+});
+
 export type DeliveryWorkflowRunInput = z.input<typeof deliveryWorkflowRunInputSchema>;
 export type DeliveryWorkflowRunOptions = z.output<typeof deliveryWorkflowRunInputSchema>;
 
@@ -37,7 +44,7 @@ export function deliveryWorkflowResourceId(repoPath: string) {
   return `delivery:${hash}`;
 }
 
-export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
+async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
   const parsed = deliveryWorkflowRunInputSchema.parse(input);
   const repoPath = resolve(parsed.repoPath);
   const resourceId = parsed.resourceId ?? deliveryWorkflowResourceId(repoPath);
@@ -46,8 +53,7 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
     ...(parsed.runId ? { runId: parsed.runId } : {}),
     resourceId,
   });
-
-  const result = await run.start({
+  const startOptions = {
     inputData: {
       repoPath,
       visionPath: parsed.visionPath,
@@ -71,12 +77,37 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
     outputOptions: {
       includeState: parsed.includeState,
     },
-  });
+  };
+
+  return {
+    run,
+    repoPath,
+    resourceId,
+    startOptions,
+  };
+}
+
+export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
+  const { run, resourceId, startOptions } = await prepareDeliveryWorkflowRun(host, input);
+
+  const result = await run.start(startOptions);
 
   return {
     workflowId: 'delivery-workflow' as const,
     runId: run.runId,
     resourceId,
     result,
+  };
+}
+
+export async function startDeliveryWorkflowRunAsync(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
+  const { run, resourceId, startOptions } = await prepareDeliveryWorkflowRun(host, input);
+  const started = await run.startAsync(startOptions);
+
+  return {
+    workflowId: 'delivery-workflow' as const,
+    runId: started.runId,
+    resourceId,
+    status: 'started' as const,
   };
 }

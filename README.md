@@ -60,8 +60,10 @@ curl -X POST http://localhost:4111/delivery/run \
 ```
 
 Both paths call `deliveryWorkflow.createRun({ resourceId })`, pass
-`requestContext.repoPath`, include delivery trace metadata, and return the native workflow
-result with workflow state by default.
+`requestContext.repoPath`, and include delivery trace metadata. The CLI waits for the native
+workflow result with workflow state by default. The HTTP route uses `startAsync()` and
+returns `{ workflowId, runId, resourceId, status }` immediately so long-running delivery
+builds do not block the request.
 
 ## Workflow Input
 

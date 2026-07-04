@@ -1,9 +1,9 @@
 import { registerApiRoute } from '@mastra/core/server';
 import { z } from 'zod';
 import {
+  deliveryWorkflowRunAsyncResponseSchema,
   deliveryWorkflowRunInputSchema,
-  deliveryWorkflowRunResponseSchema,
-  startDeliveryWorkflowRun,
+  startDeliveryWorkflowRunAsync,
 } from './runner';
 
 const deliveryWorkflowRunErrorSchema = z.object({
@@ -17,7 +17,7 @@ export const deliveryApiRoutes = [
     openapi: {
       summary: 'Start a Delivery Engine workflow run',
       description:
-        'Starts the registered delivery-workflow with repoPath request context, resource scoping, tracing metadata, and optional workflow state in the result.',
+        'Starts the registered delivery-workflow asynchronously with repoPath request context, resource scoping, and tracing metadata.',
       tags: ['Delivery Engine'],
       requestBody: {
         required: true,
@@ -29,10 +29,10 @@ export const deliveryApiRoutes = [
       },
       responses: {
         202: {
-          description: 'Delivery workflow run started.',
+          description: 'Delivery workflow run accepted and started asynchronously.',
           content: {
             'application/json': {
-              schema: deliveryWorkflowRunResponseSchema,
+              schema: deliveryWorkflowRunAsyncResponseSchema,
             },
           },
         },
@@ -49,7 +49,7 @@ export const deliveryApiRoutes = [
     handler: async (c) => {
       const body = await c.req.json().catch(() => ({}));
       try {
-        const response = await startDeliveryWorkflowRun(c.get('mastra') as any, body);
+        const response = await startDeliveryWorkflowRunAsync(c.get('mastra') as any, body);
         return c.json(response, 202);
       } catch (error) {
         if (error instanceof z.ZodError) {

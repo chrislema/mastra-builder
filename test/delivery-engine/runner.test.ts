@@ -6,6 +6,7 @@ import {
   createDeliveryWorkflowRequestContext,
   deliveryWorkflowResourceId,
   startDeliveryWorkflowRun,
+  startDeliveryWorkflowRunAsync,
 } from '../../src/mastra/delivery-engine/runner.ts';
 
 test('delivery workflow runner creates a resource-scoped workflow run', async () => {
@@ -88,6 +89,38 @@ test('delivery workflow runner honors explicit resource and run ids', async () =
     runId: 'external-run',
     resourceId: 'delivery:external',
   });
+});
+
+test('delivery workflow async runner starts without waiting for completion', async () => {
+  let startCalled = false;
+  let startAsyncOptions: Record<string, any> | undefined;
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => ({
+          runId: 'async-run',
+          start: async () => {
+            startCalled = true;
+            return { status: 'should-not-run' };
+          },
+          startAsync: async (options: Record<string, any>) => {
+            startAsyncOptions = options;
+            return { runId: 'async-run' };
+          },
+        }),
+      }) as any,
+  };
+
+  const response = await startDeliveryWorkflowRunAsync(host, {
+    repoPath: '/tmp/delivery-target',
+    deployMode: 'mock',
+  });
+
+  assert.equal(startCalled, false);
+  assert.equal(startAsyncOptions?.inputData.repoPath, resolve('/tmp/delivery-target'));
+  assert.equal(startAsyncOptions?.requestContext.get('repoPath'), resolve('/tmp/delivery-target'));
+  assert.equal(response.status, 'started');
+  assert.equal(response.runId, 'async-run');
 });
 
 test('delivery workflow request context carries the resolved repo path', () => {

@@ -109,6 +109,7 @@ project should become the native Mastra version.
   - `POST /delivery/run` custom API route with OpenAPI metadata
   - `npm run delivery:run` workflow runner script
   - resource-scoped workflow runs with delivery tracing metadata
+  - async HTTP launch via `Run.startAsync()` for long delivery jobs
 
 Checkpoint commit:
 
@@ -377,6 +378,7 @@ Work:
 - Scope workflow runs by deterministic `resourceId`.
 - Pass `requestContext.repoPath` and delivery tracing metadata into `Run.start()`.
 - Register `POST /delivery/run` as a Mastra custom API route.
+- Use `Run.startAsync()` for the HTTP route so API launch returns a run handle immediately.
 - Add `npm run delivery:run` for local full-run tests with a vision and spec.
 
 Done when:
