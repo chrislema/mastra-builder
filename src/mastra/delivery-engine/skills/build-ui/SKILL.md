@@ -1,17 +1,17 @@
 ---
 name: build-ui
-description: Designs or builds a page, screen, or component system following the target project's visual and technical rules. Use when designing a page or screen, building a component system, or reviewing frontend polish and hierarchy.
+description: Designs or builds vanilla HTML/CSS/JS pages, screens, or reusable UI patterns following the target project's visual and technical rules. Use when designing a page or screen, building a UI pattern, or reviewing frontend polish and hierarchy.
 ---
 
 Primary roles: designer, engineer
 
 ## Purpose
 
-Produces frontend UI — pages, screens, or component systems — that follow the target project's visual direction, technology constraints, and interaction patterns. Evaluates existing UI against those rules and flags violations.
+Produces frontend UI — pages, screens, or reusable UI patterns — in vanilla HTML, CSS, and JavaScript that follow the target project's visual direction, technology constraints, and interaction patterns. Evaluates existing UI against those rules and flags violations.
 
 ## Procedure
 
-1. Identify the scope: new page, new component, component system, or review of existing UI.
+1. Identify the scope: new page, screen, reusable vanilla UI pattern, or review of existing UI.
 2. Establish the page or component hierarchy — what is the primary content, what is secondary, what is navigation. Ensure generous whitespace separates these layers.
 3. Select or verify the color palette using the tinted neutral color system. Confirm all colors carry the brand hue. Flag any use of pure grey, gradients, or off-brand colors.
 4. Select or verify typography. Confirm a single Google Font family is used throughout, with correct weights (700/800 for headings, 400 for body/labels/buttons). Flag any grey text — only black or white text is permitted.
@@ -19,7 +19,7 @@ Produces frontend UI — pages, screens, or component systems — that follow th
 6. Build or verify the header: 100px tall, app name left-aligned and vertically centered, user email right-aligned with 15px top margin and dropdown arrow.
 7. Apply interaction patterns: inline expandable sections for small actions, dedicated pages for large forms, inline confirmation for destructive actions, simple loading indicators. Flag any modals, popups, or `confirm()` dialogs.
 8. Select icons from approved sources only (Lineicons, Bootstrap Icons, Remix Icon). Verify line-only style, single color, max 120% of adjacent text height, and that every icon accompanies a label.
-9. Verify technology compliance against the target repo. If no frontend stack exists, default to plain semantic HTML5, vanilla CSS in separate `.css` files, and vanilla JS (ES6+) in separate `.js` files.
+9. Verify vanilla technology compliance: plain semantic HTML5, vanilla CSS in separate `.css` files, and vanilla JS (ES6+) in separate `.js` files. Do not introduce React, JSX/TSX, frontend build frameworks, preprocessors, or component-generator structure.
 10. Test responsiveness — the layout must work fully on mobile. Verify all breakpoints.
 11. Review the output against the full strict rules checklist (see Reference). Flag every violation.
 
@@ -30,7 +30,7 @@ Produces frontend UI — pages, screens, or component systems — that follow th
 1. **No gradients anywhere** — solid colors only.
 2. **No modals or popups** — use inline expandable sections or dedicated pages.
 3. **No grey text** — only black or white text permitted.
-4. **Respect the repo stack** — use vanilla HTML, CSS, and JS only when no framework is already present or explicitly required.
+4. **Vanilla only** — HTML, CSS, and JavaScript; no React, JSX/TSX, frontend frameworks, preprocessors, or build-step additions.
 5. **Generous whitespace** in all layouts.
 6. **Fully responsive** for mobile.
 7. **Separate CSS/JS files** for caching.
@@ -106,21 +106,23 @@ All colors carry the brand hue at varying saturation and lightness:
 
 ### Technology Stack
 
-- Respect the existing frontend stack, routing, styling, and component conventions.
-- If no frontend stack exists, use plain semantic HTML5, vanilla CSS in separate `.css` files, and vanilla JavaScript (ES6+) in separate `.js` files.
+- Use plain semantic HTML5.
+- Use vanilla CSS in separate `.css` files.
+- Use vanilla JavaScript (ES6+) in separate `.js` files.
 - Start with one global stylesheet or the repo's existing global styling entry point; add page-specific styling only when needed.
+- Do not add React, JSX/TSX, Next, Vue, Svelte, frontend build frameworks, preprocessors, or component-generator structure.
 
 ### Review Checklist
 
 When reviewing existing UI, check each item:
 
 - [ ] Layout clarity and navigation hierarchy
-- [ ] Component consistency across pages
+- [ ] UI pattern consistency across pages
 - [ ] Visual intentionality (not generic framework aesthetics)
 - [ ] No gradients anywhere
 - [ ] No grey text — only black or white
 - [ ] No modals or popups
-- [ ] Repo stack respected; no new frameworks, libraries, or preprocessors without explicit need
+- [ ] Vanilla stack preserved; no React, JSX/TSX, frameworks, libraries, preprocessors, or new build step
 - [ ] Responsive design (mobile-first preferred)
 - [ ] Color system uses tinted neutrals derived from brand color
 - [ ] Icons are line-only, single-color, from approved sources, with labels

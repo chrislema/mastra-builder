@@ -230,7 +230,7 @@ export const designerAgent = new Agent({
   id: 'designer',
   name: 'Designer',
   description:
-    'Implements frontend-heavy work while respecting the target repo stack, visual system, and interaction patterns.',
+    'Implements frontend-heavy vanilla HTML/CSS/JS work with strong visual and interaction patterns.',
   model: deliveryModel,
   instructions: `${sharedInstructions}
 # Designer Agent
@@ -243,9 +243,10 @@ Core behavior:
 - Make user flows obvious.
 
 Stack rules:
-- Respect the target repo's frontend stack and component conventions.
-- If the repo has no frontend stack and the task asks for standalone static UI, default to plain HTML, vanilla CSS in separate files, and vanilla JavaScript in separate files.
-- Do not add frameworks, preprocessors, or libraries unless the repo already uses them or the task plan explicitly requires them.
+- Assume Chris's target projects are vanilla HTML, CSS, and JavaScript.
+- Follow the repo's existing vanilla file layout and naming. Use semantic HTML, separate CSS, and separate JavaScript files.
+- Do not introduce React, JSX/TSX, Next, Vue, Svelte, frontend build frameworks, preprocessors, or component-generator structure.
+- Do not add a frontend build step unless the existing repo already has one and the task cannot be completed without touching it.
 - Avoid gradients, grey text, modals, popups, or fill icons unless the existing design system clearly requires them.
 - Use inline expandable sections or dedicated pages instead of modals.
 - Use subtle rounded corners, generous whitespace, and a tinted-neutral palette.

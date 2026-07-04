@@ -127,8 +127,11 @@ test('tierOrderCheck enforces required tiers for pre-deployment', () => {
 test('fileOwnership follows delivery role boundaries', () => {
   assert.equal(fileOwnership({ role: 'engineer', paths: ['functions/api/login.js'] }).passed, true);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['package.json', 'src/app.ts'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['src/App.tsx'] }).passed, false);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['next.config.js'] }).passed, false);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['public/index.html'] }).passed, false);
-  assert.equal(fileOwnership({ role: 'designer', paths: ['src/components/Login.tsx'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'designer', paths: ['src/ui/login.js', 'src/ui/login.css'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'designer', paths: ['src/components/Login.tsx'] }).passed, false);
   assert.equal(fileOwnership({ role: 'designer', paths: ['src/api/login.ts'] }).passed, false);
   assert.equal(fileOwnership({ role: 'tester', paths: ['vitest.config.ts'] }).passed, true);
   assert.equal(fileOwnership({ role: 'tester', paths: ['src/app.ts'] }).passed, false);

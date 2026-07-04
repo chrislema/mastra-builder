@@ -86,6 +86,10 @@ repo-relative paths. The workflow writes authoritative state and artifacts under
 
 Use `deployMode: "mock"` unless a real deployment is explicitly intended.
 
+Target projects are assumed to use vanilla HTML, CSS, and JavaScript. The delivery
+agents should not introduce React, JSX/TSX, frontend frameworks, preprocessors, or a
+new frontend build step.
+
 ## Request Context
 
 Agents and workspace tools use `requestContext.repoPath` to decide which repository they

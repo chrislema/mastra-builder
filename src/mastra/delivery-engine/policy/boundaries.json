@@ -20,14 +20,11 @@
       "bun.lockb",
       "tsconfig*.json",
       "*.config.*",
-      "vite.config.*",
-      "next.config.*",
       "functions/_middleware.js",
       "functions/api/_middleware.js",
       "functions/**",
       "workers/**",
       "src/**",
-      "app/**",
       "lib/**",
       "server/**",
       "api/**",
@@ -37,18 +34,19 @@
       "wrangler.toml",
       "**/*.sql"
     ],
-    "forbidden": ["public/**", "tests/**"]
+    "forbidden": ["public/**", "tests/**", "**/*.jsx", "**/*.tsx", "next.config.*"]
   },
   "designer": {
     "max_turns": 40,
     "owned": [
       "public/**",
-      "src/**",
-      "app/**",
-      "pages/**",
-      "components/**",
+      "assets/**",
       "styles/**",
-      "assets/**"
+      "src/**/*.html",
+      "src/**/*.css",
+      "src/**/*.js",
+      "src/**/*.mjs",
+      "src/assets/**"
     ],
     "forbidden": [
       "functions/**",
@@ -62,7 +60,10 @@
       "prisma/**",
       "tests/**",
       "wrangler.toml",
-      "**/*.sql"
+      "**/*.sql",
+      "**/*.jsx",
+      "**/*.tsx",
+      "next.config.*"
     ]
   },
   "tester": {
