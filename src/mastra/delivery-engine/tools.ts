@@ -6,6 +6,7 @@ import { aggregateJudgment } from './judgment';
 import {
   getDeliveryObservabilityStore,
   listDeliveryStateMirrorLogs,
+  mirrorDeliveryJudgmentScoresWithMastra,
   mirrorDeliveryStateWithMastra,
 } from './observability';
 import {
@@ -236,7 +237,7 @@ export const aggregateJudgmentTool = createTool({
 
 export const mirrorDeliveryStateTool = createTool({
   id: 'mirror-delivery-state',
-  description: 'Mirror the current .delivery run and event state into Mastra observability storage.',
+  description: 'Mirror the current .delivery run, event state, and rubric judgments into Mastra storage.',
   inputSchema: z.object({
     repoPath: z.string(),
   }),
@@ -247,8 +248,20 @@ export const mirrorDeliveryStateTool = createTool({
     stage: z.string(),
     eventCount: z.number(),
     logsSubmitted: z.number(),
+    scoreMirror: z.object({
+      ok: z.boolean(),
+      runId: z.string(),
+      judgmentCount: z.number(),
+      scoresSubmitted: z.number(),
+      scoresSkipped: z.number(),
+      observabilityScoresSubmitted: z.number(),
+    }),
   }),
-  execute: async ({ repoPath }, context) => mirrorDeliveryStateWithMastra({ repoPath, mastra: context?.mastra }),
+  execute: async ({ repoPath }, context) => {
+    const stateMirror = await mirrorDeliveryStateWithMastra({ repoPath, mastra: context?.mastra });
+    const scoreMirror = await mirrorDeliveryJudgmentScoresWithMastra({ repoPath, mastra: context?.mastra });
+    return { ...stateMirror, scoreMirror };
+  },
 });
 
 export const listDeliveryStateMirrorsTool = createTool({
