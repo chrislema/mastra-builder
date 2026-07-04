@@ -212,25 +212,47 @@ const judgmentRefSchema = z.object({
   passed: z.boolean(),
 });
 
+const workflowStatusSchema = z.enum([
+  'planned',
+  'reviewed',
+  'built',
+  'release_ready',
+  'gate_failed',
+  'complete',
+  'failed',
+  'blocked_on_questions',
+  'stuck',
+]);
+
+const checkSummarySchema = z.object({ check: z.string(), passed: z.boolean(), reason: z.string() });
+
 const workflowOutputSchema = z.object({
-  status: z.enum([
-    'planned',
-    'reviewed',
-    'built',
-    'release_ready',
-    'gate_failed',
-    'complete',
-    'failed',
-    'blocked_on_questions',
-    'stuck',
-  ]),
+  status: workflowStatusSchema,
   runId: z.string(),
   summary: z.string(),
   artifacts: z.array(z.string()),
-  checks: z.array(z.object({ check: z.string(), passed: z.boolean(), reason: z.string() })),
+  checks: z.array(checkSummarySchema),
   judgments: z.array(judgmentRefSchema).default([]),
   questions: z.array(z.string()).default([]),
   nextSteps: z.array(z.string()),
+});
+
+const deliveryWorkflowStateSchema = z.object({
+  repoPath: z.string().optional(),
+  runId: z.string().optional(),
+  status: workflowStatusSchema.optional(),
+  summary: z.string().optional(),
+  maxRetries: z.number().int().min(0).optional(),
+  deployMode: z.enum(['mock', 'real']).optional(),
+  artifacts: z.array(z.string()).default([]),
+  checks: z.array(checkSummarySchema).default([]),
+  judgments: z.array(judgmentRefSchema).default([]),
+  questions: z.array(z.string()).default([]),
+  nextSteps: z.array(z.string()).default([]),
+  taskPlan: taskPlanSchema.optional(),
+  releaseGate: releaseGateSchema.optional(),
+  deploymentReport: deploymentReportSchema.optional(),
+  deploymentReportPath: z.string().optional(),
 });
 
 const deliveryStageOutputSchema = workflowOutputSchema.extend({
@@ -277,8 +299,67 @@ type ReleaseGate = z.infer<typeof releaseGateSchema>;
 type DeploymentReport = z.infer<typeof deploymentReportSchema>;
 type JudgmentRef = z.infer<typeof judgmentRefSchema>;
 type Task = z.infer<typeof taskSchema>;
+type DeliveryWorkflowState = z.infer<typeof deliveryWorkflowStateSchema>;
 
 type CheckSummary = { check: string; passed: boolean; reason: string };
+
+const normalizeDeliveryWorkflowState = (state?: Partial<DeliveryWorkflowState>): DeliveryWorkflowState => ({
+  repoPath: state?.repoPath,
+  runId: state?.runId,
+  status: state?.status,
+  summary: state?.summary,
+  maxRetries: state?.maxRetries,
+  deployMode: state?.deployMode,
+  artifacts: state?.artifacts ?? [],
+  checks: state?.checks ?? [],
+  judgments: state?.judgments ?? [],
+  questions: state?.questions ?? [],
+  nextSteps: state?.nextSteps ?? [],
+  taskPlan: state?.taskPlan,
+  releaseGate: state?.releaseGate,
+  deploymentReport: state?.deploymentReport,
+  deploymentReportPath: state?.deploymentReportPath,
+});
+
+async function syncDeliveryWorkflowState({
+  state,
+  setState,
+  output,
+}: {
+  state?: Partial<DeliveryWorkflowState>;
+  setState: (state: DeliveryWorkflowState) => Promise<void> | void;
+  output: Partial<DeliveryWorkflowState> & {
+    repoPath?: string;
+    runId?: string;
+    status?: z.infer<typeof workflowStatusSchema>;
+    summary?: string;
+    artifacts?: string[];
+    checks?: CheckSummary[];
+    judgments?: JudgmentRef[];
+    questions?: string[];
+    nextSteps?: string[];
+  };
+}) {
+  const current = normalizeDeliveryWorkflowState(state);
+  await setState({
+    ...current,
+    repoPath: output.repoPath ?? current.repoPath,
+    runId: output.runId ?? current.runId,
+    status: output.status ?? current.status,
+    summary: output.summary ?? current.summary,
+    maxRetries: output.maxRetries ?? current.maxRetries,
+    deployMode: output.deployMode ?? current.deployMode,
+    artifacts: output.artifacts ?? current.artifacts,
+    checks: output.checks ?? current.checks,
+    judgments: output.judgments ?? current.judgments,
+    questions: output.questions ?? current.questions,
+    nextSteps: output.nextSteps ?? current.nextSteps,
+    taskPlan: output.taskPlan ?? current.taskPlan,
+    releaseGate: output.releaseGate ?? current.releaseGate,
+    deploymentReport: output.deploymentReport ?? current.deploymentReport,
+    deploymentReportPath: output.deploymentReportPath ?? current.deploymentReportPath,
+  });
+}
 
 const checkSummaries = (results: DeterministicGateResult[], suffix?: string): CheckSummary[] =>
   results.map((check) => ({
@@ -541,13 +622,84 @@ async function judgeDeliveryArtifact({
   };
 }
 
+const createSyncDeliveryStageStateStep = (id: string, description: string) =>
+  createStep({
+    id,
+    description,
+    inputSchema: deliveryStageOutputSchema,
+    outputSchema: deliveryStageOutputSchema,
+    stateSchema: deliveryWorkflowStateSchema,
+    execute: async ({ inputData, state, setState }) => {
+      await syncDeliveryWorkflowState({ state, setState, output: inputData });
+      return inputData;
+    },
+  });
+
+const syncPlanStateStep = createSyncDeliveryStageStateStep(
+  'sync-plan-state',
+  'Persist plan gate output into the native workflow state snapshot.',
+);
+const syncReviewStateStep = createSyncDeliveryStageStateStep(
+  'sync-review-state',
+  'Persist architect review output into the native workflow state snapshot.',
+);
+const syncBuildStateStep = createSyncDeliveryStageStateStep(
+  'sync-build-state',
+  'Persist build aggregation output into the native workflow state snapshot.',
+);
+const syncReleaseGateStateStep = createSyncDeliveryStageStateStep(
+  'sync-release-gate-state',
+  'Persist release gate output into the native workflow state snapshot.',
+);
+
+const syncDeploymentReportStateStep = createStep({
+  id: 'sync-deployment-report-state',
+  description: 'Persist deployment report output into the native workflow state snapshot.',
+  inputSchema: deploymentReportStageSchema,
+  outputSchema: deploymentReportStageSchema,
+  stateSchema: deliveryWorkflowStateSchema,
+  execute: async ({ inputData, state, setState }) => {
+    await syncDeliveryWorkflowState({ state, setState, output: inputData });
+    return inputData;
+  },
+});
+
+const syncFinalDeliveryStateStep = createStep({
+  id: 'sync-final-delivery-state',
+  description: 'Persist final delivery workflow output into the native workflow state snapshot.',
+  inputSchema: workflowOutputSchema,
+  outputSchema: workflowOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
+  execute: async ({ inputData, state, setState }) => {
+    await syncDeliveryWorkflowState({ state, setState, output: inputData });
+    return inputData;
+  },
+});
+
 const initializeRunStep = createStep({
   id: 'initialize-delivery-run',
   description: 'Create .delivery run state for a delivery workflow.',
   inputSchema: workflowInputSchema,
   outputSchema: initializedSchema,
-  execute: async ({ inputData }) => {
+  stateSchema: deliveryWorkflowStateSchema,
+  execute: async ({ inputData, state, setState }) => {
     const run = initializeDeliveryRun(inputData);
+    await syncDeliveryWorkflowState({
+      state,
+      setState,
+      output: {
+        repoPath: inputData.repoPath,
+        runId: run.run_id,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        artifacts: [],
+        checks: [],
+        judgments: [],
+        questions: [],
+        nextSteps: [],
+      },
+    });
+
     return {
       ...inputData,
       runId: run.run_id,
@@ -560,9 +712,10 @@ const createPlannerArtifactsStep = createStep({
   description: 'Use the planner agent to create readout and task-plan artifacts.',
   inputSchema: initializedSchema,
   outputSchema: plannerArtifactsSchema,
+  stateSchema: deliveryWorkflowStateSchema,
   resumeSchema: plannerQuestionsResumeSchema,
   suspendSchema: plannerQuestionsSuspendSchema,
-  execute: async ({ inputData, mastra, resumeData, suspend }) => {
+  execute: async ({ inputData, mastra, resumeData, suspend, state, setState }) => {
     startDeliveryStage({
       repoPath: inputData.repoPath,
       stage: 'plan',
@@ -630,6 +783,22 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
         stage: 'plan',
         questions: output.readout.blocking_ambiguities,
       });
+      await syncDeliveryWorkflowState({
+        state,
+        setState,
+        output: {
+          repoPath: inputData.repoPath,
+          runId: inputData.runId,
+          maxRetries: inputData.maxRetries,
+          deployMode: inputData.deployMode,
+          status: 'blocked_on_questions',
+          summary: output.readout.recommended_next_step,
+          artifacts: ['.delivery/artifacts/readout.json', '.delivery/artifacts/task-plan.json'],
+          questions: output.readout.blocking_ambiguities,
+          nextSteps: ['Answer the blocking questions, then resume delivery planning.'],
+          taskPlan: output.taskPlan,
+        },
+      });
 
       return await suspend(
         {
@@ -643,12 +812,26 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
       );
     }
 
-    return {
+    const plannerOutput = {
       ...inputData,
       readout: output.readout,
       taskPlan: output.taskPlan,
       artifacts: ['.delivery/artifacts/readout.json', '.delivery/artifacts/task-plan.json'],
     };
+    await syncDeliveryWorkflowState({
+      state,
+      setState,
+      output: {
+        repoPath: plannerOutput.repoPath,
+        runId: plannerOutput.runId,
+        maxRetries: plannerOutput.maxRetries,
+        deployMode: plannerOutput.deployMode,
+        artifacts: plannerOutput.artifacts,
+        taskPlan: plannerOutput.taskPlan,
+      },
+    });
+
+    return plannerOutput;
   },
 });
 
@@ -1287,6 +1470,7 @@ const executeBuildTaskWorkflow = createWorkflow({
   description: 'Nested workflow that executes one implementation task with role boundary and judgment gates.',
   inputSchema: buildTaskWorkItemSchema,
   outputSchema: buildTaskResultSchema,
+  stateSchema: deliveryWorkflowStateSchema,
 })
   .then(executeBuildTaskStep)
   .commit();
@@ -1770,15 +1954,22 @@ export const deliveryWorkflow = createWorkflow({
     'Native Delivery Engine workflow: initialize run state, plan, review, build, release-gate, deploy, and finish.',
   inputSchema: workflowInputSchema,
   outputSchema: workflowOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
 })
   .then(initializeRunStep)
   .then(createPlannerArtifactsStep)
   .then(createPlanGateStep)
+  .then(syncPlanStateStep)
   .then(createReviewStep)
+  .then(syncReviewStateStep)
   .then(prepareBuildTasksStep)
   .foreach(executeBuildTaskWorkflow, { concurrency: 1 })
   .then(aggregateBuildTaskResultsStep)
+  .then(syncBuildStateStep)
   .then(createReleaseGateStep)
+  .then(syncReleaseGateStateStep)
   .then(createDeploymentReportStep)
+  .then(syncDeploymentReportStateStep)
   .then(createDeploymentJudgmentStep)
+  .then(syncFinalDeliveryStateStep)
   .commit();
