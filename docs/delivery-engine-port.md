@@ -63,6 +63,12 @@ project should become the native Mastra version.
   - deterministic implementation gates
   - implementation rubric judgments
   - stuck/blocked task propagation
+- Added release gate stage:
+  - tester structured `release-gate` output
+  - test/probe evidence event checks
+  - tier-order and blocker deterministic gates
+  - release-gate rubric judgment
+  - deployment stop on gate failure
 
 Checkpoint commit:
 
@@ -70,6 +76,7 @@ Checkpoint commit:
 - `11037bb Add delivery engine port roadmap`
 - `f59419c Add native rubric judgment harness`
 - `9fc5e09 Add architect review stage`
+- `66d5cf1 Add delivery build loop skeleton`
 
 ## Next Slices
 
@@ -148,7 +155,7 @@ Natural commit:
 
 - `Add delivery build loop skeleton`
 
-### 4. Release Gate Stage
+### 4. Release Gate Stage (Completed)
 
 Goal: port tester/release-gate behavior.
 

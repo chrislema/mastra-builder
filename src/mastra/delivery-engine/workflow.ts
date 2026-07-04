@@ -90,6 +90,30 @@ const implementationNoteSchema = z.object({
   risks: z.array(z.string()).default([]),
 });
 
+const releaseGateSchema = z.object({
+  artifact_type: z.literal('release-gate'),
+  decision: z.enum(['pass', 'fail']),
+  event_type: z.enum(['commit', 'push', 'pull_request', 'pre_deployment', 'production_deploy']),
+  tiers: z.array(
+    z.object({
+      tier: z.enum(['smoke', 'api', 'e2e', 'full_matrix']),
+      status: z.enum(['passed', 'failed', 'skipped', 'not_required']),
+      run_ref: z.string().optional(),
+    }),
+  ),
+  critical_areas: z.array(
+    z.object({
+      area: z.enum(['auth', 'billing', 'state_integrity', 'data_safety', 'deployment_correctness', 'error_responses']),
+      status: z.enum(['verified', 'missing', 'not_applicable']),
+      evidence: z.string().optional(),
+      reason: z.string().optional(),
+    }),
+  ),
+  blockers: z.array(z.string()),
+  cosmetic_issues: z.array(z.string()),
+  summary: z.string(),
+});
+
 const plannerOutputSchema = z.object({
   readout: readoutSchema,
   taskPlan: taskPlanSchema,
@@ -97,6 +121,10 @@ const plannerOutputSchema = z.object({
 
 const builderOutputSchema = z.object({
   note: implementationNoteSchema,
+});
+
+const testerOutputSchema = z.object({
+  gate: releaseGateSchema,
 });
 
 const plannerRevisionOutputSchema = z.object({
@@ -116,7 +144,7 @@ const judgmentRefSchema = z.object({
 });
 
 const workflowOutputSchema = z.object({
-  status: z.enum(['planned', 'reviewed', 'built', 'blocked_on_questions', 'stuck']),
+  status: z.enum(['planned', 'reviewed', 'built', 'release_ready', 'gate_failed', 'blocked_on_questions', 'stuck']),
   runId: z.string(),
   summary: z.string(),
   artifacts: z.array(z.string()),
@@ -131,12 +159,14 @@ const deliveryStageOutputSchema = workflowOutputSchema.extend({
   maxRetries: z.number().int().min(0),
   deployMode: z.enum(['mock', 'real']),
   taskPlan: taskPlanSchema.optional(),
+  releaseGate: releaseGateSchema.optional(),
 });
 const planStageOutputSchema = deliveryStageOutputSchema;
 
 type TaskPlan = z.infer<typeof taskPlanSchema>;
 type ReviewReport = z.infer<typeof reviewReportSchema>;
 type ImplementationNote = z.infer<typeof implementationNoteSchema>;
+type ReleaseGate = z.infer<typeof releaseGateSchema>;
 type JudgmentRef = z.infer<typeof judgmentRefSchema>;
 type Task = z.infer<typeof taskSchema>;
 
@@ -241,6 +271,32 @@ function implementationDeterministicResults({
     { id: 'file_ownership', check: 'write_paths_in_boundary', ...ownership },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
     { id: 'crypto_compliance', check: 'no_bcrypt_weak_hash', ...crypto },
+  ];
+}
+
+function releaseGateDeterministicResults({
+  repoPath,
+  stage,
+  gate,
+}: {
+  repoPath: string;
+  stage: string;
+  gate: ReleaseGate;
+}): DeterministicGateResult[] {
+  const events = readDeliveryEvents(repoPath);
+  return [
+    { id: 'decision_explicit', check: 'plan_schema_complete', ...planSchemaComplete(gate) },
+    { id: 'tier_order', check: 'tier_order', ...runDeterministicCheck({ name: 'tier_order', subject: gate }) },
+    {
+      id: 'pass_with_open_blockers',
+      check: 'release_blockers_zero',
+      ...runDeterministicCheck({ name: 'release_blockers_zero', subject: gate }),
+    },
+    {
+      id: 'critical_area_evidence_trajectory',
+      check: 'harness_run_before_findings',
+      ...runDeterministicCheck({ name: 'harness_run_before_findings', events, stage }),
+    },
   ];
 }
 
@@ -516,6 +572,7 @@ const createReviewStep = createStep({
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
       taskPlan: inputData.taskPlan,
+      releaseGate: inputData.releaseGate,
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -540,6 +597,7 @@ const createReviewStep = createStep({
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
       taskPlan,
+      releaseGate: inputData.releaseGate,
     });
 
     for (let attempt = 0; attempt <= inputData.maxRetries; attempt += 1) {
@@ -770,6 +828,7 @@ const createBuildStep = createStep({
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
       taskPlan: inputData.taskPlan,
+      releaseGate: inputData.releaseGate,
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -961,10 +1020,169 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
   },
 });
 
+const createReleaseGateStep = createStep({
+  id: 'release-gate',
+  description: 'Run tester verification, produce a release gate, judge it, and stop deployment on gate failure.',
+  inputSchema: deliveryStageOutputSchema,
+  outputSchema: deliveryStageOutputSchema,
+  execute: async ({ inputData, mastra }) => {
+    const passThrough = () => ({
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: inputData.taskPlan,
+      releaseGate: inputData.releaseGate,
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts: inputData.artifacts,
+      checks: inputData.checks,
+      judgments: inputData.judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+    });
+
+    if (inputData.status !== 'built') return passThrough();
+    if (!inputData.taskPlan) throw new Error('build stage did not provide a task plan for release gating');
+
+    const tester = requiredAgent(mastra, 'tester');
+    const artifacts = [...inputData.artifacts];
+    const checks = [...inputData.checks];
+    const judgments = [...inputData.judgments];
+    let remediation: string[] = [];
+
+    for (let attempt = 0; attempt <= inputData.maxRetries; attempt += 1) {
+      const attemptNumber = attempt + 1;
+      const stage = `test:a${attemptNumber}`;
+      const gatePath = attempt === 0 ? '.delivery/artifacts/release-gate.json' : `.delivery/artifacts/release-gate.a${attemptNumber}.json`;
+
+      startDeliveryStage({
+        repoPath: inputData.repoPath,
+        stage,
+        role: 'tester',
+      });
+
+      const gateResponse = await tester.generate(
+        `Verify the built work and produce a release gate for pre-deployment.
+
+Read the task plan and implementation notes under .delivery/artifacts/. Write or update tests under tests/ when useful. Run the relevant smoke, API, and E2E checks that can be executed in this repo. Log test/probe runs through workspace command execution before returning.
+
+Known task plan:
+${JSON.stringify(inputData.taskPlan, null, 2)}
+
+${remediation.length ? `This is a bounce. Fix exactly these release-gate findings:\n${remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
+Return a release-gate object with event_type "pre_deployment". Every critical area must be verified with evidence, missing and therefore blocking, or not_applicable with a reason. Fail closed on unproven critical behavior.`,
+        {
+          requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+          structuredOutput: {
+            schema: testerOutputSchema,
+            model: deliveryModel,
+            instructions: 'Return only { "gate": <release-gate> }.',
+          },
+        },
+      );
+
+      const { gate } = testerOutputSchema.parse(gateResponse.object);
+      writeDeliveryArtifact({
+        repoPath: inputData.repoPath,
+        artifactPath: gatePath,
+        artifact: gate,
+      });
+      recordDeliveryArtifact({
+        repoPath: inputData.repoPath,
+        type: attempt === 0 ? 'release-gate' : `release-gate:a${attemptNumber}`,
+        path: gatePath,
+      });
+      artifacts.push(gatePath);
+
+      endDeliveryStage({
+        repoPath: inputData.repoPath,
+        stage,
+        reason: 'complete_stage',
+      });
+
+      const deterministicResults = releaseGateDeterministicResults({
+        repoPath: inputData.repoPath,
+        stage,
+        gate,
+      });
+      checks.push(...checkSummaries(deterministicResults, `release-gate.a${attemptNumber}`));
+
+      const gateJudge = await judgeDeliveryArtifact({
+        mastra,
+        repoPath: inputData.repoPath,
+        rubricName: 'release-gate',
+        subjectName: gatePath,
+        subject: {
+          gate,
+          evidence_events: readDeliveryEvents(inputData.repoPath).filter((event) => event.stage === stage),
+        },
+        deterministicResults,
+        slug: `release-gate-a${attemptNumber}`,
+      });
+      artifacts.push(gateJudge.judgeOutputPath, gateJudge.judgmentPath);
+      judgments.push(gateJudge.ref);
+
+      if (gateJudge.judgment.passed) {
+        if (gate.decision !== 'pass') {
+          return {
+            repoPath: inputData.repoPath,
+            maxRetries: inputData.maxRetries,
+            deployMode: inputData.deployMode,
+            taskPlan: inputData.taskPlan,
+            releaseGate: gate,
+            status: 'gate_failed' as const,
+            runId: inputData.runId,
+            summary: 'Release gate failed; deployment is stopped.',
+            artifacts,
+            checks,
+            judgments,
+            questions: [],
+            nextSteps: gate.blockers.length ? gate.blockers : ['Fix release-gate blockers and rerun test stage.'],
+          };
+        }
+
+        return {
+          repoPath: inputData.repoPath,
+          maxRetries: inputData.maxRetries,
+          deployMode: inputData.deployMode,
+          taskPlan: inputData.taskPlan,
+          releaseGate: gate,
+          status: 'release_ready' as const,
+          runId: inputData.runId,
+          summary: gate.summary,
+          artifacts,
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: ['Run deployment stage using the passing release gate.'],
+        };
+      }
+
+      remediation = gateJudge.judgment.remediation;
+    }
+
+    return {
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: inputData.taskPlan,
+      status: 'stuck' as const,
+      runId: inputData.runId,
+      summary: 'Release gate did not pass judgment within retry budget.',
+      artifacts,
+      checks,
+      judgments,
+      questions: [],
+      nextSteps: remediation.length ? remediation : ['Inspect release gate evidence and rerun tester stage.'],
+    };
+  },
+});
+
 export const deliveryWorkflow = createWorkflow({
   id: 'delivery-workflow',
   description:
-    'Native Delivery Engine workflow: initialize run state, create/judge a plan, run architect review, and execute a bounded build loop.',
+    'Native Delivery Engine workflow: initialize run state, create/judge a plan, review, build, and produce a judged release gate.',
   inputSchema: workflowInputSchema,
   outputSchema: workflowOutputSchema,
 })
@@ -972,4 +1190,5 @@ export const deliveryWorkflow = createWorkflow({
   .then(createPlanStep)
   .then(createReviewStep)
   .then(createBuildStep)
+  .then(createReleaseGateStep)
   .commit();
