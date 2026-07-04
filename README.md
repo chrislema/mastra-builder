@@ -93,6 +93,10 @@ agent call. If you call an agent directly from Studio or an API client, include 
 request context. Delivery agents now use a Mastra input processor that blocks calls without
 `requestContext.repoPath`.
 
+Repo-bound delivery tools also accept explicit `repoPath` for direct API use, but default
+to `requestContext.repoPath` when the input omits it. That keeps agent tool calls focused on
+the action being recorded instead of repeating workspace location.
+
 The delivery agents also share registered `deliveryMemory`. It is thread-scoped and only
 for live coordination facts such as current stage, open questions, and approval state.
 Durable decisions, artifacts, scores, events, and task status still go through delivery
