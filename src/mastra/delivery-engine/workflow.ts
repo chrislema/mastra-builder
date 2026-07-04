@@ -31,7 +31,7 @@ import {
   deliveryReleaseGateStepScorers,
   deliveryReviewStepScorers,
 } from './scorers';
-import { safeMirrorDeliveryStateWithMastra } from './observability';
+import { safePersistDeliveryStateWithMastra } from './observability';
 
 const deliveryModel = 'openai/gpt-5-mini';
 
@@ -645,8 +645,9 @@ const createSyncDeliveryStageStateStep = (id: string, description: string) =>
     inputSchema: deliveryStageOutputSchema,
     outputSchema: deliveryStageOutputSchema,
     stateSchema: deliveryWorkflowStateSchema,
-    execute: async ({ inputData, state, setState }) => {
+    execute: async ({ inputData, state, setState, mastra }) => {
       await syncDeliveryWorkflowState({ state, setState, output: inputData });
+      await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
       return inputData;
     },
   });
@@ -674,8 +675,9 @@ const syncDeploymentReportStateStep = createStep({
   inputSchema: deploymentReportStageSchema,
   outputSchema: deploymentReportStageSchema,
   stateSchema: deliveryWorkflowStateSchema,
-  execute: async ({ inputData, state, setState }) => {
+  execute: async ({ inputData, state, setState, mastra }) => {
     await syncDeliveryWorkflowState({ state, setState, output: inputData });
+    await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
     return inputData;
   },
 });
@@ -686,19 +688,20 @@ const syncFinalDeliveryStateStep = createStep({
   inputSchema: workflowOutputSchema,
   outputSchema: workflowOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
-  execute: async ({ inputData, state, setState }) => {
+  execute: async ({ inputData, state, setState, mastra }) => {
     await syncDeliveryWorkflowState({ state, setState, output: inputData });
+    await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
     return inputData;
   },
 });
 
 const initializeRunStep = createStep({
   id: 'initialize-delivery-run',
-  description: 'Create .delivery run state for a delivery workflow.',
+  description: 'Create delivery run state, export .delivery files, and persist the initial snapshot.',
   inputSchema: workflowInputSchema,
   outputSchema: initializedSchema,
   stateSchema: deliveryWorkflowStateSchema,
-  execute: async ({ inputData, state, setState }) => {
+  execute: async ({ inputData, state, setState, mastra }) => {
     const run = initializeDeliveryRun(inputData);
     await syncDeliveryWorkflowState({
       state,
@@ -715,6 +718,7 @@ const initializeRunStep = createStep({
         nextSteps: [],
       },
     });
+    await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
 
     return {
       ...inputData,
@@ -2147,7 +2151,7 @@ const createDeploymentJudgmentStep = createStep({
   execute: async ({ inputData, mastra }) => {
     const finishRun = async (status: Parameters<typeof finishDeliveryRun>[0]['status']) => {
       finishDeliveryRun({ repoPath: inputData.repoPath, status });
-      await safeMirrorDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
+      await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
     };
 
     const baseOutput = () => ({

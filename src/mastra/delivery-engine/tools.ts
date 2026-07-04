@@ -7,7 +7,9 @@ import {
   getDeliveryObservabilityStore,
   listDeliveryStateMirrorLogs,
   mirrorDeliveryJudgmentScoresWithMastra,
-  mirrorDeliveryStateWithMastra,
+  persistDeliveryStateWithMastra,
+  readDeliveryRunStatusWithMastra,
+  safePersistDeliveryStateWithMastra,
 } from './observability';
 import {
   appendDeliveryEvent,
@@ -25,9 +27,16 @@ import {
 
 const roleSchema = z.enum(deliveryRoles as [string, ...string[]]);
 
+async function persistDeliveryStateProjection(repoPath: string, mastra?: unknown) {
+  await safePersistDeliveryStateWithMastra({
+    repoPath,
+    mastra: mastra as Parameters<typeof safePersistDeliveryStateWithMastra>[0]['mastra'],
+  });
+}
+
 export const initializeDeliveryRunTool = createTool({
   id: 'initialize-delivery-run',
-  description: 'Initialize authoritative .delivery run state for a target repo.',
+  description: 'Initialize delivery run state and project it into Mastra storage.',
   inputSchema: z.object({
     repoPath: z.string(),
     visionPath: z.string(),
@@ -38,7 +47,11 @@ export const initializeDeliveryRunTool = createTool({
     status: z.string(),
     stage: z.string(),
   }),
-  execute: async (input) => initializeDeliveryRun(input),
+  execute: async (input, context) => {
+    const run = initializeDeliveryRun(input);
+    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
+    return run;
+  },
 });
 
 export const startDeliveryStageTool = createTool({
@@ -54,7 +67,11 @@ export const startDeliveryStageTool = createTool({
     ok: z.boolean(),
     boundary: z.any(),
   }),
-  execute: async (input) => startDeliveryStage(input as Parameters<typeof startDeliveryStage>[0]),
+  execute: async (input, context) => {
+    const result = startDeliveryStage(input as Parameters<typeof startDeliveryStage>[0]);
+    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
+    return result;
+  },
 });
 
 export const endDeliveryStageTool = createTool({
@@ -66,12 +83,16 @@ export const endDeliveryStageTool = createTool({
     reason: z.enum(['complete_stage', 'escalation', 'max_turns']),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => endDeliveryStage(input),
+  execute: async (input, context) => {
+    const result = endDeliveryStage(input);
+    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
+    return result;
+  },
 });
 
 export const updateDeliveryTaskTool = createTool({
   id: 'update-delivery-task',
-  description: 'Update the authoritative task status inside .delivery/run.json.',
+  description: 'Update delivery task status and persist the current state to Mastra storage.',
   inputSchema: z.object({
     repoPath: z.string(),
     id: z.string(),
@@ -84,19 +105,27 @@ export const updateDeliveryTaskTool = createTool({
     ok: z.boolean(),
     task: z.any(),
   }),
-  execute: async (input) => updateDeliveryTask(input),
+  execute: async (input, context) => {
+    const result = updateDeliveryTask(input);
+    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
+    return result;
+  },
 });
 
 export const recordDeliveryArtifactTool = createTool({
   id: 'record-delivery-artifact',
-  description: 'Register an artifact path in .delivery/run.json and append an artifact_write event.',
+  description: 'Register an exported artifact path and persist the current state to Mastra storage.',
   inputSchema: z.object({
     repoPath: z.string(),
     type: z.string(),
     path: z.string(),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => recordDeliveryArtifact(input),
+  execute: async (input, context) => {
+    const result = recordDeliveryArtifact(input);
+    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
+    return result;
+  },
 });
 
 export const writeDeliveryArtifactTool = createTool({
@@ -116,7 +145,7 @@ export const writeDeliveryArtifactTool = createTool({
 
 export const recordDeliveryJudgmentTool = createTool({
   id: 'record-delivery-judgment',
-  description: 'Record a scored rubric judgment in .delivery/run.json.',
+  description: 'Record a scored rubric judgment and persist it to Mastra storage and scores.',
   inputSchema: z.object({
     repoPath: z.string(),
     subject: z.string(),
@@ -126,19 +155,24 @@ export const recordDeliveryJudgmentTool = createTool({
     passed: z.boolean().optional(),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => recordDeliveryJudgment(input),
+  execute: async (input, context) => {
+    const result = recordDeliveryJudgment(input);
+    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
+    return result;
+  },
 });
 
 export const recordDeliveryEventTool = createTool({
   id: 'record-delivery-event',
-  description: 'Append a delivery event to .delivery/events.jsonl.',
+  description: 'Append a delivery event and persist the current state to Mastra storage.',
   inputSchema: z.object({
     repoPath: z.string(),
     event: z.record(z.string(), z.any()),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
-  execute: async ({ repoPath, event }) => {
+  execute: async ({ repoPath, event }, context) => {
     appendDeliveryEvent(repoPath, event as any);
+    await persistDeliveryStateProjection(repoPath, context?.mastra);
     return { ok: true };
   },
 });
@@ -154,12 +188,16 @@ export const finishDeliveryRunTool = createTool({
     ok: z.boolean(),
     status: z.string(),
   }),
-  execute: async (input) => finishDeliveryRun(input),
+  execute: async (input, context) => {
+    const result = finishDeliveryRun(input);
+    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
+    return result;
+  },
 });
 
 export const getDeliveryRunStatusTool = createTool({
   id: 'get-delivery-run-status',
-  description: 'Read .delivery/run.json and return a compact status summary.',
+  description: 'Read compact delivery run status from Mastra storage, falling back to the local .delivery projection.',
   inputSchema: z.object({
     repoPath: z.string(),
   }),
@@ -172,7 +210,11 @@ export const getDeliveryRunStatusTool = createTool({
     judgments: z.number(),
     artifacts: z.array(z.string()),
   }),
-  execute: async ({ repoPath }) => getDeliveryRunStatus(repoPath),
+  execute: async ({ repoPath }, context) => {
+    return (
+      (await readDeliveryRunStatusWithMastra({ repoPath, mastra: context?.mastra })) ?? getDeliveryRunStatus(repoPath)
+    );
+  },
 });
 
 export const runDeterministicCheckTool = createTool({
@@ -237,7 +279,7 @@ export const aggregateJudgmentTool = createTool({
 
 export const mirrorDeliveryStateTool = createTool({
   id: 'mirror-delivery-state',
-  description: 'Mirror the current .delivery run, event state, and rubric judgments into Mastra storage.',
+  description: 'Persist the current delivery run projection, events, and rubric judgments into Mastra storage.',
   inputSchema: z.object({
     repoPath: z.string(),
   }),
@@ -258,7 +300,7 @@ export const mirrorDeliveryStateTool = createTool({
     }),
   }),
   execute: async ({ repoPath }, context) => {
-    const stateMirror = await mirrorDeliveryStateWithMastra({ repoPath, mastra: context?.mastra });
+    const stateMirror = await persistDeliveryStateWithMastra({ repoPath, mastra: context?.mastra });
     const scoreMirror = await mirrorDeliveryJudgmentScoresWithMastra({ repoPath, mastra: context?.mastra });
     return { ...stateMirror, scoreMirror };
   },
@@ -266,7 +308,7 @@ export const mirrorDeliveryStateTool = createTool({
 
 export const listDeliveryStateMirrorsTool = createTool({
   id: 'list-delivery-state-mirrors',
-  description: 'List delivery state mirror records from Mastra observability storage.',
+  description: 'List native delivery state records from Mastra observability storage.',
   inputSchema: z.object({
     repoPath: z.string().optional(),
     runId: z.string().optional(),

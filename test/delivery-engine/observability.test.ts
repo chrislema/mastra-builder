@@ -10,6 +10,7 @@ import {
   listDeliveryStateMirrorLogs,
   mirrorDeliveryJudgmentScoresToStores,
   mirrorDeliveryStateToObservability,
+  readDeliveryRunStatusFromMastraStorage,
   type DeliveryObservabilityStore,
   type DeliveryScoresStore,
 } from '../../src/mastra/delivery-engine/observability.ts';
@@ -53,6 +54,8 @@ test('delivery state mirror logs include a snapshot plus append-only events', ()
   assert.equal(snapshot.entityName, 'delivery-workflow');
   assert.equal(snapshot.resourceId, resolve(repoPath));
   assert.equal(snapshot.runId, run.run_id);
+  assert.equal(snapshot.metadata.stateSource, 'mastra-storage');
+  assert.equal(snapshot.metadata.projectionSource, '.delivery');
   assert.deepEqual(snapshot.tags, ['delivery-state', 'delivery-snapshot', 'status:complete', 'stage:done']);
   assert.equal(snapshot.data.kind, 'snapshot');
   assert.deepEqual(snapshot.data.status.tasks, ['T1:complete']);
@@ -96,6 +99,33 @@ test('delivery state mirror writes and lists through the observability store sha
 
   const listed = await listDeliveryStateMirrorLogs({ store, repoPath, runId: summary.runId });
   assert.equal(listed.logs.length, written.length);
+});
+
+test('delivery status reads prefer Mastra storage snapshots over the local projection', async () => {
+  const repoPath = createRepo();
+  const written: Record<string, any>[] = [];
+  const store: DeliveryObservabilityStore = {
+    async batchCreateLogs({ logs }) {
+      written.push(...(logs as Record<string, any>[]));
+    },
+    async listLogs({ filters }) {
+      return {
+        logs: written.filter((log) => {
+          if (filters?.source && log.source !== filters.source) return false;
+          if (filters?.resourceId && log.resourceId !== filters.resourceId) return false;
+          if (filters?.runId && log.runId !== filters.runId) return false;
+          return true;
+        }),
+      };
+    },
+  };
+
+  await mirrorDeliveryStateToObservability({ repoPath, store });
+  updateDeliveryTask({ repoPath, id: 'T2', status: 'stuck', owner: 'engineer' });
+
+  const storedStatus = await readDeliveryRunStatusFromMastraStorage({ store, repoPath });
+  assert.deepEqual(storedStatus?.tasks, ['T1:complete']);
+  assert.equal(storedStatus?.status, 'complete');
 });
 
 test('delivery judgment mirror writes rubric scores to Mastra score stores', async () => {

@@ -23,9 +23,10 @@ Core operating rules:
 - If a rule is judgment and gradeable, a rubric/scorer should answer.
 - If a rule is judgment and generative, use a skill or role prompt.
 
-Run state is authoritative and inspectable. Use the delivery tools to write .delivery state,
-events, artifacts, task statuses, and judgments. Do not keep hidden state in memory when a
-workflow artifact should exist.
+Run state is persisted through Mastra storage and exported into .delivery for workspace inspection.
+Use the delivery tools to write events, artifacts, task statuses, and judgments so storage, scores,
+workflow state, and the .delivery projection stay aligned. Do not keep hidden state in memory when
+a workflow artifact should exist.
 
 When operating on a target repo, use requestContext.repoPath as the workspace root.
 `;
@@ -356,7 +357,7 @@ Workflow guidance:
 - Use delivery-workflow for full runs instead of manually recreating plan/review/build/test/deploy.
 - Require repoPath, visionPath, and specPath before starting delivery-workflow.
 - Surface suspend/resume needs plainly when planner questions or real deployment approvals occur.
-- For status, inspect .delivery state with the native delivery tools before summarizing.
+- For status, use the native delivery tools; they read Mastra storage first and fall back to .delivery.
 
 Do not use deprecated agent network behavior. Coordinate through supervisor delegation,
 registered workflow tools, delivery tools, and Mastra workflow state.
