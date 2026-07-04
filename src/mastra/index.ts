@@ -12,6 +12,14 @@ import { deliveryStateTools } from './delivery-engine/tools';
 import { deliveryWorkflow } from './delivery-engine/workflow';
 import { deliveryWorkspace } from './delivery-engine/workspace';
 
+export {
+  deliveryRegressionDatasetItems,
+  deliveryRegressionDatasetName,
+  deliveryRegressionScorerIds,
+  ensureDeliveryRegressionDataset,
+  runDeliveryRegressionExperiment,
+} from './delivery-engine/evals';
+
 export const mastra = new Mastra({
   workflows: { deliveryWorkflow },
   agents: deliveryAgents,
