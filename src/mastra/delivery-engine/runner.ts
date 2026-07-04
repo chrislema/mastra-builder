@@ -8,8 +8,8 @@ export { createDeliveryRequestContext as createDeliveryWorkflowRequestContext } 
 
 export const deliveryWorkflowRunInputSchema = z.object({
   repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
-  visionPath: z.string().min(1).default('vision.md').describe('Path to vision.md, relative to repoPath unless absolute.'),
-  specPath: z.string().min(1).default('spec.md').describe('Path to spec.md, relative to repoPath unless absolute.'),
+  visionPath: z.string().min(1).default('vision.md').describe('Path to vision.md inside repoPath.'),
+  specPath: z.string().min(1).default('spec.md').describe('Path to spec.md inside repoPath.'),
   maxRetries: z.coerce.number().int().min(0).default(2),
   deployMode: z.enum(['mock', 'real']).default('mock'),
   resourceId: z.string().min(1).optional().describe('Optional resource id for filtering persisted workflow runs.'),

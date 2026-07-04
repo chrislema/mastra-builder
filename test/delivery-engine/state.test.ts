@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -59,4 +59,29 @@ test('delivery state lifecycle writes inspectable run state and events', () => {
   finishDeliveryRun({ repoPath, status: 'complete' });
   assert.equal(readDeliveryRun(repoPath).status, 'complete');
   assert.equal(readDeliveryEvents(repoPath).some((event) => event.type === 'run_finish'), true);
+});
+
+test('delivery state normalizes document paths inside repo and rejects outside documents', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-state-paths-'));
+  mkdirSync(join(repoPath, 'docs'));
+  writeFileSync(join(repoPath, 'docs', 'vision.md'), '# Vision\n');
+  writeFileSync(join(repoPath, 'docs', 'spec.md'), '# Spec\n');
+
+  const run = initializeDeliveryRun({
+    repoPath,
+    visionPath: join(repoPath, 'docs', 'vision.md'),
+    specPath: 'docs/spec.md',
+  });
+  assert.equal(run.vision, 'docs/vision.md');
+  assert.equal(run.spec, 'docs/spec.md');
+
+  const blockedRepo = mkdtempSync(join(tmpdir(), 'delivery-state-paths-blocked-'));
+  const outside = join(tmpdir(), `outside-spec-${Date.now()}.md`);
+  writeFileSync(join(blockedRepo, 'vision.md'), '# Vision\n');
+  writeFileSync(outside, '# Spec\n');
+
+  assert.throws(
+    () => initializeDeliveryRun({ repoPath: blockedRepo, visionPath: 'vision.md', specPath: outside }),
+    /spec file must be inside repoPath/,
+  );
 });

@@ -142,6 +142,7 @@ export function dependencyGraphAcyclic(plan: { tasks?: Array<{ id: string; depen
 export function planSchemaComplete(artifact: unknown) {
   if (!artifact || typeof artifact !== 'object') return fail('artifact is not an object');
   const maybe = artifact as { artifact_type?: string; tasks?: unknown[]; decision?: string };
+  const buildTaskOwners = new Set(['engineer', 'designer']);
 
   if (maybe.artifact_type === 'task-plan' || Array.isArray(maybe.tasks)) {
     const tasks = maybe.tasks ?? [];
@@ -150,6 +151,9 @@ export function planSchemaComplete(artifact: unknown) {
       const task = rawTask as Record<string, unknown>;
       for (const field of ['id', 'owner', 'deliverable', 'depends_on', 'acceptance_criteria', 'owned_surfaces']) {
         if (task[field] === undefined || task[field] === '') return fail(`task ${index + 1} missing ${field}`);
+      }
+      if (!buildTaskOwners.has(String(task.owner))) {
+        return fail(`task ${index + 1} owner "${String(task.owner)}" is not executable by the build loop`);
       }
     }
   }
@@ -177,7 +181,7 @@ export function tierOrderCheck(gate: { event_type?: string; tiers?: Array<{ tier
 
   const status = Object.fromEntries((gate.tiers ?? []).map((tier) => [tier.tier, tier.status]));
   for (const tier of required) {
-    if (status[tier] !== 'passed') {
+    if (!['passed', 'not_required'].includes(String(status[tier]))) {
       return fail(`required tier "${tier}" is ${status[tier] ?? 'absent'} for event_type ${eventType}`);
     }
   }

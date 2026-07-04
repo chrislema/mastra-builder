@@ -79,8 +79,9 @@ builds do not block the request.
 }
 ```
 
-`visionPath` and `specPath` may be absolute paths, but relative paths are resolved under
-`repoPath`. The workflow writes authoritative state and artifacts under
+`visionPath` and `specPath` must point to files inside `repoPath`; relative paths are
+resolved under `repoPath`, and absolute paths inside the repo are normalized to
+repo-relative paths. The workflow writes authoritative state and artifacts under
 `<repoPath>/.delivery/`.
 
 Use `deployMode: "mock"` unless a real deployment is explicitly intended.

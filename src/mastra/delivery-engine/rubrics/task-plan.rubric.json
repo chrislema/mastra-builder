@@ -120,7 +120,7 @@
   "exemplars": {
     "known_good": {
       "summary": "Three-task login-feature plan.",
-      "content": "Scope: email/password login. T1 (engineer): sessions+users schema migration, *.sql; depends none; accept: migration applies cleanly, columns CHECK-constrained, FKs indexed. T2 (engineer): POST /api/login returning session cookie; src/utils/auth.js + functions/api/login.js; depends T1; accept: 200+cookie on valid creds, 401 with actionable body on invalid, PBKDF2-100k verified by inspection. T3 (tester): smoke+API tests for login; tests/login.spec.js; depends T2; accept: happy path, 401, 429-with-context covered, no arbitrary waits. Tech: Pages-vs-Workers not re-decided (policy: existing model retained). Open decisions: session length 30d default assumed — confirm only if product disagrees. Risks: rate-limit storage choice deferred to T2.",
+      "content": "Scope: email/password login. T1 (engineer): sessions+users schema migration, *.sql; depends none; accept: migration applies cleanly, columns CHECK-constrained, FKs indexed. T2 (engineer): POST /api/login returning session cookie; src/utils/auth.js + functions/api/login.js; depends T1; accept: 200+cookie on valid creds, 401 with actionable body on invalid, PBKDF2-100k verified by inspection, release gate covers happy path/401/429 without arbitrary waits. Tech: Pages-vs-Workers not re-decided (policy: existing model retained). Open decisions: session length 30d default assumed — confirm only if product disagrees. Risks: rate-limit storage choice deferred to T2.",
       "expected": { "gates_failed": [], "overall_min": 0.8 }
     },
     "known_bad": {

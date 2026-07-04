@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -111,4 +111,20 @@ test('delivery state service writes Mastra storage before refreshing the local p
     /storage unavailable/,
   );
   assert.equal(readDeliveryRun(repoPath).tasks.T2, undefined);
+});
+
+test('delivery state service stores normalized repo-relative document paths', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-state-service-paths-'));
+  mkdirSync(join(repoPath, 'docs'));
+  writeFileSync(join(repoPath, 'docs', 'vision.md'), '# Vision\n');
+  writeFileSync(join(repoPath, 'docs', 'spec.md'), '# Spec\n');
+
+  const run = await initializeDeliveryRunState({
+    repoPath,
+    visionPath: join(repoPath, 'docs', 'vision.md'),
+    specPath: 'docs/spec.md',
+  });
+
+  assert.equal(run.vision, 'docs/vision.md');
+  assert.equal(run.spec, 'docs/spec.md');
 });

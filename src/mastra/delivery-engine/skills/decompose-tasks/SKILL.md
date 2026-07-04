@@ -13,7 +13,7 @@ Analyzes a product document, feature request, or existing plan and produces a se
 
 1. Read the source material (product document, request, or existing plan) and identify every distinct deliverable implied by the work.
 2. For each deliverable, determine the smallest coherent task boundary — a unit that can be implemented, reviewed, and accepted independently.
-3. Assign an owner role to each task based on the skill required (engineer, designer, tester, deployer, etc.).
+3. Assign each implementation task to `engineer` or `designer`. Verification, release gating, and deployment happen in later workflow stages rather than task rows.
 4. Identify hard dependencies between tasks. Make each dependency explicit by task ID. Flag any circular or ambiguous dependencies for resolution.
 5. Write acceptance criteria for each task that can be checked by inspection, test, or demonstration — not by subjective judgment.
 6. Name the files or surfaces each task intends to change. If the scope is unclear, note that explicitly rather than leaving it implicit.

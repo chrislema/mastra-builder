@@ -34,6 +34,22 @@ test('planSchemaComplete requires task rows to be executable', () => {
   });
   assert.equal(missing.passed, false);
   assert.match(missing.reason, /deliverable/);
+
+  const invalidOwner = planSchemaComplete({
+    artifact_type: 'task-plan',
+    tasks: [
+      {
+        id: 'T1',
+        owner: 'tester',
+        deliverable: 'Write tests',
+        depends_on: [],
+        acceptance_criteria: ['release gate covers the changed surface'],
+        owned_surfaces: ['tests/login.spec.ts'],
+      },
+    ],
+  });
+  assert.equal(invalidOwner.passed, false);
+  assert.match(invalidOwner.reason, /not executable by the build loop/);
 });
 
 test('dependencyGraphAcyclic rejects unknown dependencies and cycles', () => {
@@ -93,11 +109,29 @@ test('tierOrderCheck enforces required tiers for pre-deployment', () => {
   });
   assert.equal(skipped.passed, false);
   assert.match(skipped.reason, /api/);
+
+  assert.equal(
+    tierOrderCheck({
+      event_type: 'pre_deployment',
+      tiers: [
+        { tier: 'smoke', status: 'passed' },
+        { tier: 'api', status: 'not_required' },
+        { tier: 'e2e', status: 'not_required' },
+        { tier: 'full_matrix', status: 'not_required' },
+      ],
+    }).passed,
+    true,
+  );
 });
 
 test('fileOwnership follows delivery role boundaries', () => {
   assert.equal(fileOwnership({ role: 'engineer', paths: ['functions/api/login.js'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['package.json', 'src/app.ts'] }).passed, true);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['public/index.html'] }).passed, false);
+  assert.equal(fileOwnership({ role: 'designer', paths: ['src/components/Login.tsx'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'designer', paths: ['src/api/login.ts'] }).passed, false);
+  assert.equal(fileOwnership({ role: 'tester', paths: ['vitest.config.ts'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'tester', paths: ['src/app.ts'] }).passed, false);
   assert.equal(fileOwnership({ role: 'planner', paths: ['src/app.ts'] }).passed, false);
 });
 

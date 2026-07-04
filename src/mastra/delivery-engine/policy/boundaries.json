@@ -13,11 +13,27 @@
   "engineer": {
     "max_turns": 40,
     "owned": [
+      "package.json",
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock",
+      "bun.lockb",
+      "tsconfig*.json",
+      "*.config.*",
+      "vite.config.*",
+      "next.config.*",
       "functions/_middleware.js",
       "functions/api/_middleware.js",
-      "functions/api/*.js",
-      "workers/*.js",
-      "src/utils/*.js",
+      "functions/**",
+      "workers/**",
+      "src/**",
+      "app/**",
+      "lib/**",
+      "server/**",
+      "api/**",
+      "scripts/**",
+      "db/**",
+      "prisma/**",
       "wrangler.toml",
       "**/*.sql"
     ],
@@ -26,17 +42,33 @@
   "designer": {
     "max_turns": 40,
     "owned": [
-      "public/*.html",
-      "public/*.css",
-      "public/*.js",
-      "public/assets/**"
+      "public/**",
+      "src/**",
+      "app/**",
+      "pages/**",
+      "components/**",
+      "styles/**",
+      "assets/**"
     ],
-    "forbidden": ["functions/**", "workers/**", "src/**", "tests/**", "wrangler.toml"]
+    "forbidden": [
+      "functions/**",
+      "workers/**",
+      "server/**",
+      "api/**",
+      "src/api/**",
+      "src/server/**",
+      "src/lib/server/**",
+      "db/**",
+      "prisma/**",
+      "tests/**",
+      "wrangler.toml",
+      "**/*.sql"
+    ]
   },
   "tester": {
     "max_turns": 40,
-    "owned": ["tests/**"],
-    "forbidden": ["functions/**", "workers/**", "public/**", "src/**"]
+    "owned": ["tests/**", "test/**", "e2e/**", "playwright.config.*", "vitest.config.*"],
+    "forbidden": ["functions/**", "workers/**", "public/**", "src/**", "app/**", "server/**", "api/**"]
   },
   "deployer": {
     "max_turns": 20,

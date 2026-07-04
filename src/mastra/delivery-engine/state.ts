@@ -1,7 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { roleBoundaries, type DeliveryRole } from './boundaries';
 import type { DeliveryEvent } from './checks';
+import { repoRelativeExistingFile } from './paths';
 
 export type DeliveryTaskStatus = 'pending' | 'building' | 'judging' | 'complete' | 'stuck' | 'blocked';
 export type DeliveryRunStatus = 'running' | 'complete' | 'failed' | 'stuck';
@@ -35,12 +36,6 @@ const boundaryPath = (repoPath: string) => join(deliveryDir(repoPath), 'boundary
 
 const ensureDeliveryDirs = (repoPath: string) => {
   mkdirSync(join(deliveryDir(repoPath), 'artifacts', 'judgments'), { recursive: true });
-};
-
-const repoRelative = (repoPath: string, path: string) => {
-  if (!isAbsolute(path)) return path;
-  const rel = relative(resolve(repoPath), path);
-  return rel.startsWith('..') ? path : rel;
 };
 
 export function readDeliveryRun(repoPath: string): DeliveryRun {
@@ -104,12 +99,10 @@ export function initializeDeliveryRun({
   specPath: string;
 }) {
   const repo = resolve(repoPath);
-  const vision = repoRelative(repo, visionPath);
-  const spec = repoRelative(repo, specPath);
+  const vision = repoRelativeExistingFile({ repoPath: repo, path: visionPath, label: 'vision' });
+  const spec = repoRelativeExistingFile({ repoPath: repo, path: specPath, label: 'spec' });
   const existingPath = runPath(repo);
 
-  if (!existsSync(join(repo, vision))) throw new Error(`vision file not found: ${vision}`);
-  if (!existsSync(join(repo, spec))) throw new Error(`spec file not found: ${spec}`);
   if (existsSync(existingPath)) {
     const existing = JSON.parse(readFileSync(existingPath, 'utf8')) as DeliveryRun;
     if (existing.status === 'running') {

@@ -43,15 +43,15 @@ const deliveryModel = 'openai/gpt-5-mini';
 
 const workflowInputSchema = z.object({
   repoPath: z.string().describe('Absolute path to the target repo.'),
-  visionPath: z.string().describe('Path to vision.md, relative to repoPath unless absolute.'),
-  specPath: z.string().describe('Path to spec.md, relative to repoPath unless absolute.'),
+  visionPath: z.string().describe('Path to vision.md inside repoPath; relative paths are resolved under repoPath.'),
+  specPath: z.string().describe('Path to spec.md inside repoPath; relative paths are resolved under repoPath.'),
   maxRetries: z.number().int().min(0).default(2),
   deployMode: z.enum(['mock', 'real']).default('mock'),
 });
 
 const taskSchema = z.object({
   id: z.string(),
-  owner: z.enum(['planner', 'architect', 'engineer', 'designer', 'tester', 'deployer']),
+  owner: z.enum(['engineer', 'designer']),
   deliverable: z.string(),
   depends_on: z.array(z.string()),
   acceptance_criteria: z.array(z.string()),
@@ -116,6 +116,7 @@ const releaseGateSchema = z.object({
       tier: z.enum(['smoke', 'api', 'e2e', 'full_matrix']),
       status: z.enum(['passed', 'failed', 'skipped', 'not_required']),
       run_ref: z.string().optional(),
+      reason: z.string().optional(),
     }),
   ),
   critical_areas: z.array(
@@ -711,11 +712,12 @@ const initializeRunStep = createStep({
   stateSchema: deliveryWorkflowStateSchema,
   execute: async ({ inputData, state, setState, mastra }) => {
     const run = await initializeDeliveryRunState({ ...inputData, mastra });
+    const repoPath = resolve(inputData.repoPath);
     await syncDeliveryWorkflowState({
       state,
       setState,
       output: {
-        repoPath: inputData.repoPath,
+        repoPath,
         runId: run.run_id,
         maxRetries: inputData.maxRetries,
         deployMode: inputData.deployMode,
@@ -726,10 +728,13 @@ const initializeRunStep = createStep({
         nextSteps: [],
       },
     });
-    await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
+    await safePersistDeliveryStateWithMastra({ repoPath, mastra });
 
     return {
       ...inputData,
+      repoPath,
+      visionPath: run.vision,
+      specPath: run.spec,
       runId: run.run_id,
     };
   },
@@ -764,7 +769,7 @@ const createPlannerArtifactsStep = createStep({
 2. A dependency-aware task-plan artifact.
 
 Do not write code. Ask only blocking questions. Record safe assumptions in the readout.
-Task owners may be engineer or designer unless another role is genuinely required.
+Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
 Every task must have checkable acceptance criteria and owned_surfaces.${humanAnswers}`,
       {
           requestContext: createDeliveryRequestContext(inputData.repoPath),

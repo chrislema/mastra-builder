@@ -54,11 +54,29 @@ function extractContent(input: unknown): string[] {
   return fragments;
 }
 
+function extractCommand(input: unknown) {
+  if (!input || typeof input !== 'object') return undefined;
+  const command = (input as { command?: unknown }).command;
+  return typeof command === 'string' ? command : undefined;
+}
+
 function repoRelativePath(repoPath: string, path: string) {
   const repo = resolve(repoPath);
   const absolute = resolve(repo, path);
   const rel = relative(repo, absolute);
   return rel.startsWith('..') ? path : rel;
+}
+
+function blockedCommandReason(command: string) {
+  const checks = [
+    { pattern: /\brm\s+(-[^\s]*r[^\s]*f|-[^\s]*f[^\s]*r)\b/, reason: 'recursive force delete requires human review' },
+    { pattern: /\bgit\s+(reset|clean|checkout)\b/, reason: 'destructive git state changes require human review' },
+    { pattern: /\bsudo\b/, reason: 'sudo commands are outside the delivery workspace contract' },
+    { pattern: /\b(chmod|chown)\s+-R\b/, reason: 'recursive permission changes require human review' },
+    { pattern: /\b(curl|wget)\b.+\|\s*(sh|bash)\b/, reason: 'piping remote scripts into a shell requires human review' },
+  ];
+
+  return checks.find((check) => check.pattern.test(command))?.reason;
 }
 
 const writeToolNames = new Set<string>([
@@ -94,13 +112,27 @@ export const deliveryWorkspace = new Workspace({
       requireApproval: true,
     },
     [WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND]: {
-      requireApproval: true,
+      requireApproval: false,
     },
     hooks: {
       beforeToolCall: ({ workspaceToolName, input, context }) => {
         const requestContext = (context as { requestContext?: unknown })?.requestContext;
         const repoPath = repoPathFromContext(requestContext);
         const relativePaths = extractPaths(input).map((path) => repoRelativePath(repoPath, path));
+
+        if (workspaceToolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND) {
+          const command = extractCommand(input);
+          const reason = command ? blockedCommandReason(command) : undefined;
+          if (reason) {
+            return {
+              proceed: false,
+              output: {
+                blocked: true,
+                reason,
+              },
+            };
+          }
+        }
 
         if (writeToolNames.has(workspaceToolName)) {
           const boundary = readDeliveryBoundary(repoPath);

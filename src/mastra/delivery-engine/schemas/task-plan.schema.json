@@ -15,7 +15,7 @@
         "required": ["id", "owner", "deliverable", "depends_on", "acceptance_criteria", "owned_surfaces"],
         "properties": {
           "id": { "type": "string", "pattern": "^T[0-9]+$" },
-          "owner": { "enum": ["planner", "architect", "engineer", "designer", "tester", "deployer"] },
+          "owner": { "enum": ["engineer", "designer"] },
           "deliverable": { "type": "string", "minLength": 1 },
           "depends_on": { "type": "array", "items": { "type": "string", "pattern": "^T[0-9]+$" } },
           "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },

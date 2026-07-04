@@ -1,7 +1,7 @@
-import { existsSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { roleBoundaries, type DeliveryRole } from './boundaries';
 import type { DeliveryEvent } from './checks';
+import { repoRelativeExistingFile } from './paths';
 import {
   getDeliveryObservabilityStore,
   persistDeliverySnapshotToMastraStorage,
@@ -25,12 +25,6 @@ import {
   type DeliveryRunStatus,
   type DeliveryTaskStatus,
 } from './state';
-
-const repoRelative = (repoPath: string, path: string) => {
-  if (!isAbsolute(path)) return path;
-  const rel = relative(resolve(repoPath), path);
-  return rel.startsWith('..') ? path : rel;
-};
 
 async function readDeliverySnapshot({
   repoPath,
@@ -109,11 +103,8 @@ export async function initializeDeliveryRunState({
   mastra?: MastraLike;
 }) {
   const repo = resolve(repoPath);
-  const vision = repoRelative(repo, visionPath);
-  const spec = repoRelative(repo, specPath);
-
-  if (!existsSync(join(repo, vision))) throw new Error(`vision file not found: ${vision}`);
-  if (!existsSync(join(repo, spec))) throw new Error(`spec file not found: ${spec}`);
+  const vision = repoRelativeExistingFile({ repoPath: repo, path: visionPath, label: 'vision' });
+  const spec = repoRelativeExistingFile({ repoPath: repo, path: specPath, label: 'spec' });
 
   const storedStatus = await readDeliveryRunStatusWithMastra({ repoPath: repo, mastra });
   const localRun = storedStatus ? undefined : hasDeliveryDirectory(repo) ? readDeliveryRun(repo) : undefined;
