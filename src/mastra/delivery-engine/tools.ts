@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { deliveryRoles } from './boundaries';
-import { deliveryRepoPathFromRequestContext } from './context';
+import { deliveryRepoPathFromRequestContext, deliveryRequestContextSchema } from './context';
 import { runDeterministicCheck } from './checks';
 import { aggregateJudgment } from './judgment';
 import {
@@ -25,6 +25,9 @@ import {
 import { writeDeliveryArtifact } from './state';
 
 const roleSchema = z.enum(deliveryRoles as [string, ...string[]]);
+const deliveryToolRequestContextConfig = {
+  requestContextSchema: deliveryRequestContextSchema.partial(),
+};
 const repoPathField = z
   .string()
   .min(1)
@@ -47,6 +50,7 @@ function optionalRepoPathFromTool(input: { repoPath?: string }, context?: { requ
 export const initializeDeliveryRunTool = createTool({
   id: 'initialize-delivery-run',
   description: 'Initialize delivery run state and project it into Mastra storage.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     visionPath: z.string(),
@@ -64,6 +68,7 @@ export const initializeDeliveryRunTool = createTool({
 export const startDeliveryStageTool = createTool({
   id: 'start-delivery-stage',
   description: 'Start a delivery stage and materialize the active role boundary manifest.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     stage: z.string(),
@@ -81,6 +86,7 @@ export const startDeliveryStageTool = createTool({
 export const endDeliveryStageTool = createTool({
   id: 'end-delivery-stage',
   description: 'End a delivery stage and clear the active role boundary manifest.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     stage: z.string(),
@@ -94,6 +100,7 @@ export const endDeliveryStageTool = createTool({
 export const updateDeliveryTaskTool = createTool({
   id: 'update-delivery-task',
   description: 'Update delivery task status and persist the current state to Mastra storage.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     id: z.string(),
@@ -113,6 +120,7 @@ export const updateDeliveryTaskTool = createTool({
 export const recordDeliveryArtifactTool = createTool({
   id: 'record-delivery-artifact',
   description: 'Register an exported artifact path and persist the current state to Mastra storage.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     type: z.string(),
@@ -126,6 +134,7 @@ export const recordDeliveryArtifactTool = createTool({
 export const writeDeliveryArtifactTool = createTool({
   id: 'write-delivery-artifact',
   description: 'Write a JSON artifact under the target repo and return its path.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     artifactPath: z.string(),
@@ -141,6 +150,7 @@ export const writeDeliveryArtifactTool = createTool({
 export const recordDeliveryJudgmentTool = createTool({
   id: 'record-delivery-judgment',
   description: 'Record a scored rubric judgment and persist it to Mastra storage and scores.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     subject: z.string(),
@@ -157,6 +167,7 @@ export const recordDeliveryJudgmentTool = createTool({
 export const recordDeliveryEventTool = createTool({
   id: 'record-delivery-event',
   description: 'Append a delivery event and persist the current state to Mastra storage.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     event: z.record(z.string(), z.any()),
@@ -173,6 +184,7 @@ export const recordDeliveryEventTool = createTool({
 export const finishDeliveryRunTool = createTool({
   id: 'finish-delivery-run',
   description: 'Mark a delivery run complete, failed, or stuck.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     status: z.enum(['running', 'complete', 'failed', 'stuck']),
@@ -188,6 +200,7 @@ export const finishDeliveryRunTool = createTool({
 export const getDeliveryRunStatusTool = createTool({
   id: 'get-delivery-run-status',
   description: 'Read compact delivery run status from Mastra storage, falling back to the local .delivery projection.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
   }),
@@ -207,6 +220,7 @@ export const getDeliveryRunStatusTool = createTool({
 export const runDeterministicCheckTool = createTool({
   id: 'run-deterministic-check',
   description: 'Run a native deterministic delivery gate/check without asking a model to judge it.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: z.object({
     repoPath: repoPathField,
     name: z.enum([
@@ -321,6 +335,7 @@ async function listDeliveryStateRecordsForTool(
 export const persistDeliveryStateTool = createTool({
   id: 'persist-delivery-state',
   description: 'Persist the current delivery run projection, events, and rubric judgments into Mastra storage.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: persistDeliveryStateInputSchema,
   outputSchema: deliveryStatePersistenceOutputSchema.extend({
     scorePersistence: deliveryScorePersistenceSchema,
@@ -334,6 +349,7 @@ export const persistDeliveryStateTool = createTool({
 export const listDeliveryStateRecordsTool = createTool({
   id: 'list-delivery-state-records',
   description: 'List native delivery state records from Mastra observability storage.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: deliveryStateRecordListInputSchema,
   outputSchema: z.any(),
   execute: async (input, context) =>
@@ -343,6 +359,7 @@ export const listDeliveryStateRecordsTool = createTool({
 export const mirrorDeliveryStateTool = createTool({
   id: 'mirror-delivery-state',
   description: 'Compatibility alias for persist-delivery-state.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: persistDeliveryStateInputSchema,
   outputSchema: deliveryStatePersistenceOutputSchema.extend({
     scoreMirror: deliveryScorePersistenceSchema,
@@ -356,6 +373,7 @@ export const mirrorDeliveryStateTool = createTool({
 export const listDeliveryStateMirrorsTool = createTool({
   id: 'list-delivery-state-mirrors',
   description: 'Compatibility alias for list-delivery-state-records.',
+  ...deliveryToolRequestContextConfig,
   inputSchema: deliveryStateRecordListInputSchema,
   outputSchema: z.any(),
   execute: async (input, context) =>
