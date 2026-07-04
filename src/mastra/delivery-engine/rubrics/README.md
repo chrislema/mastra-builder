@@ -1,9 +1,8 @@
 # Rubrics
 
 Machine-readable evaluation rubrics for every artifact type and every role trajectory in this
-environment. Authored 2026-06-09 via feedback-loop Phase 1 (Claude, at design time — the
-deliberate exception to runtime model residency; see the delivery-engine spec §7). Applied at
-runtime by compiled judge workers on resident models.
+environment. Authored during feedback-loop Phase 1 and applied at runtime by Mastra-registered
+judges, deterministic checks, and scorers.
 
 ## Format
 
@@ -14,7 +13,7 @@ extensions:
 | Field | On | Meaning |
 |---|---|---|
 | `gates[].check` | gate | `"llm"` or `{"deterministic": "<check_name>"}` — deterministic gates run as code in the host, before any model scoring. |
-| `dimensions[].model` | dimension | `"default"` (resident judge model) or `"claude"` (routes to claude-haiku via gateway; used sparingly for genuinely nuanced dimensions). |
+| `dimensions[].model` | dimension | `"default"` or a project-defined model capability key resolved by the Mastra model configuration. |
 | `dimensions[].surface` | dimension | `"artifact"`, `"trajectory"` (the stage's turns rows), or `"evidence"` (the evidence table). |
 | `dimensions[].needs_surface` | dimension | Named secondary surface required to score (e.g. `"task_plan"`). Absent surface → `not_scored`, renormalize — never guess. |
 | `applies_when` | gate/dimension | Conditional scope (e.g. crypto gate applies only when auth code is present). Out of scope → gate passes vacuously / dimension `not_scored`. |
@@ -39,10 +38,10 @@ Trajectory checks: `write_paths_in_boundary`, `ran_code_before_complete`,
 
 ## Independence note
 
-These rubrics were authored by Claude. Grading one's own criteria is not an independent check —
-which is exactly why, at runtime, the judges that apply them are different models running in
-network-isolated workers, and why every rubric is human-reviewed before activation. The
-exemplar pairs exist so that review has something concrete to disagree with.
+Rubric authorship is not, by itself, an independent check. Runtime judgment therefore combines
+Mastra-registered judges, deterministic gates, score aggregation, and regression experiments.
+Every rubric should remain human-reviewable before activation, and exemplar pairs give reviewers
+something concrete to disagree with.
 
 ## Files
 

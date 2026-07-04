@@ -16,7 +16,7 @@
     },
     {
       "id": "settled_policy_respected",
-      "description": "The plan does not re-decide or contradict encoded platform policy: no splitting features between Pages Functions and Workers (consistency principle), no LLM provider choices contradicting the Llama-default/Claude-for-judgment split without stated cause, no crypto choices contradicting the PBKDF2 standard. Policy before prompt is constitution rule 1.",
+      "description": "The plan does not re-decide or contradict encoded platform policy: no splitting features between Pages Functions and Workers (consistency principle), no model-routing choices contradicting the configured Mastra model policy without stated cause, no crypto choices contradicting the PBKDF2 standard. Policy before prompt is constitution rule 1.",
       "severity": "critical",
       "on_fail": "cap",
       "cap_value": 0.0,
@@ -87,7 +87,7 @@
       "anchors": {
         "1": "Technology choices asserted with no rationale, or absent where the work clearly requires them.",
         "3": "Choices present with generic rationale ('Workers is better for this').",
-        "5": "Deployment model, components, data layer, and LLM-per-feature each justified via the frameworks: dependency-chain test for Workflows, consistency principle, fewer-deployments preference, Llama/Claude split."
+        "5": "Deployment model, components, data layer, and model capability per feature each justified via the frameworks: dependency-chain test for Workflows, consistency principle, fewer-deployments preference, and configured Mastra model-routing policy."
       },
       "model": "default",
       "surface": "artifact"

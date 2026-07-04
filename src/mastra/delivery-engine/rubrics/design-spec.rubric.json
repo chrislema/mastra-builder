@@ -93,7 +93,7 @@
         "3": "Coherent and compliant but safe — choices are defensible, none are motivated by this product specifically.",
         "5": "A recognizable point of view: the spec says why this palette/type/density fits this product and audience, and the choices visibly follow from it."
       },
-      "model": "claude",
+      "model": "default",
       "surface": "artifact"
     }
   ],

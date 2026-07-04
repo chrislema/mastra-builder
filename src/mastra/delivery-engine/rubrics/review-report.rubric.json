@@ -2,7 +2,7 @@
   "target": {
     "type": "skill",
     "name": "review-report",
-    "source_summary": "templates/review-report.md + agents/architect.md (Review Checklist, Must Not) + agents/tester.md (Core Behavior) + CLAUDE.md Review Defaults"
+    "source_summary": "templates/review-report.md + agents/architect.md (Review Checklist, Must Not) + agents/tester.md (Core Behavior) + Delivery Constitution review defaults"
   },
   "scale": { "min": 1, "max": 5 },
   "gates": [

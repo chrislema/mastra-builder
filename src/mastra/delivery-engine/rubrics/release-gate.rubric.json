@@ -2,7 +2,7 @@
   "target": {
     "type": "skill",
     "name": "release-gate",
-    "source_summary": "templates/release-gate.md + skills/testing/check-release-gate.md (Test Hierarchy, Critical Areas, Rules) + agents/tester.md + CLAUDE.md rule 6"
+    "source_summary": "templates/release-gate.md + skills/testing/check-release-gate.md (Test Hierarchy, Critical Areas, Rules) + agents/tester.md + Delivery Constitution rule 6"
   },
   "scale": { "min": 1, "max": 5 },
   "gates": [

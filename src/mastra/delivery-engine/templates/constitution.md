@@ -1,4 +1,4 @@
-# CLAUDE.md — Build rules and the reasoning behind them
+# Delivery Constitution — Build rules and the reasoning behind them
 
 These rules apply to every task in this project unless explicitly overridden.
 Bias: caution over speed on non-trivial work. Use judgment on trivial tasks.
@@ -126,28 +126,28 @@ closed on critical concerns. Never wave a known risk through because momentum fe
 
 ## Delivery Engine
 
-This repo uses the delivery-engine plugin. Several rules above have mechanical teeth
-during delivery runs — when a hook denies you or a judge bounces you, that is the
-constitution acting, not an obstacle to route around:
+This repo uses the Mastra-native Delivery Engine. Several rules above have mechanical
+teeth during delivery runs — when a workspace guard denies a write or a judge bounces
+an artifact, that is the constitution acting, not an obstacle to route around:
 
 | Rule | Mechanism |
 |---|---|
-| Rule 3 (boundaries) | PreToolUse boundary hook denies writes outside role/task globs during runs |
+| Rule 3 (boundaries) | Mastra workspace guards deny writes outside role/task globs during runs |
 | Rule 4 (loop until verified) | Judge gates bounce failed work with remediation; two failed bounces park it STUCK |
 | Rule 5 (code answers) | Deterministic gates run as code; judges score, aggregation is computed |
 | Rule 8/11 (evidence, fail loud) | Trajectory checks require code to have run before completion claims; the release gate fails closed on missing evidence |
-| Rule 9 (state) | `.delivery/run.json` + `events.jsonl` are the only run state; `stage.mjs` is the only writer |
+| Rule 9 (state) | Mastra storage and workflow snapshots are the persisted state; `.delivery/` is an inspectable export |
 
 Working agreements:
 
-- `/deliver vision.md spec.md` runs the judged pipeline; `/deliver-status` inspects it.
-- `.delivery/` is the authoritative run state — never edit it by hand; use the plugin's
-  `scripts/stage.mjs`.
-- Role boundaries come from the plugin's `policy/boundaries.json`.
-- Stage outputs are judged against the plugin's rubrics — a failed gate bounces work with
+- `delivery-workflow` runs the judged pipeline; delivery state tools inspect it.
+- `.delivery/` is the workspace projection/export of delivery state — never edit it by hand;
+  use the registered delivery tools and workflow steps.
+- Role boundaries come from the Delivery Engine `policy/boundaries.json`.
+- Stage outputs are judged against the Delivery Engine rubrics — a failed gate bounces work with
   remediation; two failed bounces park the task as STUCK for a human.
 - Domain defaults (architecture patterns, frontend visual system, review priorities) are
-  encoded in the plugin's skills, agents, and rubrics — consult them instead of
+  encoded in the Delivery Engine skills, agents, and rubrics — consult them instead of
   re-deciding (Rule 5).
 
 ---

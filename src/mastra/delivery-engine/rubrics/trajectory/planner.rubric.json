@@ -2,7 +2,7 @@
   "target": {
     "type": "prompt",
     "name": "planner-trajectory",
-    "source_summary": "agents/planner.md (Core Behavior, Must Not) + CLAUDE.md Working Style, graded over the stage's turn log (tool calls, escalations, artifact writes) — the home for behavioral rules invisible in the plan artifact"
+    "source_summary": "agents/planner.md (Core Behavior, Must Not) + Delivery Constitution working style, graded over the stage's turn log (tool calls, escalations, artifact writes) — the home for behavioral rules invisible in the plan artifact"
   },
   "scale": { "min": 1, "max": 5 },
   "gates": [

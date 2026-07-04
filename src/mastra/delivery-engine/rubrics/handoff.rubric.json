@@ -2,7 +2,7 @@
   "target": {
     "type": "skill",
     "name": "handoff",
-    "source_summary": "templates/handoff.md + commands/handoff.md + CLAUDE.md rule 5 (missing evidence should remain visible) + per-agent Handoff sections"
+    "source_summary": "templates/handoff.md + commands/handoff.md + Delivery Constitution rule 5 (missing evidence should remain visible) + per-agent Handoff sections"
   },
   "scale": { "min": 1, "max": 5 },
   "gates": [

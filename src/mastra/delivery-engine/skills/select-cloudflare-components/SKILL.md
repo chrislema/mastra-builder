@@ -1,13 +1,13 @@
 ---
 name: select-cloudflare-components
-description: Selects the correct Cloudflare deployment model, infrastructure services, and LLM providers for a feature set based on dependency chains, iteration needs, and consistency principles. Use when deciding between Pages Functions and standalone Workers, evaluating whether a feature needs Workflows or Durable Objects, choosing between LLM providers, or reviewing architecture for deployment consistency.
+description: Selects the correct Cloudflare deployment model, infrastructure services, and model capabilities for a feature set based on dependency chains, iteration needs, and consistency principles. Use when deciding between Pages Functions and standalone Workers, evaluating whether a feature needs Workflows or Durable Objects, choosing model-routing needs, or reviewing architecture for deployment consistency.
 ---
 
 Primary roles: planner, architect
 
 ## Purpose
 
-Evaluates a feature set against Cloudflare's infrastructure options and selects the deployment model (Pages-only or Workers), identifies Workflow candidates, assigns infrastructure services, and chooses LLM providers per feature. Enforces the consistency principle: never split features between Pages Functions and Workers.
+Evaluates a feature set against Cloudflare's infrastructure options and selects the deployment model (Pages-only or Workers), identifies Workflow candidates, assigns infrastructure services, and chooses model capabilities per feature. Enforces the consistency principle: never split features between Pages Functions and Workers.
 
 ## Procedure
 
@@ -18,9 +18,9 @@ Evaluates a feature set against Cloudflare's infrastructure options and selects 
    - Verify the consistency principle: no features split between Pages Functions and Workers.
 3. For each feature with multi-step processing, evaluate whether it needs Workflows. Apply the dependency chain test: if one operation's output feeds into another's input (A then B then C), use Workflows. If operations are independent (even if long-running), do not use Workflows.
 4. Assign infrastructure services to each feature using the service selection table. Map data storage, compute, caching, and communication needs.
-5. For each feature that uses an LLM, select the provider:
-   - Default to Llama 4 Scout for: rule application, calculations, structured transformations, format conversion, framework/rubric application, structured data extraction.
-   - Use Claude for: serious content analysis (nuance, subtle patterns, quality evaluation) or serious writing (human voice, creative judgment, voice fidelity).
+5. For each feature that uses an LLM, select the model capability class:
+   - Use the default configured Mastra model for rule application, calculations, structured transformations, format conversion, framework/rubric application, and structured data extraction.
+   - Request an explicitly configured stronger writing/reasoning model only when the feature depends on nuance, subtle pattern recognition, quality evaluation, human voice, creative judgment, or voice fidelity.
 6. Verify the complete architecture for consistency: all features use the same deployment model, service bindings connect Workers correctly, and no feature is an exception to the thin proxy pattern.
 
 ## Reference
@@ -51,10 +51,10 @@ Duration is not the deciding factor. Dependency chains are.
 - **Use Workflows when:** one operation's output feeds into another operation's input (A then B then C).
 - **Don't use Workflows when:** operations are independent, even if they're all long-running. Independent parallel operations don't need orchestration.
 
-### LLM Selection
+### Model Routing
 
-- **Default (Llama 4 Scout)**: fast, nearly zero cost, good enough for most tasks. Handles rule application, calculations, structured transformations, format conversion, framework/rubric application, structured data extraction.
-- **Claude**: serious content analysis (nuance, subtle patterns, quality evaluation) or serious writing (human voice, creative judgment, voice fidelity).
+- **Default configured model**: handles rule application, calculations, structured transformations, format conversion, framework/rubric application, and structured data extraction.
+- **Specialized configured model**: reserve for features that truly depend on nuanced analysis, serious writing, voice fidelity, or creative judgment. Name the required capability and let the Mastra model router/provider configuration bind it.
 
 ### Infrastructure Services
 
@@ -85,5 +85,5 @@ Produce the following:
 - Any standalone Worker extractions with the specific reason for each (Workflows, Durable Objects, or independent iteration).
 - Workflow candidates identified by their dependency chains, with the chain spelled out.
 - Infrastructure service assignments per feature.
-- LLM provider assignment per feature with rationale (why Llama or why Claude).
+- Model capability assignment per feature with rationale.
 - Confirmation that the consistency principle holds — no split between Pages and Workers.

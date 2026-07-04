@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for role file boundaries and turn budgets. Consumed by scripts/boundary-check.mjs (PreToolUse hook), the file_ownership / write_paths_in_boundary deterministic checks, and the /deliver orchestrator when spawning role subagents. Globs are relative to the target repo root.",
+  "$comment": "Single source of truth for role file boundaries and turn budgets. Consumed by the Mastra workspace beforeToolCall hook, deterministic file_ownership / write_paths_in_boundary checks, and delivery workflow stages. Globs are relative to the target repo root.",
   "planner": {
     "max_turns": 30,
     "owned": [],
