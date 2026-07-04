@@ -956,7 +956,7 @@ const createPlanGateStep = createStep({
       questions: [],
       nextSteps: [
         'Run architecture review against .delivery/artifacts/task-plan.json.',
-        'Wire the review/build/test/deploy stages into this native workflow next.',
+        'Continue through the native architect review, build, release-gate, and deployment stages.',
       ],
     };
   },
