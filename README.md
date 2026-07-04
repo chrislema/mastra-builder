@@ -3,7 +3,8 @@
 This project is a Mastra-native port of the delivery engine ideas from
 `github.com/chrislema/claude-environments`. The Claude repo remains the Claude-specific
 implementation. This repo uses Mastra first-class pieces: agents, tools, workflow steps,
-workspace hooks, typed artifacts, deterministic checks, and rubric aggregation.
+workspace hooks, typed artifacts, deterministic checks, rubric aggregation, and native
+scorers.
 
 ## What Is Registered
 
@@ -12,6 +13,8 @@ workspace hooks, typed artifacts, deterministic checks, and rubric aggregation.
 - `deliveryWorkflow`
 - role agents: planner, architect, engineer, designer, tester, deployer, judge
 - delivery state tools for `.delivery/`
+- delivery scorers for handoff readiness, workflow completion, rubric floor, judgment
+  pass rate, and deterministic check pass rate
 - a dynamic delivery workspace rooted by `requestContext.repoPath`
 
 The default weather scaffold has been removed.
@@ -80,6 +83,23 @@ The workflow currently runs:
 
 Judgment math is always computed in TypeScript. Models only produce raw gate and dimension
 scores.
+
+## Native Scoring
+
+Delivery scorers are registered in `src/mastra/index.ts`, so Mastra Studio can see and run
+them as first-class scorers. The plan, review, build, release-gate, and deployment steps
+attach stage-specific scorer groups with full sampling for live workflow scoring.
+
+The current scorer set covers:
+
+- planner -> architect handoff readiness
+- architect -> build handoff readiness
+- build -> tester handoff readiness
+- tester -> deployer handoff readiness
+- workflow completion
+- lowest rubric judgment score
+- rubric judgment pass rate
+- deterministic check pass rate
 
 ## Verification
 

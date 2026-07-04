@@ -23,6 +23,13 @@ import {
   loadDeliveryEngineRubric,
   type DeterministicGateResult,
 } from './judgment';
+import {
+  deliveryBuildStepScorers,
+  deliveryDeploymentStepScorers,
+  deliveryPlanStepScorers,
+  deliveryReleaseGateStepScorers,
+  deliveryReviewStepScorers,
+} from './scorers';
 
 const deliveryModel = 'openai/gpt-5-mini';
 
@@ -499,6 +506,7 @@ const createPlanStep = createStep({
   description: 'Use the planner agent to create readout and task-plan artifacts, then run deterministic plan gates.',
   inputSchema: initializedSchema,
   outputSchema: planStageOutputSchema,
+  scorers: deliveryPlanStepScorers,
   execute: async ({ inputData, mastra }) => {
     startDeliveryStage({
       repoPath: inputData.repoPath,
@@ -646,6 +654,7 @@ const createReviewStep = createStep({
   description: 'Review the task plan with the architect, judge the review report, and bounce blocked plans to planner.',
   inputSchema: planStageOutputSchema,
   outputSchema: deliveryStageOutputSchema,
+  scorers: deliveryReviewStepScorers,
   execute: async ({ inputData, mastra }) => {
     const passThrough = () => ({
       repoPath: inputData.repoPath,
@@ -902,6 +911,7 @@ const createBuildStep = createStep({
   description: 'Execute reviewed task plans in dependency order with role boundaries and implementation judgments.',
   inputSchema: deliveryStageOutputSchema,
   outputSchema: deliveryStageOutputSchema,
+  scorers: deliveryBuildStepScorers,
   execute: async ({ inputData, mastra }) => {
     const passThrough = () => ({
       repoPath: inputData.repoPath,
@@ -1105,6 +1115,7 @@ const createReleaseGateStep = createStep({
   description: 'Run tester verification, produce a release gate, judge it, and stop deployment on gate failure.',
   inputSchema: deliveryStageOutputSchema,
   outputSchema: deliveryStageOutputSchema,
+  scorers: deliveryReleaseGateStepScorers,
   execute: async ({ inputData, mastra }) => {
     const passThrough = () => ({
       repoPath: inputData.repoPath,
@@ -1264,6 +1275,7 @@ const createDeploymentStep = createStep({
   description: 'Deploy only from a passing release gate, verify directly, judge the deployment report, and finish the run.',
   inputSchema: deliveryStageOutputSchema,
   outputSchema: workflowOutputSchema,
+  scorers: deliveryDeploymentStepScorers,
   execute: async ({ inputData, mastra }) => {
     const baseOutput = () => ({
       status: inputData.status,

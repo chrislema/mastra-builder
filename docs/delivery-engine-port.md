@@ -88,6 +88,13 @@ project should become the native Mastra version.
   - `requestContext.repoPath` behavior
   - example input locations
   - verification commands and build note
+- Added native Mastra scoring:
+  - registered delivery scorers in `src/mastra/index.ts`
+  - live scoring on plan, review, build, release-gate, and deployment workflow steps
+  - planner -> architect, architect -> build, build -> tester, and tester -> deployer
+    handoff readiness scorers
+  - completion, rubric floor, judgment pass rate, and deterministic check pass rate scorers
+  - direct scorer unit tests
 
 Checkpoint commit:
 
@@ -99,6 +106,7 @@ Checkpoint commit:
 - `4cec422 Add release gate stage`
 - `1471391 Add deployment stage`
 - `99c4d0c Add delivery engine regression tests`
+- `30cc1dd Document delivery engine usage`
 
 ## Next Slices
 
@@ -269,6 +277,29 @@ Natural commit:
 
 - `Document delivery engine usage`
 
+### 8. Native Mastra Scoring (Completed)
+
+Goal: use Mastra's first-class scorer system for delivery quality signals.
+
+Work:
+
+- Add `createScorer()` definitions for handoff readiness, workflow completion, and
+  delivery quality signals.
+- Register scorers in `src/mastra/index.ts`.
+- Attach live scorers to workflow handoff steps with full sampling.
+- Score workflow step output from stage status, recorded checks, and judgments.
+- Add direct unit tests for scorer behavior.
+
+Done when:
+
+- Studio/API can discover registered delivery scorers.
+- Delivery workflow runs can emit live handoff and final-step scores.
+- Scorer tests and TypeScript pass.
+
+Natural commit:
+
+- `Add native Mastra delivery scorers`
+
 ## Open Questions
 
 - Whether the target repo should be accessed by dynamic workspace context only, or whether
@@ -279,3 +310,5 @@ Natural commit:
   once rubric behavior is stable.
 - Whether deployment should remain mock-first until release-gate and live verification are
   robust.
+- Whether to extend native scoring beyond workflow handoffs into per-agent and
+  experiment/dataset evaluation flows once live scoring is stable.
