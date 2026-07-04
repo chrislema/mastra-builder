@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
-import { RequestContext } from '@mastra/core/request-context';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import {
@@ -23,6 +22,7 @@ import {
   runDeterministicCheck,
   type DeliveryEvent,
 } from './checks';
+import { createDeliveryRequestContext } from './context';
 import {
   aggregateJudgment,
   buildJudgeArtifactPrompt,
@@ -585,7 +585,7 @@ async function judgeDeliveryArtifact({
       deterministicResults,
     }),
     {
-      requestContext: new RequestContext([['repoPath', repoPath]]),
+      requestContext: createDeliveryRequestContext(repoPath),
       structuredOutput: {
         schema: judgeOutputSchema,
         model: deliveryModel,
@@ -767,7 +767,7 @@ Do not write code. Ask only blocking questions. Record safe assumptions in the r
 Task owners may be engineer or designer unless another role is genuinely required.
 Every task must have checkable acceptance criteria and owned_surfaces.${humanAnswers}`,
       {
-        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+          requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: plannerOutputSchema,
           model: deliveryModel,
@@ -1056,7 +1056,7 @@ Every finding must be specific, evidenced, and remediable by an owning role.
 Task plan:
 ${JSON.stringify(taskPlan, null, 2)}`,
       {
-        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: reviewReportSchema,
           model: deliveryModel,
@@ -1174,7 +1174,7 @@ ${JSON.stringify(taskPlan, null, 2)}
 Architect review:
 ${JSON.stringify(reviewReport, null, 2)}`,
       {
-        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: plannerRevisionOutputSchema,
           model: deliveryModel,
@@ -1511,7 +1511,7 @@ Context artifacts:
 ${inputData.remediation.length ? `This is a bounce. Fix exactly these findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
 Use the workspace to make the smallest coherent code change. Stay inside the active boundary. Run code or tests that verify the acceptance criteria before returning. Return an implementation note with every changed file and visible verification gaps.`,
       {
-        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: builderOutputSchema,
           model: deliveryModel,
@@ -1886,7 +1886,7 @@ ${JSON.stringify(inputData.taskPlan, null, 2)}
 ${inputData.remediation.length ? `This is a bounce. Fix exactly these release-gate findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
 Return a release-gate object with event_type "pre_deployment". Every critical area must be verified with evidence, missing and therefore blocking, or not_applicable with a reason. Fail closed on unproven critical behavior.`,
       {
-        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: testerOutputSchema,
           model: deliveryModel,
@@ -2156,7 +2156,7 @@ Rules:
 Release gate:
 ${JSON.stringify(inputData.releaseGate, null, 2)}`,
       {
-        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: deployerOutputSchema,
           model: deliveryModel,

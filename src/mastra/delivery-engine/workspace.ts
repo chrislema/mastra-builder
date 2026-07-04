@@ -1,18 +1,13 @@
 import { relative, resolve } from 'node:path';
 import { Workspace, LocalFilesystem, LocalSandbox, WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import { fileOwnership, matchesAny, noBcryptWeakHash } from './checks';
+import { deliveryRepoPathFromRequestContext } from './context';
 import { hasDeliveryDirectory, readDeliveryBoundary } from './state';
 import { appendDeliveryEventState } from './state-service';
 import type { MastraLike } from './observability';
 
-function contextValue(requestContext: unknown, key: string) {
-  const ctx = requestContext as { get?: (name: string) => unknown; [name: string]: unknown };
-  if (typeof ctx?.get === 'function') return ctx.get(key);
-  return ctx?.[key];
-}
-
 function repoPathFromContext(requestContext: unknown) {
-  return String(contextValue(requestContext, 'repoPath') ?? process.cwd());
+  return deliveryRepoPathFromRequestContext(requestContext);
 }
 
 function mastraFromToolContext(context: unknown) {

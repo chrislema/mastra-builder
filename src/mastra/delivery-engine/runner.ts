@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
-import { RequestContext } from '@mastra/core/request-context';
 import { z } from 'zod';
+import { createDeliveryRequestContext } from './context';
 import { deliveryWorkflow } from './workflow';
+
+export { createDeliveryRequestContext as createDeliveryWorkflowRequestContext } from './context';
 
 export const deliveryWorkflowRunInputSchema = z.object({
   repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
@@ -35,10 +37,6 @@ export function deliveryWorkflowResourceId(repoPath: string) {
   return `delivery:${hash}`;
 }
 
-export function createDeliveryWorkflowRequestContext(repoPath: string) {
-  return new RequestContext([['repoPath', resolve(repoPath)]]);
-}
-
 export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
   const parsed = deliveryWorkflowRunInputSchema.parse(input);
   const repoPath = resolve(parsed.repoPath);
@@ -57,7 +55,7 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
       maxRetries: parsed.maxRetries,
       deployMode: parsed.deployMode,
     },
-    requestContext: createDeliveryWorkflowRequestContext(repoPath),
+    requestContext: createDeliveryRequestContext(repoPath),
     tracingOptions: {
       metadata: {
         deliveryEngine: true,

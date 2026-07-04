@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
-import { z } from 'zod';
+import { deliveryRequestContextSchema } from './context';
 import { deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
 import { deliveryInputProcessors, deliveryOutputProcessors } from './processors';
@@ -8,9 +8,6 @@ import { deliveryBuildTaskWorkflow, deliveryWorkflow } from './workflow';
 
 const deliveryModel = 'openai/gpt-5-mini';
 const judgeModel = 'openai/gpt-5-mini';
-const deliveryRequestContextSchema = z.object({
-  repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
-});
 
 export const deliveryWorkingMemoryTemplate = `# Delivery Run Working Memory
 

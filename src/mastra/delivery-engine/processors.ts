@@ -8,6 +8,7 @@ import {
   type ProcessOutputStepArgs,
   type Processor,
 } from '@mastra/core/processors';
+import { deliveryRepoPathFromRequestContext } from './context';
 
 type DeliveryTripwireMetadata = {
   processorId: string;
@@ -38,18 +39,15 @@ const textFromMessage = (message: unknown) => {
 
 const textFromMessages = (messages: unknown[]) => messages.map(textFromMessage).filter(Boolean).join('\n');
 
-const getContextString = (requestContext: ProcessInputArgs['requestContext'], key: string) => {
-  const value = requestContext?.get(key);
-  return typeof value === 'string' && value.trim() ? value : undefined;
-};
-
 export class DeliveryRepoPathGuard implements Processor<'delivery-repo-path-guard', DeliveryTripwireMetadata> {
   readonly id = 'delivery-repo-path-guard';
   readonly name = 'Delivery Repo Path Guard';
   readonly description = 'Blocks delivery agent calls that do not include requestContext.repoPath.';
 
   processInput({ messages, requestContext, agent, abort }: ProcessInputArgs<DeliveryTripwireMetadata>) {
-    if (!getContextString(requestContext, 'repoPath')) {
+    try {
+      deliveryRepoPathFromRequestContext(requestContext);
+    } catch {
       abort('Delivery agents require requestContext.repoPath so workspace and state tools target the intended repo.', {
         retry: false,
         metadata: {
