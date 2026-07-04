@@ -44,14 +44,21 @@ project should become the native Mastra version.
   - planner readout
   - task plan
   - deterministic plan gates
+- Added native rubric judgment harness:
+  - TypeScript aggregation port
+  - judge output schemas
+  - deterministic gate precedence
+  - task-plan judge artifacts
+  - recorded `.delivery/run.json` judgments
 
 Checkpoint commit:
 
 - `6220908 Port delivery engine foundation to Mastra`
+- `11037bb Add delivery engine port roadmap`
 
 ## Next Slices
 
-### 1. Judge Harness And Aggregation
+### 1. Judge Harness And Aggregation (Completed)
 
 Goal: make rubric judging native and executable.
 

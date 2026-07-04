@@ -37,6 +37,11 @@ export const roleBoundaries = {
     owned: [],
     forbidden: ['**'],
   },
+  judge: {
+    maxTurns: 20,
+    owned: [],
+    forbidden: ['**'],
+  },
 } as const;
 
 export type DeliveryRole = keyof typeof roleBoundaries;

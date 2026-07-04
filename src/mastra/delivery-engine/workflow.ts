@@ -5,10 +5,18 @@ import {
   endDeliveryStage,
   initializeDeliveryRun,
   recordDeliveryArtifact,
+  recordDeliveryJudgment,
   startDeliveryStage,
   writeDeliveryArtifact,
 } from './state';
 import { dependencyGraphAcyclic, planSchemaComplete } from './checks';
+import {
+  aggregateJudgment,
+  buildJudgeArtifactPrompt,
+  judgeOutputSchema,
+  loadDeliveryEngineRubric,
+  type DeterministicGateResult,
+} from './judgment';
 
 const deliveryModel = 'openai/gpt-5-mini';
 
@@ -62,6 +70,17 @@ const workflowOutputSchema = z.object({
   summary: z.string(),
   artifacts: z.array(z.string()),
   checks: z.array(z.object({ check: z.string(), passed: z.boolean(), reason: z.string() })),
+  judgments: z
+    .array(
+      z.object({
+        subject: z.string(),
+        rubric: z.string(),
+        path: z.string(),
+        overall: z.number(),
+        passed: z.boolean(),
+      }),
+    )
+    .default([]),
   questions: z.array(z.string()).default([]),
   nextSteps: z.array(z.string()),
 });
@@ -144,18 +163,100 @@ Every task must have checkable acceptance criteria and owned_surfaces.`,
       reason: output.readout.blocking_ambiguities.length ? 'escalation' : 'complete_stage',
     });
 
-    const checks = [
-      { check: 'plan_schema_complete', ...planSchemaComplete(output.taskPlan) },
-      { check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(output.taskPlan) },
+    const deterministicResults: DeterministicGateResult[] = [
+      { id: 'tasks_structurally_complete', check: 'plan_schema_complete', ...planSchemaComplete(output.taskPlan) },
+      { id: 'no_circular_dependencies', check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(output.taskPlan) },
     ];
+    const checks = deterministicResults.map((check) => ({
+      check: check.check ?? check.id ?? 'unknown',
+      passed: check.passed,
+      reason: check.reason ?? 'deterministic check',
+    }));
+
+    startDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage: 'judge:task-plan',
+      role: 'judge',
+    });
+
+    const judge = mastra?.getAgentById('judge');
+    if (!judge) throw new Error('judge agent is not registered');
+
+    const taskPlanRubric = loadDeliveryEngineRubric('task-plan');
+    const judgeResponse = await judge.generate(
+      buildJudgeArtifactPrompt({
+        rubric: taskPlanRubric,
+        subjectName: '.delivery/artifacts/task-plan.json',
+        subject: output.taskPlan,
+        deterministicResults,
+      }),
+      {
+        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        structuredOutput: {
+          schema: judgeOutputSchema,
+          model: deliveryModel,
+          instructions: 'Return only the judge gates and dimensions. Do not compute aggregate scores.',
+        },
+      },
+    );
+
+    const judgeOutput = judgeOutputSchema.parse(judgeResponse.object);
+
+    const judgeOutputPath = '.delivery/artifacts/judgments/task-plan.judge.json';
+    writeDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      artifactPath: judgeOutputPath,
+      artifact: judgeOutput,
+    });
+
+    const taskPlanJudgment = aggregateJudgment({
+      rubric: taskPlanRubric,
+      judgeOutput,
+      deterministicResults,
+    });
+    const taskPlanJudgmentPath = '.delivery/artifacts/judgments/task-plan.judgment.json';
+    writeDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      artifactPath: taskPlanJudgmentPath,
+      artifact: taskPlanJudgment,
+    });
+    recordDeliveryJudgment({
+      repoPath: inputData.repoPath,
+      subject: '.delivery/artifacts/task-plan.json',
+      rubric: taskPlanJudgment.rubric,
+      path: taskPlanJudgmentPath,
+      overall: taskPlanJudgment.overall,
+      passed: taskPlanJudgment.passed,
+    });
+    const judgments = [
+      {
+        subject: '.delivery/artifacts/task-plan.json',
+        rubric: taskPlanJudgment.rubric,
+        path: taskPlanJudgmentPath,
+        overall: taskPlanJudgment.overall,
+        passed: taskPlanJudgment.passed,
+      },
+    ];
+
+    endDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage: 'judge:task-plan',
+      reason: taskPlanJudgment.passed ? 'complete_stage' : 'escalation',
+    });
 
     if (output.readout.blocking_ambiguities.length) {
       return {
         status: 'blocked_on_questions' as const,
         runId: inputData.runId,
         summary: output.readout.recommended_next_step,
-        artifacts: ['.delivery/artifacts/readout.json', '.delivery/artifacts/task-plan.json'],
+        artifacts: [
+          '.delivery/artifacts/readout.json',
+          '.delivery/artifacts/task-plan.json',
+          judgeOutputPath,
+          taskPlanJudgmentPath,
+        ],
         checks,
+        judgments,
         questions: output.readout.blocking_ambiguities,
         nextSteps: ['Answer the blocking questions, then rerun or resume delivery planning.'],
       };
@@ -166,10 +267,34 @@ Every task must have checkable acceptance criteria and owned_surfaces.`,
         status: 'stuck' as const,
         runId: inputData.runId,
         summary: 'Planner produced artifacts, but deterministic plan checks failed.',
-        artifacts: ['.delivery/artifacts/readout.json', '.delivery/artifacts/task-plan.json'],
+        artifacts: [
+          '.delivery/artifacts/readout.json',
+          '.delivery/artifacts/task-plan.json',
+          judgeOutputPath,
+          taskPlanJudgmentPath,
+        ],
         checks,
+        judgments,
         questions: [],
         nextSteps: checks.filter((check) => !check.passed).map((check) => check.reason),
+      };
+    }
+
+    if (!taskPlanJudgment.passed) {
+      return {
+        status: 'stuck' as const,
+        runId: inputData.runId,
+        summary: 'Planner produced artifacts, but the task-plan rubric judgment failed.',
+        artifacts: [
+          '.delivery/artifacts/readout.json',
+          '.delivery/artifacts/task-plan.json',
+          judgeOutputPath,
+          taskPlanJudgmentPath,
+        ],
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: taskPlanJudgment.remediation,
       };
     }
 
@@ -177,8 +302,14 @@ Every task must have checkable acceptance criteria and owned_surfaces.`,
       status: 'planned' as const,
       runId: inputData.runId,
       summary: output.taskPlan.scope,
-      artifacts: ['.delivery/artifacts/readout.json', '.delivery/artifacts/task-plan.json'],
+      artifacts: [
+        '.delivery/artifacts/readout.json',
+        '.delivery/artifacts/task-plan.json',
+        judgeOutputPath,
+        taskPlanJudgmentPath,
+      ],
       checks,
+      judgments,
       questions: [],
       nextSteps: [
         'Run architecture review against .delivery/artifacts/task-plan.json.',

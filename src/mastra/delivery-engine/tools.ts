@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { deliveryRoles } from './boundaries';
 import { runDeterministicCheck } from './checks';
+import { aggregateJudgment } from './judgment';
 import {
   appendDeliveryEvent,
   endDeliveryStage,
@@ -206,6 +207,28 @@ export const runDeterministicCheckTool = createTool({
   },
 });
 
+export const aggregateJudgmentTool = createTool({
+  id: 'aggregate-judgment',
+  description: 'Aggregate rubric gates, deterministic checks, and judge scores into a native delivery judgment.',
+  inputSchema: z.object({
+    rubric: z.any(),
+    judgeOutput: z.any().optional(),
+    deterministicResults: z
+      .array(
+        z.object({
+          id: z.string().optional(),
+          check: z.string().optional(),
+          passed: z.boolean(),
+          reason: z.string().optional(),
+        }),
+      )
+      .default([]),
+    threshold: z.number().min(0).max(1).default(0.7),
+  }),
+  outputSchema: z.any(),
+  execute: async (input) => aggregateJudgment(input as Parameters<typeof aggregateJudgment>[0]),
+});
+
 export const deliveryStateTools = {
   initializeDeliveryRunTool,
   startDeliveryStageTool,
@@ -218,4 +241,5 @@ export const deliveryStateTools = {
   finishDeliveryRunTool,
   getDeliveryRunStatusTool,
   runDeterministicCheckTool,
+  aggregateJudgmentTool,
 };
