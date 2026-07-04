@@ -1,15 +1,19 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 import { RequestContext } from '@mastra/core/request-context';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import {
   endDeliveryStage,
   initializeDeliveryRun,
+  readDeliveryEvents,
   recordDeliveryArtifact,
   recordDeliveryJudgment,
   startDeliveryStage,
+  updateDeliveryTask,
   writeDeliveryArtifact,
 } from './state';
-import { dependencyGraphAcyclic, planSchemaComplete } from './checks';
+import { dependencyGraphAcyclic, noBcryptWeakHash, planSchemaComplete, runDeterministicCheck } from './checks';
 import {
   aggregateJudgment,
   buildJudgeArtifactPrompt,
@@ -73,9 +77,26 @@ const reviewReportSchema = z.object({
   recommended_next_step: z.string(),
 });
 
+const implementationNoteSchema = z.object({
+  artifact_type: z.literal('implementation-note'),
+  task: z.string(),
+  changes: z.array(z.string()).min(1),
+  files_touched: z.array(z.string()).min(1),
+  assumptions: z.array(z.string()).default([]),
+  verification: z.object({
+    performed: z.array(z.string()).default([]),
+    missing: z.array(z.string()).default([]),
+  }),
+  risks: z.array(z.string()).default([]),
+});
+
 const plannerOutputSchema = z.object({
   readout: readoutSchema,
   taskPlan: taskPlanSchema,
+});
+
+const builderOutputSchema = z.object({
+  note: implementationNoteSchema,
 });
 
 const plannerRevisionOutputSchema = z.object({
@@ -95,7 +116,7 @@ const judgmentRefSchema = z.object({
 });
 
 const workflowOutputSchema = z.object({
-  status: z.enum(['planned', 'reviewed', 'blocked_on_questions', 'stuck']),
+  status: z.enum(['planned', 'reviewed', 'built', 'blocked_on_questions', 'stuck']),
   runId: z.string(),
   summary: z.string(),
   artifacts: z.array(z.string()),
@@ -105,16 +126,19 @@ const workflowOutputSchema = z.object({
   nextSteps: z.array(z.string()),
 });
 
-const planStageOutputSchema = workflowOutputSchema.extend({
+const deliveryStageOutputSchema = workflowOutputSchema.extend({
   repoPath: z.string(),
   maxRetries: z.number().int().min(0),
   deployMode: z.enum(['mock', 'real']),
   taskPlan: taskPlanSchema.optional(),
 });
+const planStageOutputSchema = deliveryStageOutputSchema;
 
 type TaskPlan = z.infer<typeof taskPlanSchema>;
 type ReviewReport = z.infer<typeof reviewReportSchema>;
+type ImplementationNote = z.infer<typeof implementationNoteSchema>;
 type JudgmentRef = z.infer<typeof judgmentRefSchema>;
+type Task = z.infer<typeof taskSchema>;
 
 type CheckSummary = { check: string; passed: boolean; reason: string };
 
@@ -129,6 +153,96 @@ const taskPlanDeterministicResults = (taskPlan: TaskPlan): DeterministicGateResu
   { id: 'tasks_structurally_complete', check: 'plan_schema_complete', ...planSchemaComplete(taskPlan) },
   { id: 'no_circular_dependencies', check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(taskPlan) },
 ];
+
+function topoOrderTasks(tasks: Task[]) {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const indegree = new Map(tasks.map((task) => [task.id, 0]));
+  for (const task of tasks) {
+    for (const dependency of task.depends_on) {
+      if (byId.has(dependency)) indegree.set(task.id, (indegree.get(task.id) ?? 0) + 1);
+    }
+  }
+
+  const queue = tasks.filter((task) => (indegree.get(task.id) ?? 0) === 0);
+  const ordered: Task[] = [];
+  while (queue.length) {
+    const task = queue.shift();
+    if (!task) continue;
+    ordered.push(task);
+    for (const candidate of tasks) {
+      if (candidate.depends_on.includes(task.id)) {
+        indegree.set(candidate.id, (indegree.get(candidate.id) ?? 0) - 1);
+        if (indegree.get(candidate.id) === 0) queue.push(candidate);
+      }
+    }
+  }
+
+  if (ordered.length !== tasks.length) {
+    throw new Error('task dependency graph is cyclic or incomplete');
+  }
+
+  return ordered;
+}
+
+const buildRoleForTask = (task: Task) => (task.owner === 'designer' ? 'designer' : 'engineer') as 'designer' | 'engineer';
+
+const taskStatusSummary = (state: Record<string, 'complete' | 'stuck' | 'blocked'>) =>
+  Object.entries(state).map(([id, status]) => `${id}:${status}`);
+
+const implementationFindingSteps = (taskId: string, remediation: string[]) =>
+  remediation.length ? remediation : [`${taskId} did not produce a passing implementation judgment`];
+
+function repoFileContents(repoPath: string, paths: string[]) {
+  return paths
+    .map((path) => {
+      const fullPath = isAbsolute(path) ? path : join(resolve(repoPath), path);
+      if (!existsSync(fullPath)) return undefined;
+      return {
+        path,
+        content: readFileSync(fullPath, 'utf8'),
+      };
+    })
+    .filter((file): file is { path: string; content: string } => Boolean(file));
+}
+
+function implementationDeterministicResults({
+  repoPath,
+  stage,
+  role,
+  note,
+}: {
+  repoPath: string;
+  stage: string;
+  role: 'engineer' | 'designer';
+  note: ImplementationNote;
+}): DeterministicGateResult[] {
+  const events = readDeliveryEvents(repoPath);
+  const files = repoFileContents(repoPath, note.files_touched);
+  const noteOwnership = runDeterministicCheck({
+    name: 'file_ownership',
+    role,
+    paths: note.files_touched,
+  });
+  const eventOwnership = runDeterministicCheck({
+    name: 'write_paths_in_boundary',
+    events,
+    stage,
+    role,
+  });
+  const ownership = noteOwnership.passed ? eventOwnership : noteOwnership;
+  const moduleLoads = runDeterministicCheck({
+    name: 'ran_code_before_complete',
+    events,
+    stage,
+  });
+  const crypto = noBcryptWeakHash(files);
+
+  return [
+    { id: 'file_ownership', check: 'write_paths_in_boundary', ...ownership },
+    { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
+    { id: 'crypto_compliance', check: 'no_bcrypt_weak_hash', ...crypto },
+  ];
+}
 
 const requiredAgent = (mastra: any, id: string) => {
   const agent = mastra?.getAgentById(id);
@@ -395,9 +509,13 @@ const createReviewStep = createStep({
   id: 'architect-review',
   description: 'Review the task plan with the architect, judge the review report, and bounce blocked plans to planner.',
   inputSchema: planStageOutputSchema,
-  outputSchema: workflowOutputSchema,
+  outputSchema: deliveryStageOutputSchema,
   execute: async ({ inputData, mastra }) => {
     const passThrough = () => ({
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: inputData.taskPlan,
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -417,6 +535,12 @@ const createReviewStep = createStep({
     const artifacts = [...inputData.artifacts];
     const checks = [...inputData.checks];
     const judgments = [...inputData.judgments];
+    const stageContext = () => ({
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan,
+    });
 
     for (let attempt = 0; attempt <= inputData.maxRetries; attempt += 1) {
       const suffix = attempt === 0 ? 'initial' : `retry-${attempt}`;
@@ -479,6 +603,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
 
       if (reviewReport.verdict !== 'blocked' && reviewJudge.judgment.passed) {
         return {
+          ...stageContext(),
           status: 'reviewed' as const,
           runId: inputData.runId,
           summary: `Architect ${reviewReport.verdict}: ${reviewReport.recommended_next_step}`,
@@ -496,6 +621,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
 
       if (!reviewJudge.judgment.passed) {
         return {
+          ...stageContext(),
           status: 'stuck' as const,
           runId: inputData.runId,
           summary: 'Architect review report failed rubric judgment.',
@@ -509,6 +635,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
 
       if (attempt >= inputData.maxRetries) {
         return {
+          ...stageContext(),
           status: 'stuck' as const,
           runId: inputData.runId,
           summary: 'Architect review blocked the plan after bounded planner retries.',
@@ -579,6 +706,7 @@ ${JSON.stringify(reviewReport, null, 2)}`,
       const failedRevisedChecks = revisedDeterministicResults.filter((check) => !check.passed);
       if (failedRevisedChecks.length) {
         return {
+          ...stageContext(),
           status: 'stuck' as const,
           runId: inputData.runId,
           summary: 'Planner revision failed deterministic task-plan gates.',
@@ -604,6 +732,7 @@ ${JSON.stringify(reviewReport, null, 2)}`,
 
       if (!revisedPlanJudge.judgment.passed) {
         return {
+          ...stageContext(),
           status: 'stuck' as const,
           runId: inputData.runId,
           summary: 'Planner revision failed task-plan rubric judgment.',
@@ -617,6 +746,7 @@ ${JSON.stringify(reviewReport, null, 2)}`,
     }
 
     return {
+      ...stageContext(),
       status: 'stuck' as const,
       runId: inputData.runId,
       summary: 'Architect review did not reach a terminal state.',
@@ -629,14 +759,217 @@ ${JSON.stringify(reviewReport, null, 2)}`,
   },
 });
 
+const createBuildStep = createStep({
+  id: 'delivery-build-loop',
+  description: 'Execute reviewed task plans in dependency order with role boundaries and implementation judgments.',
+  inputSchema: deliveryStageOutputSchema,
+  outputSchema: deliveryStageOutputSchema,
+  execute: async ({ inputData, mastra }) => {
+    const passThrough = () => ({
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: inputData.taskPlan,
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts: inputData.artifacts,
+      checks: inputData.checks,
+      judgments: inputData.judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+    });
+
+    if (inputData.status !== 'reviewed') return passThrough();
+    if (!inputData.taskPlan) throw new Error('review stage did not provide a task plan for the build loop');
+
+    const taskPlan = inputData.taskPlan;
+    const orderedTasks = topoOrderTasks(taskPlan.tasks);
+    const artifacts = [...inputData.artifacts];
+    const checks = [...inputData.checks];
+    const judgments = [...inputData.judgments];
+    const taskState: Record<string, 'complete' | 'stuck' | 'blocked'> = {};
+
+    for (const task of orderedTasks) {
+      const blockedBy = task.depends_on.filter((dependency) => taskState[dependency] !== 'complete');
+      if (blockedBy.length) {
+        taskState[task.id] = 'blocked';
+        updateDeliveryTask({
+          repoPath: inputData.repoPath,
+          id: task.id,
+          status: 'blocked',
+          owner: task.owner,
+          note: `blocked by dependency ${blockedBy.join(', ')}`,
+        });
+        continue;
+      }
+
+      const role = buildRoleForTask(task);
+      const agent = requiredAgent(mastra, role);
+      let taskComplete = false;
+      let remediation: string[] = [];
+
+      for (let attempt = 0; attempt <= inputData.maxRetries && !taskComplete; attempt += 1) {
+        const attemptNumber = attempt + 1;
+        const stage = `build:${task.id}`;
+        const usableSurfaces = task.owned_surfaces.filter((surface) => !/^unknown\b/i.test(surface));
+        updateDeliveryTask({
+          repoPath: inputData.repoPath,
+          id: task.id,
+          status: 'building',
+          owner: role,
+          note: attempt > 0 ? `retry ${attemptNumber}` : undefined,
+          bumpRetries: attempt > 0,
+        });
+        startDeliveryStage({
+          repoPath: inputData.repoPath,
+          stage,
+          role,
+          surfaces: usableSurfaces.length ? usableSurfaces : undefined,
+        });
+
+        const buildResponse = await agent.generate(
+          `Implement task ${task.id}: ${task.deliverable}
+
+Acceptance criteria:
+${task.acceptance_criteria.map((criterion) => `- ${criterion}`).join('\n')}
+
+Owned surfaces:
+${task.owned_surfaces.map((surface) => `- ${surface}`).join('\n')}
+
+Context artifacts:
+- .delivery/artifacts/task-plan.json
+- .delivery/artifacts/readout.json
+- prior implementation notes under .delivery/artifacts/
+
+${remediation.length ? `This is a bounce. Fix exactly these findings:\n${remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
+Use the workspace to make the smallest coherent code change. Stay inside the active boundary. Run code or tests that verify the acceptance criteria before returning. Return an implementation note with every changed file and visible verification gaps.`,
+          {
+            requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+            structuredOutput: {
+              schema: builderOutputSchema,
+              model: deliveryModel,
+              instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
+            },
+          },
+        );
+
+        const { note } = builderOutputSchema.parse(buildResponse.object);
+        const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
+        writeDeliveryArtifact({
+          repoPath: inputData.repoPath,
+          artifactPath: notePath,
+          artifact: note,
+        });
+        recordDeliveryArtifact({
+          repoPath: inputData.repoPath,
+          type: `note-${task.id}`,
+          path: notePath,
+        });
+        artifacts.push(notePath);
+
+        endDeliveryStage({
+          repoPath: inputData.repoPath,
+          stage,
+          reason: 'complete_stage',
+        });
+
+        const deterministicResults = implementationDeterministicResults({
+          repoPath: inputData.repoPath,
+          stage,
+          role,
+          note,
+        });
+        checks.push(...checkSummaries(deterministicResults, `${task.id}.a${attemptNumber}`));
+
+        const implementationJudge = await judgeDeliveryArtifact({
+          mastra,
+          repoPath: inputData.repoPath,
+          rubricName: 'implementation',
+          subjectName: notePath,
+          subject: {
+            task,
+            note,
+            files: repoFileContents(inputData.repoPath, note.files_touched),
+            task_plan: taskPlan,
+          },
+          deterministicResults,
+          slug: `implementation-${task.id}-a${attemptNumber}`,
+        });
+        artifacts.push(implementationJudge.judgeOutputPath, implementationJudge.judgmentPath);
+        judgments.push(implementationJudge.ref);
+
+        if (implementationJudge.judgment.passed) {
+          taskComplete = true;
+          taskState[task.id] = 'complete';
+          updateDeliveryTask({
+            repoPath: inputData.repoPath,
+            id: task.id,
+            status: 'complete',
+            owner: role,
+            note: `judged ${implementationJudge.judgment.overall}`,
+          });
+        } else {
+          remediation = implementationFindingSteps(task.id, implementationJudge.judgment.remediation);
+        }
+      }
+
+      if (!taskComplete) {
+        taskState[task.id] = 'stuck';
+        updateDeliveryTask({
+          repoPath: inputData.repoPath,
+          id: task.id,
+          status: 'stuck',
+          owner: role,
+          note: remediation.join(' | ').slice(0, 300) || 'implementation did not pass judgment',
+        });
+      }
+    }
+
+    const blockedOrStuck = Object.entries(taskState).filter(([, status]) => status !== 'complete');
+    if (blockedOrStuck.length) {
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan,
+        status: 'stuck' as const,
+        runId: inputData.runId,
+        summary: 'Build loop stopped with stuck or blocked tasks.',
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: blockedOrStuck.map(([id, status]) => `${id}:${status}`),
+      };
+    }
+
+    return {
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan,
+      status: 'built' as const,
+      runId: inputData.runId,
+      summary: `Build loop completed: ${taskStatusSummary(taskState).join(', ')}`,
+      artifacts,
+      checks,
+      judgments,
+      questions: [],
+      nextSteps: ['Run the release gate stage against implementation notes and changed code.'],
+    };
+  },
+});
+
 export const deliveryWorkflow = createWorkflow({
   id: 'delivery-workflow',
   description:
-    'Native Delivery Engine workflow: initialize run state, create readout and task plan, judge plan quality, and run architect review.',
+    'Native Delivery Engine workflow: initialize run state, create/judge a plan, run architect review, and execute a bounded build loop.',
   inputSchema: workflowInputSchema,
   outputSchema: workflowOutputSchema,
 })
   .then(initializeRunStep)
   .then(createPlanStep)
   .then(createReviewStep)
+  .then(createBuildStep)
   .commit();

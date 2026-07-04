@@ -224,7 +224,9 @@ export function fileOwnership({ role, paths }: { role: DeliveryRole; paths: stri
   return pass();
 }
 
-const codeExec = (event: DeliveryEvent) => event.type === 'run_code' || (event.type === 'tool_use' && event.tool === 'Bash');
+const codeExec = (event: DeliveryEvent) =>
+  event.type === 'run_code' ||
+  (event.type === 'tool_use' && ['Bash', 'mastra_workspace_execute_command'].includes(String(event.tool)));
 const isWrite = (event: DeliveryEvent) =>
   event.type === 'tool_use' &&
   ['Write', 'Edit', 'MultiEdit', 'mastra_workspace_write_file', 'mastra_workspace_edit_file', 'mastra_workspace_ast_edit'].includes(

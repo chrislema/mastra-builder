@@ -55,12 +55,21 @@ project should become the native Mastra version.
   - review-report rubric judgment
   - blocked-plan planner bounce loop
   - bounded retries before stuck state
+- Added delivery build loop skeleton:
+  - topological task execution
+  - engineer/designer routing
+  - active boundary surfaces per task
+  - implementation notes
+  - deterministic implementation gates
+  - implementation rubric judgments
+  - stuck/blocked task propagation
 
 Checkpoint commit:
 
 - `6220908 Port delivery engine foundation to Mastra`
 - `11037bb Add delivery engine port roadmap`
 - `f59419c Add native rubric judgment harness`
+- `9fc5e09 Add architect review stage`
 
 ## Next Slices
 
@@ -111,7 +120,7 @@ Natural commit:
 
 - `Add architect review stage`
 
-### 3. Build Loop Skeleton
+### 3. Build Loop Skeleton (Completed)
 
 Goal: make task execution first-class without implementing every edge case at once.
 
