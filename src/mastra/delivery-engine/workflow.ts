@@ -262,10 +262,21 @@ const deliveryStageOutputSchema = workflowOutputSchema.extend({
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
 });
+const reviewLoopStateSchema = deliveryStageOutputSchema.extend({
+  attempt: z.number().int().min(0).default(0),
+  terminal: z.boolean().default(false),
+});
 const buildTaskWorkItemSchema = deliveryStageOutputSchema.extend({
   task: taskSchema.optional(),
   taskIndex: z.number().int().min(0).default(0),
   skipped: z.boolean().default(false),
+});
+const buildTaskAttemptStateSchema = buildTaskWorkItemSchema.extend({
+  attempt: z.number().int().min(0).default(0),
+  terminal: z.boolean().default(false),
+  taskId: z.string().optional(),
+  taskStatus: z.enum(['complete', 'stuck', 'blocked', 'skipped']).optional(),
+  remediation: z.array(z.string()).default([]),
 });
 const buildTaskWorkItemsSchema = z.array(buildTaskWorkItemSchema);
 const buildTaskResultSchema = deliveryStageOutputSchema.extend({
@@ -273,6 +284,11 @@ const buildTaskResultSchema = deliveryStageOutputSchema.extend({
   taskStatus: z.enum(['complete', 'stuck', 'blocked', 'skipped']).optional(),
 });
 const buildTaskResultsSchema = z.array(buildTaskResultSchema);
+const releaseGateLoopStateSchema = deliveryStageOutputSchema.extend({
+  attempt: z.number().int().min(0).default(0),
+  terminal: z.boolean().default(false),
+  remediation: z.array(z.string()).default([]),
+});
 const deploymentReportStageSchema = deliveryStageOutputSchema.extend({
   deploymentReport: deploymentReportSchema.optional(),
   deploymentReportPath: z.string().optional(),
@@ -926,13 +942,12 @@ const createPlanGateStep = createStep({
   },
 });
 
-const createReviewStep = createStep({
-  id: 'architect-review',
-  description: 'Review the task plan with the architect, judge the review report, and bounce blocked plans to planner.',
+const prepareReviewLoopStep = createStep({
+  id: 'prepare-review-loop',
+  description: 'Prepare architect review retry state for the native workflow loop.',
   inputSchema: planStageOutputSchema,
-  outputSchema: deliveryStageOutputSchema,
-  scorers: deliveryReviewStepScorers,
-  execute: async ({ inputData, mastra }) => {
+  outputSchema: reviewLoopStateSchema,
+  execute: async ({ inputData }) => {
     const passThrough = () => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
@@ -947,17 +962,51 @@ const createReviewStep = createStep({
       judgments: inputData.judgments,
       questions: inputData.questions,
       nextSteps: inputData.nextSteps,
+      attempt: 0,
+      terminal: true,
     });
 
     if (inputData.status !== 'planned') return passThrough();
     if (!inputData.taskPlan) throw new Error('plan stage did not provide a task plan for architect review');
 
+    return {
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: inputData.taskPlan,
+      releaseGate: inputData.releaseGate,
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts: inputData.artifacts,
+      checks: inputData.checks,
+      judgments: inputData.judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+      attempt: 0,
+      terminal: false,
+    };
+  },
+});
+
+const executeReviewAttemptStep = createStep({
+  id: 'architect-review-attempt',
+  description: 'Run one architect review attempt and optionally revise the task plan before the next loop iteration.',
+  inputSchema: reviewLoopStateSchema,
+  outputSchema: reviewLoopStateSchema,
+  execute: async ({ inputData, mastra }) => {
+    if (inputData.terminal || inputData.status !== 'planned') {
+      return { ...inputData, terminal: true };
+    }
+    if (!inputData.taskPlan) throw new Error('review loop did not provide a task plan for architect review');
+
     const architect = requiredAgent(mastra, 'architect');
     const planner = requiredAgent(mastra, 'planner');
-    let taskPlan = inputData.taskPlan;
+    const taskPlan = inputData.taskPlan;
     const artifacts = [...inputData.artifacts];
     const checks = [...inputData.checks];
     const judgments = [...inputData.judgments];
+    const attempt = inputData.attempt;
     const stageContext = () => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
@@ -966,18 +1015,18 @@ const createReviewStep = createStep({
       releaseGate: inputData.releaseGate,
     });
 
-    for (let attempt = 0; attempt <= inputData.maxRetries; attempt += 1) {
-      const suffix = attempt === 0 ? 'initial' : `retry-${attempt}`;
-      const reviewPath = attempt === 0 ? '.delivery/artifacts/review-report.json' : `.delivery/artifacts/review-report.${suffix}.json`;
+    const suffix = attempt === 0 ? 'initial' : `retry-${attempt}`;
+    const reviewPath =
+      attempt === 0 ? '.delivery/artifacts/review-report.json' : `.delivery/artifacts/review-report.${suffix}.json`;
 
-      startDeliveryStage({
-        repoPath: inputData.repoPath,
-        stage: `review:${suffix}`,
-        role: 'architect',
-      });
+    startDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage: `review:${suffix}`,
+      role: 'architect',
+    });
 
-      const reviewResponse = await architect.generate(
-        `Review the task plan below for structural readiness before implementation.
+    const reviewResponse = await architect.generate(
+      `Review the task plan below for structural readiness before implementation.
 
 Evaluate granularity, error handling, trust boundaries, state authority, fail-fast behavior, data flow, security, and complexity.
 Approve only when build can safely begin. Block when planner changes are required before implementation.
@@ -985,106 +1034,112 @@ Every finding must be specific, evidenced, and remediable by an owning role.
 
 Task plan:
 ${JSON.stringify(taskPlan, null, 2)}`,
-        {
-          requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
-          structuredOutput: {
-            schema: reviewReportSchema,
-            model: deliveryModel,
-            instructions: 'Return only a review-report object.',
-          },
+      {
+        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        structuredOutput: {
+          schema: reviewReportSchema,
+          model: deliveryModel,
+          instructions: 'Return only a review-report object.',
         },
-      );
+      },
+    );
 
-      const reviewReport = reviewReportSchema.parse(reviewResponse.object);
-      writeDeliveryArtifact({
-        repoPath: inputData.repoPath,
-        artifactPath: reviewPath,
-        artifact: reviewReport,
-      });
-      recordDeliveryArtifact({
-        repoPath: inputData.repoPath,
-        type: attempt === 0 ? 'review-report' : `review-report:${suffix}`,
-        path: reviewPath,
-      });
-      artifacts.push(reviewPath);
+    const reviewReport = reviewReportSchema.parse(reviewResponse.object);
+    writeDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      artifactPath: reviewPath,
+      artifact: reviewReport,
+    });
+    recordDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      type: attempt === 0 ? 'review-report' : `review-report:${suffix}`,
+      path: reviewPath,
+    });
+    artifacts.push(reviewPath);
 
-      endDeliveryStage({
-        repoPath: inputData.repoPath,
-        stage: `review:${suffix}`,
-        reason: reviewReport.verdict === 'blocked' ? 'escalation' : 'complete_stage',
-      });
+    endDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage: `review:${suffix}`,
+      reason: reviewReport.verdict === 'blocked' ? 'escalation' : 'complete_stage',
+    });
 
-      const reviewJudge = await judgeDeliveryArtifact({
-        mastra,
-        repoPath: inputData.repoPath,
-        rubricName: 'review-report',
-        subjectName: reviewPath,
-        subject: reviewReport,
-        slug: attempt === 0 ? 'review-report' : `review-report-${suffix}`,
-      });
-      artifacts.push(reviewJudge.judgeOutputPath, reviewJudge.judgmentPath);
-      judgments.push(reviewJudge.ref);
+    const reviewJudge = await judgeDeliveryArtifact({
+      mastra,
+      repoPath: inputData.repoPath,
+      rubricName: 'review-report',
+      subjectName: reviewPath,
+      subject: reviewReport,
+      slug: attempt === 0 ? 'review-report' : `review-report-${suffix}`,
+    });
+    artifacts.push(reviewJudge.judgeOutputPath, reviewJudge.judgmentPath);
+    judgments.push(reviewJudge.ref);
 
-      if (reviewReport.verdict !== 'blocked' && reviewJudge.judgment.passed) {
-        return {
-          ...stageContext(),
-          status: 'reviewed' as const,
-          runId: inputData.runId,
-          summary: `Architect ${reviewReport.verdict}: ${reviewReport.recommended_next_step}`,
-          artifacts,
-          checks,
-          judgments,
-          questions: [],
-          nextSteps: [
-            ...reviewReport.conditions.map((condition) => `Condition: ${condition}`),
-            ...reviewReport.residual_risks.map((risk) => `Watch: ${risk}`),
-            'Run the delivery build loop against the approved task plan.',
-          ],
-        };
-      }
+    if (reviewReport.verdict !== 'blocked' && reviewJudge.judgment.passed) {
+      return {
+        ...stageContext(),
+        status: 'reviewed' as const,
+        runId: inputData.runId,
+        summary: `Architect ${reviewReport.verdict}: ${reviewReport.recommended_next_step}`,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: [
+          ...reviewReport.conditions.map((condition) => `Condition: ${condition}`),
+          ...reviewReport.residual_risks.map((risk) => `Watch: ${risk}`),
+          'Run the delivery build loop against the approved task plan.',
+        ],
+        attempt,
+        terminal: true,
+      };
+    }
 
-      if (!reviewJudge.judgment.passed) {
-        return {
-          ...stageContext(),
-          status: 'stuck' as const,
-          runId: inputData.runId,
-          summary: 'Architect review report failed rubric judgment.',
-          artifacts,
-          checks,
-          judgments,
-          questions: [],
-          nextSteps: reviewJudge.judgment.remediation,
-        };
-      }
+    if (!reviewJudge.judgment.passed) {
+      return {
+        ...stageContext(),
+        status: 'stuck' as const,
+        runId: inputData.runId,
+        summary: 'Architect review report failed rubric judgment.',
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: reviewJudge.judgment.remediation,
+        attempt,
+        terminal: true,
+      };
+    }
 
-      if (attempt >= inputData.maxRetries) {
-        return {
-          ...stageContext(),
-          status: 'stuck' as const,
-          runId: inputData.runId,
-          summary: 'Architect review blocked the plan after bounded planner retries.',
-          artifacts,
-          checks,
-          judgments,
-          questions: [],
-          nextSteps: [
-            reviewReport.recommended_next_step,
-            ...reviewReport.findings.map(
-              (finding) => `${finding.severity.toUpperCase()}: ${finding.title} - ${finding.required_remediation}`,
-            ),
-          ],
-        };
-      }
+    if (attempt >= inputData.maxRetries) {
+      return {
+        ...stageContext(),
+        status: 'stuck' as const,
+        runId: inputData.runId,
+        summary: 'Architect review blocked the plan after bounded planner retries.',
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: [
+          reviewReport.recommended_next_step,
+          ...reviewReport.findings.map(
+            (finding) => `${finding.severity.toUpperCase()}: ${finding.title} - ${finding.required_remediation}`,
+          ),
+        ],
+        attempt,
+        terminal: true,
+      };
+    }
 
-      const revisionNumber = attempt + 1;
-      startDeliveryStage({
-        repoPath: inputData.repoPath,
-        stage: `plan:architect-bounce-${revisionNumber}`,
-        role: 'planner',
-      });
+    const revisionNumber = attempt + 1;
+    startDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage: `plan:architect-bounce-${revisionNumber}`,
+      role: 'planner',
+    });
 
-      const revisionResponse = await planner.generate(
-        `The architect blocked the task plan. Revise the task plan to address the review findings.
+    const revisionResponse = await planner.generate(
+      `The architect blocked the task plan. Revise the task plan to address the review findings.
 
 Return a full replacement taskPlan object. Preserve concrete deliverables, checkable acceptance criteria, dependencies, and owned surfaces.
 Do not write implementation code.
@@ -1094,93 +1149,127 @@ ${JSON.stringify(taskPlan, null, 2)}
 
 Architect review:
 ${JSON.stringify(reviewReport, null, 2)}`,
-        {
-          requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
-          structuredOutput: {
-            schema: plannerRevisionOutputSchema,
-            model: deliveryModel,
-            instructions: 'Return only the revised taskPlan object wrapped as { "taskPlan": ... }.',
-          },
+      {
+        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        structuredOutput: {
+          schema: plannerRevisionOutputSchema,
+          model: deliveryModel,
+          instructions: 'Return only the revised taskPlan object wrapped as { "taskPlan": ... }.',
         },
-      );
+      },
+    );
 
-      const revision = plannerRevisionOutputSchema.parse(revisionResponse.object);
-      taskPlan = revision.taskPlan;
-      const revisionPath = `.delivery/artifacts/task-plan.revision-${revisionNumber}.json`;
-      writeDeliveryArtifact({
-        repoPath: inputData.repoPath,
-        artifactPath: revisionPath,
-        artifact: taskPlan,
-      });
-      recordDeliveryArtifact({
-        repoPath: inputData.repoPath,
-        type: `task-plan:revision-${revisionNumber}`,
-        path: revisionPath,
-      });
-      artifacts.push(revisionPath);
+    const revision = plannerRevisionOutputSchema.parse(revisionResponse.object);
+    const revisedTaskPlan = revision.taskPlan;
+    const revisionPath = `.delivery/artifacts/task-plan.revision-${revisionNumber}.json`;
+    writeDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      artifactPath: revisionPath,
+      artifact: revisedTaskPlan,
+    });
+    recordDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      type: `task-plan:revision-${revisionNumber}`,
+      path: revisionPath,
+    });
+    artifacts.push(revisionPath);
 
-      endDeliveryStage({
-        repoPath: inputData.repoPath,
-        stage: `plan:architect-bounce-${revisionNumber}`,
-        reason: 'complete_stage',
-      });
+    endDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage: `plan:architect-bounce-${revisionNumber}`,
+      reason: 'complete_stage',
+    });
 
-      const revisedDeterministicResults = taskPlanDeterministicResults(taskPlan);
-      checks.push(...checkSummaries(revisedDeterministicResults, `revision-${revisionNumber}`));
-      const failedRevisedChecks = revisedDeterministicResults.filter((check) => !check.passed);
-      if (failedRevisedChecks.length) {
-        return {
-          ...stageContext(),
-          status: 'stuck' as const,
-          runId: inputData.runId,
-          summary: 'Planner revision failed deterministic task-plan gates.',
-          artifacts,
-          checks,
-          judgments,
-          questions: [],
-          nextSteps: failedRevisedChecks.map((check) => check.reason ?? 'deterministic check failed'),
-        };
-      }
+    const revisedDeterministicResults = taskPlanDeterministicResults(revisedTaskPlan);
+    checks.push(...checkSummaries(revisedDeterministicResults, `revision-${revisionNumber}`));
+    const failedRevisedChecks = revisedDeterministicResults.filter((check) => !check.passed);
+    if (failedRevisedChecks.length) {
+      return {
+        ...stageContext(),
+        taskPlan: revisedTaskPlan,
+        status: 'stuck' as const,
+        runId: inputData.runId,
+        summary: 'Planner revision failed deterministic task-plan gates.',
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: failedRevisedChecks.map((check) => check.reason ?? 'deterministic check failed'),
+        attempt,
+        terminal: true,
+      };
+    }
 
-      const revisedPlanJudge = await judgeDeliveryArtifact({
-        mastra,
-        repoPath: inputData.repoPath,
-        rubricName: 'task-plan',
-        subjectName: revisionPath,
-        subject: taskPlan,
-        deterministicResults: revisedDeterministicResults,
-        slug: `task-plan-revision-${revisionNumber}`,
-      });
-      artifacts.push(revisedPlanJudge.judgeOutputPath, revisedPlanJudge.judgmentPath);
-      judgments.push(revisedPlanJudge.ref);
+    const revisedPlanJudge = await judgeDeliveryArtifact({
+      mastra,
+      repoPath: inputData.repoPath,
+      rubricName: 'task-plan',
+      subjectName: revisionPath,
+      subject: revisedTaskPlan,
+      deterministicResults: revisedDeterministicResults,
+      slug: `task-plan-revision-${revisionNumber}`,
+    });
+    artifacts.push(revisedPlanJudge.judgeOutputPath, revisedPlanJudge.judgmentPath);
+    judgments.push(revisedPlanJudge.ref);
 
-      if (!revisedPlanJudge.judgment.passed) {
-        return {
-          ...stageContext(),
-          status: 'stuck' as const,
-          runId: inputData.runId,
-          summary: 'Planner revision failed task-plan rubric judgment.',
-          artifacts,
-          checks,
-          judgments,
-          questions: [],
-          nextSteps: revisedPlanJudge.judgment.remediation,
-        };
-      }
+    if (!revisedPlanJudge.judgment.passed) {
+      return {
+        ...stageContext(),
+        taskPlan: revisedTaskPlan,
+        status: 'stuck' as const,
+        runId: inputData.runId,
+        summary: 'Planner revision failed task-plan rubric judgment.',
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: revisedPlanJudge.judgment.remediation,
+        attempt,
+        terminal: true,
+      };
     }
 
     return {
-      ...stageContext(),
-      status: 'stuck' as const,
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: revisedTaskPlan,
+      releaseGate: inputData.releaseGate,
+      status: 'planned' as const,
       runId: inputData.runId,
-      summary: 'Architect review did not reach a terminal state.',
+      summary: 'Planner revised the task plan after architect review.',
       artifacts,
       checks,
       judgments,
       questions: [],
-      nextSteps: ['Inspect .delivery/events.jsonl and rerun the review stage.'],
+      nextSteps: ['Rerun architect review against the revised task plan.'],
+      attempt: revisionNumber,
+      terminal: false,
     };
   },
+});
+
+const finalizeReviewLoopStep = createStep({
+  id: 'architect-review',
+  description: 'Finalize architect review loop output for delivery workflow handoff.',
+  inputSchema: reviewLoopStateSchema,
+  outputSchema: deliveryStageOutputSchema,
+  scorers: deliveryReviewStepScorers,
+  execute: async ({ inputData }) => ({
+    repoPath: inputData.repoPath,
+    maxRetries: inputData.maxRetries,
+    deployMode: inputData.deployMode,
+    taskPlan: inputData.taskPlan,
+    releaseGate: inputData.releaseGate,
+    status: inputData.status,
+    runId: inputData.runId,
+    summary: inputData.summary,
+    artifacts: inputData.artifacts,
+    checks: inputData.checks,
+    judgments: inputData.judgments,
+    questions: inputData.questions,
+    nextSteps: inputData.nextSteps,
+  }),
 });
 
 const prepareBuildTasksStep = createStep({
@@ -1243,12 +1332,12 @@ const prepareBuildTasksStep = createStep({
   },
 });
 
-const executeBuildTaskStep = createStep({
-  id: 'execute-build-task',
-  description: 'Run one build task through the owning agent, deterministic checks, and implementation judgment.',
+const prepareBuildTaskAttemptLoopStep = createStep({
+  id: 'prepare-build-task-attempt-loop',
+  description: 'Prepare one build task for native retry attempts.',
   inputSchema: buildTaskWorkItemSchema,
-  outputSchema: buildTaskResultSchema,
-  execute: async ({ inputData, mastra }) => {
+  outputSchema: buildTaskAttemptStateSchema,
+  execute: async ({ inputData }) => {
     const passThrough = (taskStatus: 'complete' | 'stuck' | 'blocked' | 'skipped' = 'skipped') => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
@@ -1265,6 +1354,9 @@ const executeBuildTaskStep = createStep({
       nextSteps: inputData.nextSteps,
       taskId: inputData.task?.id,
       taskStatus,
+      attempt: 0,
+      terminal: true,
+      remediation: [],
     });
 
     if (inputData.skipped) return passThrough();
@@ -1305,35 +1397,76 @@ const executeBuildTaskStep = createStep({
         nextSteps: blockedBy.map((dependency) => `${task.id} blocked by ${dependency}`),
         taskId: task.id,
         taskStatus: 'blocked' as const,
+        attempt: 0,
+        terminal: true,
+        remediation: [],
       };
     }
 
+    return {
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan,
+      releaseGate: inputData.releaseGate,
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts,
+      checks,
+      judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+      task,
+      taskIndex: inputData.taskIndex,
+      skipped: false,
+      taskId: task.id,
+      taskStatus: undefined,
+      attempt: 0,
+      terminal: false,
+      remediation: [],
+    };
+  },
+});
+
+const executeBuildTaskAttemptStep = createStep({
+  id: 'execute-build-task-attempt',
+  description: 'Run one implementation attempt for a build task and decide whether another attempt is needed.',
+  inputSchema: buildTaskAttemptStateSchema,
+  outputSchema: buildTaskAttemptStateSchema,
+  execute: async ({ inputData, mastra }) => {
+    if (inputData.terminal) return inputData;
+    if (!inputData.taskPlan) throw new Error('build task attempt did not include a task plan');
+    if (!inputData.task) throw new Error('build task attempt did not include a task');
+
+    const taskPlan = inputData.taskPlan;
+    const task = inputData.task;
+    const artifacts = [...inputData.artifacts];
+    const checks = [...inputData.checks];
+    const judgments = [...inputData.judgments];
     const role = buildRoleForTask(task);
     const agent = requiredAgent(mastra, role);
-    let taskComplete = false;
-    let remediation: string[] = [];
+    const attempt = inputData.attempt;
+    const attemptNumber = attempt + 1;
+    const stage = `build:${task.id}`;
+    const usableSurfaces = task.owned_surfaces.filter((surface) => !/^unknown\b/i.test(surface));
+    updateDeliveryTask({
+      repoPath: inputData.repoPath,
+      id: task.id,
+      status: 'building',
+      owner: role,
+      note: attempt > 0 ? `retry ${attemptNumber}` : undefined,
+      bumpRetries: attempt > 0,
+    });
+    startDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage,
+      role,
+      surfaces: usableSurfaces.length ? usableSurfaces : undefined,
+    });
 
-    for (let attempt = 0; attempt <= inputData.maxRetries && !taskComplete; attempt += 1) {
-      const attemptNumber = attempt + 1;
-      const stage = `build:${task.id}`;
-      const usableSurfaces = task.owned_surfaces.filter((surface) => !/^unknown\b/i.test(surface));
-      updateDeliveryTask({
-        repoPath: inputData.repoPath,
-        id: task.id,
-        status: 'building',
-        owner: role,
-        note: attempt > 0 ? `retry ${attemptNumber}` : undefined,
-        bumpRetries: attempt > 0,
-      });
-      startDeliveryStage({
-        repoPath: inputData.repoPath,
-        stage,
-        role,
-        surfaces: usableSurfaces.length ? usableSurfaces : undefined,
-      });
-
-      const buildResponse = await agent.generate(
-        `Implement task ${task.id}: ${task.deliverable}
+    const buildResponse = await agent.generate(
+      `Implement task ${task.id}: ${task.deliverable}
 
 Acceptance criteria:
 ${task.acceptance_criteria.map((criterion) => `- ${criterion}`).join('\n')}
@@ -1346,78 +1479,99 @@ Context artifacts:
 - .delivery/artifacts/readout.json
 - prior implementation notes under .delivery/artifacts/
 
-${remediation.length ? `This is a bounce. Fix exactly these findings:\n${remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
+${inputData.remediation.length ? `This is a bounce. Fix exactly these findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
 Use the workspace to make the smallest coherent code change. Stay inside the active boundary. Run code or tests that verify the acceptance criteria before returning. Return an implementation note with every changed file and visible verification gaps.`,
-        {
-          requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
-          structuredOutput: {
-            schema: builderOutputSchema,
-            model: deliveryModel,
-            instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
-          },
+      {
+        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        structuredOutput: {
+          schema: builderOutputSchema,
+          model: deliveryModel,
+          instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
         },
-      );
+      },
+    );
 
-      const { note } = builderOutputSchema.parse(buildResponse.object);
-      const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
-      writeDeliveryArtifact({
-        repoPath: inputData.repoPath,
-        artifactPath: notePath,
-        artifact: note,
-      });
-      recordDeliveryArtifact({
-        repoPath: inputData.repoPath,
-        type: `note-${task.id}`,
-        path: notePath,
-      });
-      artifacts.push(notePath);
+    const { note } = builderOutputSchema.parse(buildResponse.object);
+    const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
+    writeDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      artifactPath: notePath,
+      artifact: note,
+    });
+    recordDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      type: `note-${task.id}`,
+      path: notePath,
+    });
+    artifacts.push(notePath);
 
-      endDeliveryStage({
-        repoPath: inputData.repoPath,
-        stage,
-        reason: 'complete_stage',
-      });
+    endDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage,
+      reason: 'complete_stage',
+    });
 
-      const deterministicResults = implementationDeterministicResults({
-        repoPath: inputData.repoPath,
-        stage,
-        role,
+    const deterministicResults = implementationDeterministicResults({
+      repoPath: inputData.repoPath,
+      stage,
+      role,
+      note,
+    });
+    checks.push(...checkSummaries(deterministicResults, `${task.id}.a${attemptNumber}`));
+
+    const implementationJudge = await judgeDeliveryArtifact({
+      mastra,
+      repoPath: inputData.repoPath,
+      rubricName: 'implementation',
+      subjectName: notePath,
+      subject: {
+        task,
         note,
-      });
-      checks.push(...checkSummaries(deterministicResults, `${task.id}.a${attemptNumber}`));
+        files: repoFileContents(inputData.repoPath, note.files_touched),
+        task_plan: taskPlan,
+      },
+      deterministicResults,
+      slug: `implementation-${task.id}-a${attemptNumber}`,
+    });
+    artifacts.push(implementationJudge.judgeOutputPath, implementationJudge.judgmentPath);
+    judgments.push(implementationJudge.ref);
 
-      const implementationJudge = await judgeDeliveryArtifact({
-        mastra,
+    if (implementationJudge.judgment.passed) {
+      updateDeliveryTask({
         repoPath: inputData.repoPath,
-        rubricName: 'implementation',
-        subjectName: notePath,
-        subject: {
-          task,
-          note,
-          files: repoFileContents(inputData.repoPath, note.files_touched),
-          task_plan: taskPlan,
-        },
-        deterministicResults,
-        slug: `implementation-${task.id}-a${attemptNumber}`,
+        id: task.id,
+        status: 'complete',
+        owner: role,
+        note: `judged ${implementationJudge.judgment.overall}`,
       });
-      artifacts.push(implementationJudge.judgeOutputPath, implementationJudge.judgmentPath);
-      judgments.push(implementationJudge.ref);
 
-      if (implementationJudge.judgment.passed) {
-        taskComplete = true;
-        updateDeliveryTask({
-          repoPath: inputData.repoPath,
-          id: task.id,
-          status: 'complete',
-          owner: role,
-          note: `judged ${implementationJudge.judgment.overall}`,
-        });
-      } else {
-        remediation = implementationFindingSteps(task.id, implementationJudge.judgment.remediation);
-      }
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan,
+        releaseGate: inputData.releaseGate,
+        status: 'built' as const,
+        runId: inputData.runId,
+        summary: `Build task ${task.id} completed.`,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: ['Continue the delivery build loop.'],
+        task,
+        taskIndex: inputData.taskIndex,
+        skipped: false,
+        taskId: task.id,
+        taskStatus: 'complete' as const,
+        attempt,
+        terminal: true,
+        remediation: [],
+      };
     }
 
-    if (!taskComplete) {
+    const remediation = implementationFindingSteps(task.id, implementationJudge.judgment.remediation);
+    if (attempt >= inputData.maxRetries) {
       updateDeliveryTask({
         repoPath: inputData.repoPath,
         id: task.id,
@@ -1442,6 +1596,12 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
         nextSteps: implementationFindingSteps(task.id, remediation),
         taskId: task.id,
         taskStatus: 'stuck' as const,
+        task,
+        taskIndex: inputData.taskIndex,
+        skipped: false,
+        attempt,
+        terminal: true,
+        remediation,
       };
     }
 
@@ -1451,18 +1611,54 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
       deployMode: inputData.deployMode,
       taskPlan,
       releaseGate: inputData.releaseGate,
-      status: 'built' as const,
+      status: 'reviewed' as const,
       runId: inputData.runId,
-      summary: `Build task ${task.id} completed.`,
+      summary: `Build task ${task.id} needs another implementation attempt.`,
       artifacts,
       checks,
       judgments,
       questions: [],
-      nextSteps: ['Continue the delivery build loop.'],
+      nextSteps: remediation,
+      task,
+      taskIndex: inputData.taskIndex,
+      skipped: false,
       taskId: task.id,
-      taskStatus: 'complete' as const,
+      taskStatus: undefined,
+      attempt: attempt + 1,
+      terminal: false,
+      remediation,
     };
   },
+});
+
+const finalizeBuildTaskAttemptLoopStep = createStep({
+  id: 'execute-build-task',
+  description: 'Finalize native build task attempt loop output.',
+  inputSchema: buildTaskAttemptStateSchema,
+  outputSchema: buildTaskResultSchema,
+  execute: async ({ inputData }) => ({
+    repoPath: inputData.repoPath,
+    maxRetries: inputData.maxRetries,
+    deployMode: inputData.deployMode,
+    taskPlan: inputData.taskPlan,
+    releaseGate: inputData.releaseGate,
+    status: inputData.status === 'reviewed' ? ('stuck' as const) : inputData.status,
+    runId: inputData.runId,
+    summary:
+      inputData.status === 'reviewed' ? 'Build task attempt loop ended before a terminal result.' : inputData.summary,
+    artifacts: inputData.artifacts,
+    checks: inputData.checks,
+    judgments: inputData.judgments,
+    questions: inputData.questions,
+    nextSteps:
+      inputData.status === 'reviewed'
+        ? inputData.remediation.length
+          ? inputData.remediation
+          : ['Inspect build task attempt state and rerun the build loop.']
+        : inputData.nextSteps,
+    taskId: inputData.taskId,
+    taskStatus: inputData.taskStatus ?? (inputData.status === 'reviewed' ? ('stuck' as const) : undefined),
+  }),
 });
 
 const executeBuildTaskWorkflow = createWorkflow({
@@ -1472,7 +1668,9 @@ const executeBuildTaskWorkflow = createWorkflow({
   outputSchema: buildTaskResultSchema,
   stateSchema: deliveryWorkflowStateSchema,
 })
-  .then(executeBuildTaskStep)
+  .then(prepareBuildTaskAttemptLoopStep)
+  .dountil(executeBuildTaskAttemptStep, async ({ inputData }) => inputData.terminal)
+  .then(finalizeBuildTaskAttemptLoopStep)
   .commit();
 
 const aggregateBuildTaskResultsStep = createStep({
@@ -1565,13 +1763,12 @@ const aggregateBuildTaskResultsStep = createStep({
   },
 });
 
-const createReleaseGateStep = createStep({
-  id: 'release-gate',
-  description: 'Run tester verification, produce a release gate, judge it, and stop deployment on gate failure.',
+const prepareReleaseGateLoopStep = createStep({
+  id: 'prepare-release-gate-loop',
+  description: 'Prepare tester release gate retry state for the native workflow loop.',
   inputSchema: deliveryStageOutputSchema,
-  outputSchema: deliveryStageOutputSchema,
-  scorers: deliveryReleaseGateStepScorers,
-  execute: async ({ inputData, mastra }) => {
+  outputSchema: releaseGateLoopStateSchema,
+  execute: async ({ inputData }) => {
     const passThrough = () => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
@@ -1586,126 +1783,185 @@ const createReleaseGateStep = createStep({
       judgments: inputData.judgments,
       questions: inputData.questions,
       nextSteps: inputData.nextSteps,
+      attempt: 0,
+      terminal: true,
+      remediation: [],
     });
 
     if (inputData.status !== 'built') return passThrough();
     if (!inputData.taskPlan) throw new Error('build stage did not provide a task plan for release gating');
 
+    return {
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: inputData.taskPlan,
+      releaseGate: inputData.releaseGate,
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts: inputData.artifacts,
+      checks: inputData.checks,
+      judgments: inputData.judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+      attempt: 0,
+      terminal: false,
+      remediation: [],
+    };
+  },
+});
+
+const executeReleaseGateAttemptStep = createStep({
+  id: 'release-gate-attempt',
+  description: 'Run one release gate attempt and decide whether another tester attempt is needed.',
+  inputSchema: releaseGateLoopStateSchema,
+  outputSchema: releaseGateLoopStateSchema,
+  execute: async ({ inputData, mastra }) => {
+    if (inputData.terminal || inputData.status !== 'built') {
+      return { ...inputData, terminal: true };
+    }
+    if (!inputData.taskPlan) throw new Error('release gate loop did not provide a task plan');
+
     const tester = requiredAgent(mastra, 'tester');
     const artifacts = [...inputData.artifacts];
     const checks = [...inputData.checks];
     const judgments = [...inputData.judgments];
-    let remediation: string[] = [];
+    const attempt = inputData.attempt;
+    const attemptNumber = attempt + 1;
+    const stage = `test:a${attemptNumber}`;
+    const gatePath =
+      attempt === 0 ? '.delivery/artifacts/release-gate.json' : `.delivery/artifacts/release-gate.a${attemptNumber}.json`;
 
-    for (let attempt = 0; attempt <= inputData.maxRetries; attempt += 1) {
-      const attemptNumber = attempt + 1;
-      const stage = `test:a${attemptNumber}`;
-      const gatePath = attempt === 0 ? '.delivery/artifacts/release-gate.json' : `.delivery/artifacts/release-gate.a${attemptNumber}.json`;
+    startDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage,
+      role: 'tester',
+    });
 
-      startDeliveryStage({
-        repoPath: inputData.repoPath,
-        stage,
-        role: 'tester',
-      });
-
-      const gateResponse = await tester.generate(
-        `Verify the built work and produce a release gate for pre-deployment.
+    const gateResponse = await tester.generate(
+      `Verify the built work and produce a release gate for pre-deployment.
 
 Read the task plan and implementation notes under .delivery/artifacts/. Write or update tests under tests/ when useful. Run the relevant smoke, API, and E2E checks that can be executed in this repo. Log test/probe runs through workspace command execution before returning.
 
 Known task plan:
 ${JSON.stringify(inputData.taskPlan, null, 2)}
 
-${remediation.length ? `This is a bounce. Fix exactly these release-gate findings:\n${remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
+${inputData.remediation.length ? `This is a bounce. Fix exactly these release-gate findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
 Return a release-gate object with event_type "pre_deployment". Every critical area must be verified with evidence, missing and therefore blocking, or not_applicable with a reason. Fail closed on unproven critical behavior.`,
-        {
-          requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
-          structuredOutput: {
-            schema: testerOutputSchema,
-            model: deliveryModel,
-            instructions: 'Return only { "gate": <release-gate> }.',
-          },
+      {
+        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        structuredOutput: {
+          schema: testerOutputSchema,
+          model: deliveryModel,
+          instructions: 'Return only { "gate": <release-gate> }.',
         },
-      );
+      },
+    );
 
-      const { gate } = testerOutputSchema.parse(gateResponse.object);
-      writeDeliveryArtifact({
-        repoPath: inputData.repoPath,
-        artifactPath: gatePath,
-        artifact: gate,
-      });
-      recordDeliveryArtifact({
-        repoPath: inputData.repoPath,
-        type: attempt === 0 ? 'release-gate' : `release-gate:a${attemptNumber}`,
-        path: gatePath,
-      });
-      artifacts.push(gatePath);
+    const { gate } = testerOutputSchema.parse(gateResponse.object);
+    writeDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      artifactPath: gatePath,
+      artifact: gate,
+    });
+    recordDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      type: attempt === 0 ? 'release-gate' : `release-gate:a${attemptNumber}`,
+      path: gatePath,
+    });
+    artifacts.push(gatePath);
 
-      endDeliveryStage({
-        repoPath: inputData.repoPath,
-        stage,
-        reason: 'complete_stage',
-      });
+    endDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage,
+      reason: 'complete_stage',
+    });
 
-      const deterministicResults = releaseGateDeterministicResults({
-        repoPath: inputData.repoPath,
-        stage,
+    const deterministicResults = releaseGateDeterministicResults({
+      repoPath: inputData.repoPath,
+      stage,
+      gate,
+    });
+    checks.push(...checkSummaries(deterministicResults, `release-gate.a${attemptNumber}`));
+
+    const gateJudge = await judgeDeliveryArtifact({
+      mastra,
+      repoPath: inputData.repoPath,
+      rubricName: 'release-gate',
+      subjectName: gatePath,
+      subject: {
         gate,
-      });
-      checks.push(...checkSummaries(deterministicResults, `release-gate.a${attemptNumber}`));
+        evidence_events: readDeliveryEvents(inputData.repoPath).filter((event) => event.stage === stage),
+      },
+      deterministicResults,
+      slug: `release-gate-a${attemptNumber}`,
+    });
+    artifacts.push(gateJudge.judgeOutputPath, gateJudge.judgmentPath);
+    judgments.push(gateJudge.ref);
 
-      const gateJudge = await judgeDeliveryArtifact({
-        mastra,
-        repoPath: inputData.repoPath,
-        rubricName: 'release-gate',
-        subjectName: gatePath,
-        subject: {
-          gate,
-          evidence_events: readDeliveryEvents(inputData.repoPath).filter((event) => event.stage === stage),
-        },
-        deterministicResults,
-        slug: `release-gate-a${attemptNumber}`,
-      });
-      artifacts.push(gateJudge.judgeOutputPath, gateJudge.judgmentPath);
-      judgments.push(gateJudge.ref);
-
-      if (gateJudge.judgment.passed) {
-        if (gate.decision !== 'pass') {
-          return {
-            repoPath: inputData.repoPath,
-            maxRetries: inputData.maxRetries,
-            deployMode: inputData.deployMode,
-            taskPlan: inputData.taskPlan,
-            releaseGate: gate,
-            status: 'gate_failed' as const,
-            runId: inputData.runId,
-            summary: 'Release gate failed; deployment is stopped.',
-            artifacts,
-            checks,
-            judgments,
-            questions: [],
-            nextSteps: gate.blockers.length ? gate.blockers : ['Fix release-gate blockers and rerun test stage.'],
-          };
-        }
-
+    if (gateJudge.judgment.passed) {
+      if (gate.decision !== 'pass') {
         return {
           repoPath: inputData.repoPath,
           maxRetries: inputData.maxRetries,
           deployMode: inputData.deployMode,
           taskPlan: inputData.taskPlan,
           releaseGate: gate,
-          status: 'release_ready' as const,
+          status: 'gate_failed' as const,
           runId: inputData.runId,
-          summary: gate.summary,
+          summary: 'Release gate failed; deployment is stopped.',
           artifacts,
           checks,
           judgments,
           questions: [],
-          nextSteps: ['Run deployment stage using the passing release gate.'],
+          nextSteps: gate.blockers.length ? gate.blockers : ['Fix release-gate blockers and rerun test stage.'],
+          attempt,
+          terminal: true,
+          remediation: [],
         };
       }
 
-      remediation = gateJudge.judgment.remediation;
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan: inputData.taskPlan,
+        releaseGate: gate,
+        status: 'release_ready' as const,
+        runId: inputData.runId,
+        summary: gate.summary,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: ['Run deployment stage using the passing release gate.'],
+        attempt,
+        terminal: true,
+        remediation: [],
+      };
+    }
+
+    const remediation = gateJudge.judgment.remediation;
+    if (attempt < inputData.maxRetries) {
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan: inputData.taskPlan,
+        releaseGate: gate,
+        status: 'built' as const,
+        runId: inputData.runId,
+        summary: 'Release gate needs another tester attempt.',
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: remediation.length ? remediation : ['Retry release gate with stronger evidence.'],
+        attempt: attempt + 1,
+        terminal: false,
+        remediation,
+      };
     }
 
     return {
@@ -1713,6 +1969,7 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
       taskPlan: inputData.taskPlan,
+      releaseGate: gate,
       status: 'stuck' as const,
       runId: inputData.runId,
       summary: 'Release gate did not pass judgment within retry budget.',
@@ -1721,8 +1978,34 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
       judgments,
       questions: [],
       nextSteps: remediation.length ? remediation : ['Inspect release gate evidence and rerun tester stage.'],
+      attempt,
+      terminal: true,
+      remediation,
     };
   },
+});
+
+const finalizeReleaseGateLoopStep = createStep({
+  id: 'release-gate',
+  description: 'Finalize native release gate retry loop output.',
+  inputSchema: releaseGateLoopStateSchema,
+  outputSchema: deliveryStageOutputSchema,
+  scorers: deliveryReleaseGateStepScorers,
+  execute: async ({ inputData }) => ({
+    repoPath: inputData.repoPath,
+    maxRetries: inputData.maxRetries,
+    deployMode: inputData.deployMode,
+    taskPlan: inputData.taskPlan,
+    releaseGate: inputData.releaseGate,
+    status: inputData.status,
+    runId: inputData.runId,
+    summary: inputData.summary,
+    artifacts: inputData.artifacts,
+    checks: inputData.checks,
+    judgments: inputData.judgments,
+    questions: inputData.questions,
+    nextSteps: inputData.nextSteps,
+  }),
 });
 
 const createDeploymentReportStep = createStep({
@@ -1960,13 +2243,17 @@ export const deliveryWorkflow = createWorkflow({
   .then(createPlannerArtifactsStep)
   .then(createPlanGateStep)
   .then(syncPlanStateStep)
-  .then(createReviewStep)
+  .then(prepareReviewLoopStep)
+  .dountil(executeReviewAttemptStep, async ({ inputData }) => inputData.terminal)
+  .then(finalizeReviewLoopStep)
   .then(syncReviewStateStep)
   .then(prepareBuildTasksStep)
   .foreach(executeBuildTaskWorkflow, { concurrency: 1 })
   .then(aggregateBuildTaskResultsStep)
   .then(syncBuildStateStep)
-  .then(createReleaseGateStep)
+  .then(prepareReleaseGateLoopStep)
+  .dountil(executeReleaseGateAttemptStep, async ({ inputData }) => inputData.terminal)
+  .then(finalizeReleaseGateLoopStep)
   .then(syncReleaseGateStateStep)
   .then(createDeploymentReportStep)
   .then(syncDeploymentReportStateStep)
