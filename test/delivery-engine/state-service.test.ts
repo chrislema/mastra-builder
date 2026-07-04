@@ -36,11 +36,13 @@ const createMemoryObservabilityStore = () => {
       written.push(...(logs as Record<string, any>[]).map((log) => ({ ...log, __order: order++ })));
     },
     async listLogs({ filters, pagination }) {
+      assert.equal(filters?.source, undefined);
+      assert.equal(filters?.serviceName, 'builders');
       const page = pagination?.page ?? 0;
       const perPage = pagination?.perPage ?? 25;
       const filtered = written
         .filter((log) => {
-          if (filters?.source && log.source !== filters.source) return false;
+          if (filters?.serviceName && log.serviceName !== filters.serviceName) return false;
           if (filters?.resourceId && log.resourceId !== filters.resourceId) return false;
           if (filters?.runId && log.runId !== filters.runId) return false;
           return true;

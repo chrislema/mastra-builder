@@ -359,6 +359,17 @@ function statusFromSnapshotLog(log: DeliveryObservabilityLog): DeliveryRunStatus
   return statusFromRun(run);
 }
 
+function isDeliveryStateLog(log: DeliveryObservabilityLog, runId?: string) {
+  const metadata = log.metadata as Record<string, unknown> | undefined;
+  const data = log.data as Record<string, unknown> | undefined;
+
+  if (runId && log.runId !== runId) return false;
+  if (log.source && log.source !== deliverySource) return false;
+  if (metadata?.stateSource !== 'mastra-storage') return false;
+  if (metadata?.projectionSource !== '.delivery') return false;
+  return data?.kind === 'snapshot' || data?.kind === 'event';
+}
+
 export async function readDeliverySnapshotFromMastraStorage({
   store,
   repoPath,
@@ -612,15 +623,21 @@ export async function listDeliveryStateRecords({
   page?: number;
   perPage?: number;
 }) {
-  return store.listLogs({
+  const listed = await store.listLogs({
     filters: {
-      source: deliverySource,
+      // DuckDB's current observability log table accepts `source` in the input schema
+      // but does not persist it as a queryable log_events column. Keep source-specific
+      // filtering in memory and query only durable columns.
+      serviceName: deliveryServiceName,
       ...(repoPath ? { resourceId: resolve(repoPath) } : {}),
-      ...(runId ? { runId } : {}),
     },
     pagination: { page, perPage },
     orderBy: { field: 'timestamp', direction: 'DESC' },
   });
+  return {
+    ...listed,
+    logs: listed.logs.filter((log) => isDeliveryStateLog(log, runId)),
+  };
 }
 
 export const listDeliveryStateMirrorLogs = listDeliveryStateRecords;

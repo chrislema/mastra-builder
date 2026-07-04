@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { DuckDBStore } from '@mastra/duckdb';
 import {
   buildDeliveryJudgmentScoreEvents,
   buildDeliveryJudgmentScorePayloads,
@@ -75,9 +76,11 @@ test('delivery state persistence writes and lists through the observability stor
     },
     async listLogs({ filters, pagination, orderBy }) {
       assert.deepEqual(orderBy, { field: 'timestamp', direction: 'DESC' });
+      assert.equal(filters?.source, undefined);
+      assert.equal(filters?.serviceName, 'builders');
       return {
         logs: written.filter((log) => {
-          if (filters?.source && log.source !== filters.source) return false;
+          if (filters?.serviceName && log.serviceName !== filters.serviceName) return false;
           if (filters?.resourceId && log.resourceId !== filters.resourceId) return false;
           if (filters?.runId && log.runId !== filters.runId) return false;
           return true;
@@ -93,12 +96,20 @@ test('delivery state persistence writes and lists through the observability stor
   };
 
   const summary = await persistDeliveryStateToObservability({ repoPath, store });
+  written.push({
+    serviceName: 'builders',
+    resourceId: resolve(repoPath),
+    runId: summary.runId,
+    timestamp: new Date(),
+    data: { kind: 'snapshot' },
+    metadata: { stateSource: 'other', projectionSource: '.delivery' },
+  });
   assert.equal(summary.ok, true);
   assert.equal(summary.status, 'complete');
-  assert.equal(summary.logsSubmitted, written.length);
+  assert.equal(summary.logsSubmitted, written.length - 1);
 
   const listed = await listDeliveryStateRecords({ store, repoPath, runId: summary.runId });
-  assert.equal(listed.logs.length, written.length);
+  assert.equal(listed.logs.length, summary.logsSubmitted);
 });
 
 test('delivery status reads prefer Mastra storage snapshots over the local projection', async () => {
@@ -109,9 +120,11 @@ test('delivery status reads prefer Mastra storage snapshots over the local proje
       written.push(...(logs as Record<string, any>[]));
     },
     async listLogs({ filters }) {
+      assert.equal(filters?.source, undefined);
+      assert.equal(filters?.serviceName, 'builders');
       return {
         logs: written.filter((log) => {
-          if (filters?.source && log.source !== filters.source) return false;
+          if (filters?.serviceName && log.serviceName !== filters.serviceName) return false;
           if (filters?.resourceId && log.resourceId !== filters.resourceId) return false;
           if (filters?.runId && log.runId !== filters.runId) return false;
           return true;
@@ -126,6 +139,24 @@ test('delivery status reads prefer Mastra storage snapshots over the local proje
   const storedStatus = await readDeliveryRunStatusFromMastraStorage({ store, repoPath });
   assert.deepEqual(storedStatus?.tasks, ['T1:complete']);
   assert.equal(storedStatus?.status, 'complete');
+});
+
+test('delivery state listing is compatible with real DuckDB observability storage', async () => {
+  const repoPath = createRepo();
+  const storageDir = mkdtempSync(join(tmpdir(), 'delivery-duckdb-observability-'));
+  const duckdb = new DuckDBStore({ path: join(storageDir, 'observability.duckdb') });
+
+  try {
+    const store = (await duckdb.getStore('observability')) as DeliveryObservabilityStore;
+    await (store as DeliveryObservabilityStore & { init?: () => Promise<void> }).init?.();
+    await persistDeliveryStateToObservability({ repoPath, store });
+
+    const storedStatus = await readDeliveryRunStatusFromMastraStorage({ store, repoPath });
+    assert.deepEqual(storedStatus?.tasks, ['T1:complete']);
+    assert.equal(storedStatus?.status, 'complete');
+  } finally {
+    await duckdb.close();
+  }
 });
 
 test('delivery judgment persistence writes rubric scores to Mastra score stores', async () => {
