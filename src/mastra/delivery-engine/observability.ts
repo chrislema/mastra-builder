@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { SaveScorePayload, ScoreRowData } from '@mastra/core/evals';
 import { getDeliveryRunStatus, readDeliveryEvents, readDeliveryRun, type DeliveryRun } from './state';
+import type { DeliveryEvent } from './checks';
 
 type DeliveryObservabilityLog = Record<string, unknown>;
 type DeliveryObservabilityScore = Record<string, unknown>;
@@ -24,7 +25,7 @@ export type DeliveryScoresStore = {
   }): Promise<{ scores: ScoreRowData[]; pagination?: Record<string, unknown> }>;
 };
 
-type MastraLike = {
+export type MastraLike = {
   getStorage?: () =>
     | {
         getStore(storeName: string): Promise<unknown>;
@@ -53,6 +54,11 @@ export type DeliveryJudgmentScoreMirrorSummary = {
 
 export type DeliveryRunStatusSummary = ReturnType<typeof getDeliveryRunStatus>;
 
+export type DeliveryStateSnapshot = {
+  run: DeliveryRun;
+  events: DeliveryEvent[];
+};
+
 const deliverySource = 'delivery-engine';
 const deliveryExecutionSource = 'mastra-delivery';
 const deliveryServiceName = 'builders';
@@ -66,6 +72,20 @@ const toDate = (value: unknown, fallback: string) => {
   const date = new Date(typeof value === 'string' ? value : fallback);
   return Number.isNaN(date.getTime()) ? new Date(fallback) : date;
 };
+
+function statusFromRun(run: DeliveryRun): DeliveryRunStatusSummary {
+  return {
+    run_id: run.run_id,
+    status: run.status,
+    stage: run.stage,
+    tasks: Object.entries(run.tasks).map(
+      ([id, task]) => `${id}:${task.status}${task.retries ? `(r${task.retries})` : ''}`,
+    ),
+    stuck: run.stuck,
+    judgments: run.judgments.length,
+    artifacts: Object.keys(run.artifacts),
+  };
+}
 
 const baseDeliveryLog = ({
   run,
@@ -109,10 +129,8 @@ const baseDeliveryLog = ({
   },
 });
 
-export function buildDeliveryStateMirrorLogs(repoPath: string) {
-  const run = readDeliveryRun(repoPath);
-  const events = readDeliveryEvents(repoPath);
-  const status = getDeliveryRunStatus(repoPath);
+export function buildDeliveryStateLogsFromSnapshot({ repoPath, run, events }: DeliveryStateSnapshot & { repoPath: string }) {
+  const status = statusFromRun(run);
   const snapshotFingerprint = stableHash({
     status: run.status,
     stage: run.stage,
@@ -133,6 +151,7 @@ export function buildDeliveryStateMirrorLogs(repoPath: string) {
     data: {
       kind: 'snapshot',
       run,
+      events,
       status,
       eventCount: events.length,
     },
@@ -159,6 +178,14 @@ export function buildDeliveryStateMirrorLogs(repoPath: string) {
     events,
     logs: [snapshot, ...eventLogs],
   };
+}
+
+export function buildDeliveryStateMirrorLogs(repoPath: string) {
+  return buildDeliveryStateLogsFromSnapshot({
+    repoPath,
+    run: readDeliveryRun(repoPath),
+    events: readDeliveryEvents(repoPath),
+  });
 }
 
 const deliveryRubricScorerId = (rubric: string) => `delivery-rubric:${rubric}`;
@@ -290,6 +317,28 @@ export async function mirrorDeliveryStateToObservability({
 
 export const persistDeliveryStateToMastraStorage = mirrorDeliveryStateToObservability;
 
+export async function persistDeliverySnapshotToMastraStorage({
+  repoPath,
+  run,
+  events,
+  store,
+}: DeliveryStateSnapshot & {
+  repoPath: string;
+  store: DeliveryObservabilityStore;
+}): Promise<DeliveryStateMirrorSummary> {
+  const { logs } = buildDeliveryStateLogsFromSnapshot({ repoPath, run, events });
+  await store.batchCreateLogs({ logs });
+
+  return {
+    ok: true,
+    runId: run.run_id,
+    status: run.status,
+    stage: run.stage,
+    eventCount: events.length,
+    logsSubmitted: logs.length,
+  };
+}
+
 function statusFromSnapshotLog(log: DeliveryObservabilityLog): DeliveryRunStatusSummary | undefined {
   const data = log.data as Record<string, unknown> | undefined;
   if (data?.kind !== 'snapshot') return undefined;
@@ -300,17 +349,48 @@ function statusFromSnapshotLog(log: DeliveryObservabilityLog): DeliveryRunStatus
   const run = data.run as DeliveryRun | undefined;
   if (!run?.run_id) return undefined;
 
-  return {
-    run_id: run.run_id,
-    status: run.status,
-    stage: run.stage,
-    tasks: Object.entries(run.tasks).map(
-      ([id, task]) => `${id}:${task.status}${task.retries ? `(r${task.retries})` : ''}`,
-    ),
-    stuck: run.stuck,
-    judgments: run.judgments.length,
-    artifacts: Object.keys(run.artifacts),
-  };
+  return statusFromRun(run);
+}
+
+export async function readDeliverySnapshotFromMastraStorage({
+  store,
+  repoPath,
+  runId,
+}: {
+  store: DeliveryObservabilityStore;
+  repoPath?: string;
+  runId?: string;
+}): Promise<DeliveryStateSnapshot | undefined> {
+  const listed = await listDeliveryStateMirrorLogs({
+    store,
+    repoPath,
+    runId,
+    page: 0,
+    perPage: 1000,
+  });
+  const snapshotLog = listed.logs.find((log) => (log.data as Record<string, unknown> | undefined)?.kind === 'snapshot');
+  const data = snapshotLog?.data as Record<string, unknown> | undefined;
+  const run = data?.run as DeliveryRun | undefined;
+  if (!run?.run_id) return undefined;
+
+  const embeddedEvents = data.events as DeliveryEvent[] | undefined;
+  if (Array.isArray(embeddedEvents)) return { run, events: embeddedEvents };
+
+  const events = listed.logs
+    .flatMap((log) => {
+      const eventData = log.data as Record<string, unknown> | undefined;
+      if (eventData?.kind !== 'event') return [];
+      return [
+        {
+          index: typeof eventData.index === 'number' ? eventData.index : Number.MAX_SAFE_INTEGER,
+          event: eventData.event as DeliveryEvent,
+        },
+      ];
+    })
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.event);
+
+  return { run, events };
 }
 
 export async function readDeliveryRunStatusFromMastraStorage({

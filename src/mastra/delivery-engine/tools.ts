@@ -8,31 +8,22 @@ import {
   listDeliveryStateMirrorLogs,
   mirrorDeliveryJudgmentScoresWithMastra,
   persistDeliveryStateWithMastra,
-  readDeliveryRunStatusWithMastra,
-  safePersistDeliveryStateWithMastra,
 } from './observability';
 import {
-  appendDeliveryEvent,
-  endDeliveryStage,
-  finishDeliveryRun,
-  getDeliveryRunStatus,
-  initializeDeliveryRun,
-  readDeliveryEvents,
-  recordDeliveryArtifact,
-  recordDeliveryJudgment,
-  startDeliveryStage,
-  updateDeliveryTask,
-  writeDeliveryArtifact,
-} from './state';
+  appendDeliveryEventState,
+  endDeliveryStageState,
+  finishDeliveryRunState,
+  getDeliveryRunStatusState,
+  initializeDeliveryRunState,
+  readDeliveryEventsState,
+  recordDeliveryArtifactState,
+  recordDeliveryJudgmentState,
+  startDeliveryStageState,
+  updateDeliveryTaskState,
+} from './state-service';
+import { writeDeliveryArtifact } from './state';
 
 const roleSchema = z.enum(deliveryRoles as [string, ...string[]]);
-
-async function persistDeliveryStateProjection(repoPath: string, mastra?: unknown) {
-  await safePersistDeliveryStateWithMastra({
-    repoPath,
-    mastra: mastra as Parameters<typeof safePersistDeliveryStateWithMastra>[0]['mastra'],
-  });
-}
 
 export const initializeDeliveryRunTool = createTool({
   id: 'initialize-delivery-run',
@@ -47,11 +38,7 @@ export const initializeDeliveryRunTool = createTool({
     status: z.string(),
     stage: z.string(),
   }),
-  execute: async (input, context) => {
-    const run = initializeDeliveryRun(input);
-    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
-    return run;
-  },
+  execute: async (input, context) => initializeDeliveryRunState({ ...input, mastra: context?.mastra }),
 });
 
 export const startDeliveryStageTool = createTool({
@@ -67,11 +54,7 @@ export const startDeliveryStageTool = createTool({
     ok: z.boolean(),
     boundary: z.any(),
   }),
-  execute: async (input, context) => {
-    const result = startDeliveryStage(input as Parameters<typeof startDeliveryStage>[0]);
-    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
-    return result;
-  },
+  execute: async (input, context) => startDeliveryStageState({ ...input, mastra: context?.mastra }),
 });
 
 export const endDeliveryStageTool = createTool({
@@ -83,11 +66,7 @@ export const endDeliveryStageTool = createTool({
     reason: z.enum(['complete_stage', 'escalation', 'max_turns']),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input, context) => {
-    const result = endDeliveryStage(input);
-    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
-    return result;
-  },
+  execute: async (input, context) => endDeliveryStageState({ ...input, mastra: context?.mastra }),
 });
 
 export const updateDeliveryTaskTool = createTool({
@@ -105,11 +84,7 @@ export const updateDeliveryTaskTool = createTool({
     ok: z.boolean(),
     task: z.any(),
   }),
-  execute: async (input, context) => {
-    const result = updateDeliveryTask(input);
-    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
-    return result;
-  },
+  execute: async (input, context) => updateDeliveryTaskState({ ...input, mastra: context?.mastra }),
 });
 
 export const recordDeliveryArtifactTool = createTool({
@@ -121,11 +96,7 @@ export const recordDeliveryArtifactTool = createTool({
     path: z.string(),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input, context) => {
-    const result = recordDeliveryArtifact(input);
-    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
-    return result;
-  },
+  execute: async (input, context) => recordDeliveryArtifactState({ ...input, mastra: context?.mastra }),
 });
 
 export const writeDeliveryArtifactTool = createTool({
@@ -155,11 +126,7 @@ export const recordDeliveryJudgmentTool = createTool({
     passed: z.boolean().optional(),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input, context) => {
-    const result = recordDeliveryJudgment(input);
-    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
-    return result;
-  },
+  execute: async (input, context) => recordDeliveryJudgmentState({ ...input, mastra: context?.mastra }),
 });
 
 export const recordDeliveryEventTool = createTool({
@@ -170,11 +137,8 @@ export const recordDeliveryEventTool = createTool({
     event: z.record(z.string(), z.any()),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
-  execute: async ({ repoPath, event }, context) => {
-    appendDeliveryEvent(repoPath, event as any);
-    await persistDeliveryStateProjection(repoPath, context?.mastra);
-    return { ok: true };
-  },
+  execute: async ({ repoPath, event }, context) =>
+    appendDeliveryEventState({ repoPath, event: event as any, mastra: context?.mastra }),
 });
 
 export const finishDeliveryRunTool = createTool({
@@ -188,11 +152,7 @@ export const finishDeliveryRunTool = createTool({
     ok: z.boolean(),
     status: z.string(),
   }),
-  execute: async (input, context) => {
-    const result = finishDeliveryRun(input);
-    await persistDeliveryStateProjection(input.repoPath, context?.mastra);
-    return result;
-  },
+  execute: async (input, context) => finishDeliveryRunState({ ...input, mastra: context?.mastra }),
 });
 
 export const getDeliveryRunStatusTool = createTool({
@@ -210,11 +170,7 @@ export const getDeliveryRunStatusTool = createTool({
     judgments: z.number(),
     artifacts: z.array(z.string()),
   }),
-  execute: async ({ repoPath }, context) => {
-    return (
-      (await readDeliveryRunStatusWithMastra({ repoPath, mastra: context?.mastra })) ?? getDeliveryRunStatus(repoPath)
-    );
-  },
+  execute: async ({ repoPath }, context) => getDeliveryRunStatusState({ repoPath, mastra: context?.mastra }),
 });
 
 export const runDeterministicCheckTool = createTool({
@@ -249,8 +205,8 @@ export const runDeterministicCheckTool = createTool({
     passed: z.boolean(),
     reason: z.string(),
   }),
-  execute: async ({ repoPath, events, ...input }) => {
-    const resolvedEvents = events ?? (repoPath ? readDeliveryEvents(repoPath) : undefined);
+  execute: async ({ repoPath, events, ...input }, context) => {
+    const resolvedEvents = events ?? (repoPath ? await readDeliveryEventsState({ repoPath, mastra: context?.mastra }) : undefined);
     return runDeterministicCheck({ ...input, events: resolvedEvents } as any);
   },
 });

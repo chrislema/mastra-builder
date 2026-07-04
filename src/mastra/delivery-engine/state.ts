@@ -54,16 +54,35 @@ function writeDeliveryRun(repoPath: string, run: DeliveryRun) {
   writeFileSync(runPath(repoPath), JSON.stringify(run, null, 2));
 }
 
+export function writeDeliveryRunProjection(repoPath: string, run: DeliveryRun) {
+  writeDeliveryRun(repoPath, run);
+}
+
+export function writeDeliveryEventsProjection(repoPath: string, events: DeliveryEvent[]) {
+  ensureDeliveryDirs(repoPath);
+  writeFileSync(eventsPath(repoPath), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''));
+}
+
+export function writeDeliveryBoundaryProjection(repoPath: string, boundary: DeliveryBoundary) {
+  ensureDeliveryDirs(repoPath);
+  writeFileSync(boundaryPath(repoPath), JSON.stringify(boundary, null, 2));
+}
+
+export function removeDeliveryBoundaryProjection(repoPath: string) {
+  rmSync(boundaryPath(repoPath), { force: true });
+}
+
+export function timestampDeliveryEvent(event: DeliveryEvent) {
+  return {
+    ts: new Date().toISOString(),
+    source: 'mastra',
+    ...event,
+  } as DeliveryEvent;
+}
+
 export function appendDeliveryEvent(repoPath: string, event: DeliveryEvent) {
   ensureDeliveryDirs(repoPath);
-  appendFileSync(
-    eventsPath(repoPath),
-    JSON.stringify({
-      ts: new Date().toISOString(),
-      source: 'mastra',
-      ...event,
-    }) + '\n',
-  );
+  appendFileSync(eventsPath(repoPath), JSON.stringify(timestampDeliveryEvent(event)) + '\n');
 }
 
 export function readDeliveryEvents(repoPath: string): DeliveryEvent[] {

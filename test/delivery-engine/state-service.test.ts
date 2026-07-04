@@ -1,0 +1,114 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import test from 'node:test';
+import type { DeliveryObservabilityStore, MastraLike } from '../../src/mastra/delivery-engine/observability.ts';
+import {
+  getDeliveryRunStatusState,
+  initializeDeliveryRunState,
+  readDeliveryEventsState,
+  readDeliveryRunState,
+  updateDeliveryTaskState,
+} from '../../src/mastra/delivery-engine/state-service.ts';
+import { initializeDeliveryRun, readDeliveryRun, updateDeliveryTask } from '../../src/mastra/delivery-engine/state.ts';
+
+const createRepo = () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-state-service-'));
+  writeFileSync(join(repoPath, 'vision.md'), '# Vision\n');
+  writeFileSync(join(repoPath, 'spec.md'), '# Spec\n');
+  return repoPath;
+};
+
+const createMastra = (store: DeliveryObservabilityStore): MastraLike => ({
+  getStorage: () => ({
+    async getStore(storeName: string) {
+      return storeName === 'observability' ? store : undefined;
+    },
+  }),
+});
+
+const createMemoryObservabilityStore = () => {
+  let order = 0;
+  const written: Record<string, any>[] = [];
+  const store: DeliveryObservabilityStore = {
+    async batchCreateLogs({ logs }) {
+      written.push(...(logs as Record<string, any>[]).map((log) => ({ ...log, __order: order++ })));
+    },
+    async listLogs({ filters, pagination }) {
+      const page = pagination?.page ?? 0;
+      const perPage = pagination?.perPage ?? 25;
+      const filtered = written
+        .filter((log) => {
+          if (filters?.source && log.source !== filters.source) return false;
+          if (filters?.resourceId && log.resourceId !== filters.resourceId) return false;
+          if (filters?.runId && log.runId !== filters.runId) return false;
+          return true;
+        })
+        .sort((left, right) => {
+          const leftTime = new Date(left.timestamp as Date).getTime();
+          const rightTime = new Date(right.timestamp as Date).getTime();
+          return rightTime - leftTime || right.__order - left.__order;
+        });
+
+      return {
+        logs: filtered.slice(page * perPage, page * perPage + perPage),
+        pagination: {
+          total: filtered.length,
+          page,
+          perPage,
+          hasMore: (page + 1) * perPage < filtered.length,
+        },
+      };
+    },
+  };
+
+  return { store, written };
+};
+
+test('delivery state service prefers Mastra storage snapshots over stale local projections', async () => {
+  const repoPath = createRepo();
+  const { store, written } = createMemoryObservabilityStore();
+  const mastra = createMastra(store);
+
+  await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md', mastra });
+  await updateDeliveryTaskState({ repoPath, id: 'T1', status: 'complete', owner: 'engineer', mastra });
+  updateDeliveryTask({ repoPath, id: 'T1', status: 'stuck', owner: 'engineer' });
+
+  const status = await getDeliveryRunStatusState({ repoPath, mastra });
+  const run = await readDeliveryRunState({ repoPath, mastra });
+  const events = await readDeliveryEventsState({ repoPath, mastra });
+
+  assert.equal(status.run_id, run.run_id);
+  assert.deepEqual(status.tasks, ['T1:complete']);
+  assert.equal(run.tasks.T1.status, 'complete');
+  assert.equal(readDeliveryRun(repoPath).tasks.T1.status, 'stuck');
+  assert.equal(events.some((event) => event.type === 'run_init'), true);
+  assert.equal(written.some((log) => log.resourceId === resolve(repoPath) && log.data?.kind === 'snapshot'), true);
+});
+
+test('delivery state service writes Mastra storage before refreshing the local projection', async () => {
+  const repoPath = createRepo();
+  initializeDeliveryRun({ repoPath, visionPath: 'vision.md', specPath: 'spec.md' });
+
+  const failingStore: DeliveryObservabilityStore = {
+    async batchCreateLogs() {
+      throw new Error('storage unavailable');
+    },
+    async listLogs() {
+      return { logs: [] };
+    },
+  };
+
+  await assert.rejects(
+    updateDeliveryTaskState({
+      repoPath,
+      id: 'T2',
+      status: 'complete',
+      owner: 'engineer',
+      mastra: createMastra(failingStore),
+    }),
+    /storage unavailable/,
+  );
+  assert.equal(readDeliveryRun(repoPath).tasks.T2, undefined);
+});

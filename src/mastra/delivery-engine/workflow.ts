@@ -4,19 +4,25 @@ import { RequestContext } from '@mastra/core/request-context';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import {
-  appendDeliveryEvent,
-  endDeliveryStage,
-  finishDeliveryRun,
-  initializeDeliveryRun,
-  readDeliveryEvents,
-  readDeliveryRun,
-  recordDeliveryArtifact,
-  recordDeliveryJudgment,
-  startDeliveryStage,
-  updateDeliveryTask,
-  writeDeliveryArtifact,
-} from './state';
-import { dependencyGraphAcyclic, noBcryptWeakHash, planSchemaComplete, runDeterministicCheck } from './checks';
+  appendDeliveryEventState,
+  endDeliveryStageState,
+  finishDeliveryRunState,
+  readDeliveryEventsState,
+  initializeDeliveryRunState,
+  readDeliveryRunState,
+  recordDeliveryArtifactState,
+  recordDeliveryJudgmentState,
+  startDeliveryStageState,
+  updateDeliveryTaskState,
+} from './state-service';
+import { writeDeliveryArtifact, type DeliveryRunStatus } from './state';
+import {
+  dependencyGraphAcyclic,
+  noBcryptWeakHash,
+  planSchemaComplete,
+  runDeterministicCheck,
+  type DeliveryEvent,
+} from './checks';
 import {
   aggregateJudgment,
   buildJudgeArtifactPrompt,
@@ -445,13 +451,14 @@ function implementationDeterministicResults({
   stage,
   role,
   note,
+  events,
 }: {
   repoPath: string;
   stage: string;
   role: 'engineer' | 'designer';
   note: ImplementationNote;
+  events: DeliveryEvent[];
 }): DeterministicGateResult[] {
-  const events = readDeliveryEvents(repoPath);
   const files = repoFileContents(repoPath, note.files_touched);
   const noteOwnership = runDeterministicCheck({
     name: 'file_ownership',
@@ -480,15 +487,14 @@ function implementationDeterministicResults({
 }
 
 function releaseGateDeterministicResults({
-  repoPath,
   stage,
   gate,
+  events,
 }: {
-  repoPath: string;
   stage: string;
   gate: ReleaseGate;
+  events: DeliveryEvent[];
 }): DeterministicGateResult[] {
-  const events = readDeliveryEvents(repoPath);
   return [
     { id: 'decision_explicit', check: 'plan_schema_complete', ...planSchemaComplete(gate) },
     { id: 'tier_order', check: 'tier_order', ...runDeterministicCheck({ name: 'tier_order', subject: gate }) },
@@ -506,15 +512,14 @@ function releaseGateDeterministicResults({
 }
 
 function deploymentDeterministicResults({
-  repoPath,
   stage,
   releaseGate,
+  events,
 }: {
-  repoPath: string;
   stage: string;
   releaseGate: ReleaseGate;
+  events: DeliveryEvent[];
 }): DeterministicGateResult[] {
-  const events = readDeliveryEvents(repoPath);
   return [
     {
       id: 'no_deploy_through_blockers',
@@ -563,10 +568,11 @@ async function judgeDeliveryArtifact({
   deterministicResults?: DeterministicGateResult[];
   slug: string;
 }) {
-  startDeliveryStage({
+  await startDeliveryStageState({
     repoPath,
     stage: `judge:${slug}`,
     role: 'judge',
+    mastra,
   });
 
   const judge = requiredAgent(mastra, 'judge');
@@ -607,19 +613,21 @@ async function judgeDeliveryArtifact({
     artifactPath: judgmentPath,
     artifact: judgment,
   });
-  recordDeliveryJudgment({
+  await recordDeliveryJudgmentState({
     repoPath,
     subject: subjectName,
     rubric: judgment.rubric,
     path: judgmentPath,
     overall: judgment.overall,
     passed: judgment.passed,
+    mastra,
   });
 
-  endDeliveryStage({
+  await endDeliveryStageState({
     repoPath,
     stage: `judge:${slug}`,
     reason: judgment.passed ? 'complete_stage' : 'escalation',
+    mastra,
   });
 
   const ref: JudgmentRef = {
@@ -702,7 +710,7 @@ const initializeRunStep = createStep({
   outputSchema: initializedSchema,
   stateSchema: deliveryWorkflowStateSchema,
   execute: async ({ inputData, state, setState, mastra }) => {
-    const run = initializeDeliveryRun(inputData);
+    const run = await initializeDeliveryRunState({ ...inputData, mastra });
     await syncDeliveryWorkflowState({
       state,
       setState,
@@ -736,10 +744,11 @@ const createPlannerArtifactsStep = createStep({
   resumeSchema: plannerQuestionsResumeSchema,
   suspendSchema: plannerQuestionsSuspendSchema,
   execute: async ({ inputData, mastra, resumeData, suspend, state, setState }) => {
-    startDeliveryStage({
+    await startDeliveryStageState({
       repoPath: inputData.repoPath,
       stage: 'plan',
       role: 'planner',
+      mastra,
     });
 
     const planner = requiredAgent(mastra, 'planner');
@@ -774,10 +783,11 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
       artifactPath: '.delivery/artifacts/readout.json',
       artifact: output.readout,
     });
-    recordDeliveryArtifact({
+    await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
       type: 'readout',
       path: '.delivery/artifacts/readout.json',
+      mastra,
     });
 
     writeDeliveryArtifact({
@@ -785,23 +795,29 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
       artifactPath: '.delivery/artifacts/task-plan.json',
       artifact: output.taskPlan,
     });
-    recordDeliveryArtifact({
+    await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
       type: 'task-plan',
       path: '.delivery/artifacts/task-plan.json',
+      mastra,
     });
 
-    endDeliveryStage({
+    await endDeliveryStageState({
       repoPath: inputData.repoPath,
       stage: 'plan',
       reason: output.readout.blocking_ambiguities.length ? 'escalation' : 'complete_stage',
+      mastra,
     });
 
     if (output.readout.blocking_ambiguities.length) {
-      appendDeliveryEvent(inputData.repoPath, {
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
         type: 'human_input_required',
         stage: 'plan',
         questions: output.readout.blocking_ambiguities,
+        },
       });
       await syncDeliveryWorkflowState({
         state,
@@ -951,7 +967,7 @@ const prepareReviewLoopStep = createStep({
   description: 'Prepare architect review retry state for the native workflow loop.',
   inputSchema: planStageOutputSchema,
   outputSchema: reviewLoopStateSchema,
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, mastra }) => {
     const passThrough = () => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
@@ -1023,10 +1039,11 @@ const executeReviewAttemptStep = createStep({
     const reviewPath =
       attempt === 0 ? '.delivery/artifacts/review-report.json' : `.delivery/artifacts/review-report.${suffix}.json`;
 
-    startDeliveryStage({
+    await startDeliveryStageState({
       repoPath: inputData.repoPath,
       stage: `review:${suffix}`,
       role: 'architect',
+      mastra,
     });
 
     const reviewResponse = await architect.generate(
@@ -1054,17 +1071,19 @@ ${JSON.stringify(taskPlan, null, 2)}`,
       artifactPath: reviewPath,
       artifact: reviewReport,
     });
-    recordDeliveryArtifact({
+    await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
       type: attempt === 0 ? 'review-report' : `review-report:${suffix}`,
       path: reviewPath,
+      mastra,
     });
     artifacts.push(reviewPath);
 
-    endDeliveryStage({
+    await endDeliveryStageState({
       repoPath: inputData.repoPath,
       stage: `review:${suffix}`,
       reason: reviewReport.verdict === 'blocked' ? 'escalation' : 'complete_stage',
+      mastra,
     });
 
     const reviewJudge = await judgeDeliveryArtifact({
@@ -1136,10 +1155,11 @@ ${JSON.stringify(taskPlan, null, 2)}`,
     }
 
     const revisionNumber = attempt + 1;
-    startDeliveryStage({
+    await startDeliveryStageState({
       repoPath: inputData.repoPath,
       stage: `plan:architect-bounce-${revisionNumber}`,
       role: 'planner',
+      mastra,
     });
 
     const revisionResponse = await planner.generate(
@@ -1171,17 +1191,19 @@ ${JSON.stringify(reviewReport, null, 2)}`,
       artifactPath: revisionPath,
       artifact: revisedTaskPlan,
     });
-    recordDeliveryArtifact({
+    await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
       type: `task-plan:revision-${revisionNumber}`,
       path: revisionPath,
+      mastra,
     });
     artifacts.push(revisionPath);
 
-    endDeliveryStage({
+    await endDeliveryStageState({
       repoPath: inputData.repoPath,
       stage: `plan:architect-bounce-${revisionNumber}`,
       reason: 'complete_stage',
+      mastra,
     });
 
     const revisedDeterministicResults = taskPlanDeterministicResults(revisedTaskPlan);
@@ -1374,15 +1396,16 @@ const prepareBuildTaskAttemptLoopStep = createStep({
     const checks = [...inputData.checks];
     const judgments = [...inputData.judgments];
 
-    const run = readDeliveryRun(inputData.repoPath);
+    const run = await readDeliveryRunState({ repoPath: inputData.repoPath, mastra });
     const blockedBy = task.depends_on.filter((dependency) => run.tasks[dependency]?.status !== 'complete');
     if (blockedBy.length) {
-      updateDeliveryTask({
+      await updateDeliveryTaskState({
         repoPath: inputData.repoPath,
         id: task.id,
         status: 'blocked',
         owner: task.owner,
         note: `blocked by dependency ${blockedBy.join(', ')}`,
+        mastra,
       });
 
       return {
@@ -1454,19 +1477,21 @@ const executeBuildTaskAttemptStep = createStep({
     const attemptNumber = attempt + 1;
     const stage = `build:${task.id}`;
     const usableSurfaces = task.owned_surfaces.filter((surface) => !/^unknown\b/i.test(surface));
-    updateDeliveryTask({
+    await updateDeliveryTaskState({
       repoPath: inputData.repoPath,
       id: task.id,
       status: 'building',
       owner: role,
       note: attempt > 0 ? `retry ${attemptNumber}` : undefined,
       bumpRetries: attempt > 0,
+      mastra,
     });
-    startDeliveryStage({
+    await startDeliveryStageState({
       repoPath: inputData.repoPath,
       stage,
       role,
       surfaces: usableSurfaces.length ? usableSurfaces : undefined,
+      mastra,
     });
 
     const buildResponse = await agent.generate(
@@ -1502,24 +1527,28 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
       artifactPath: notePath,
       artifact: note,
     });
-    recordDeliveryArtifact({
+    await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
       type: `note-${task.id}`,
       path: notePath,
+      mastra,
     });
     artifacts.push(notePath);
 
-    endDeliveryStage({
+    await endDeliveryStageState({
       repoPath: inputData.repoPath,
       stage,
       reason: 'complete_stage',
+      mastra,
     });
 
+    const deliveryEvents = await readDeliveryEventsState({ repoPath: inputData.repoPath, mastra });
     const deterministicResults = implementationDeterministicResults({
       repoPath: inputData.repoPath,
       stage,
       role,
       note,
+      events: deliveryEvents,
     });
     checks.push(...checkSummaries(deterministicResults, `${task.id}.a${attemptNumber}`));
 
@@ -1541,12 +1570,13 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
     judgments.push(implementationJudge.ref);
 
     if (implementationJudge.judgment.passed) {
-      updateDeliveryTask({
+      await updateDeliveryTaskState({
         repoPath: inputData.repoPath,
         id: task.id,
         status: 'complete',
         owner: role,
         note: `judged ${implementationJudge.judgment.overall}`,
+        mastra,
       });
 
       return {
@@ -1576,12 +1606,13 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
 
     const remediation = implementationFindingSteps(task.id, implementationJudge.judgment.remediation);
     if (attempt >= inputData.maxRetries) {
-      updateDeliveryTask({
+      await updateDeliveryTaskState({
         repoPath: inputData.repoPath,
         id: task.id,
         status: 'stuck',
         owner: role,
         note: remediation.join(' | ').slice(0, 300) || 'implementation did not pass judgment',
+        mastra,
       });
 
       return {
@@ -1837,10 +1868,11 @@ const executeReleaseGateAttemptStep = createStep({
     const gatePath =
       attempt === 0 ? '.delivery/artifacts/release-gate.json' : `.delivery/artifacts/release-gate.a${attemptNumber}.json`;
 
-    startDeliveryStage({
+    await startDeliveryStageState({
       repoPath: inputData.repoPath,
       stage,
       role: 'tester',
+      mastra,
     });
 
     const gateResponse = await tester.generate(
@@ -1869,23 +1901,26 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
       artifactPath: gatePath,
       artifact: gate,
     });
-    recordDeliveryArtifact({
+    await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
       type: attempt === 0 ? 'release-gate' : `release-gate:a${attemptNumber}`,
       path: gatePath,
+      mastra,
     });
     artifacts.push(gatePath);
 
-    endDeliveryStage({
+    await endDeliveryStageState({
       repoPath: inputData.repoPath,
       stage,
       reason: 'complete_stage',
+      mastra,
     });
 
+    const deliveryEvents = await readDeliveryEventsState({ repoPath: inputData.repoPath, mastra });
     const deterministicResults = releaseGateDeterministicResults({
-      repoPath: inputData.repoPath,
       stage,
       gate,
+      events: deliveryEvents,
     });
     checks.push(...checkSummaries(deterministicResults, `release-gate.a${attemptNumber}`));
 
@@ -1896,7 +1931,7 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
       subjectName: gatePath,
       subject: {
         gate,
-        evidence_events: readDeliveryEvents(inputData.repoPath).filter((event) => event.stage === stage),
+        evidence_events: deliveryEvents.filter((event) => event.stage === stage),
       },
       deterministicResults,
       slug: `release-gate-a${attemptNumber}`,
@@ -2029,11 +2064,15 @@ const createDeploymentReportStep = createStep({
     const releaseGatePath = latestArtifactPath(artifacts, 'release-gate', '.delivery/artifacts/release-gate.json');
 
     if (inputData.deployMode === 'real' && !resumeData) {
-      appendDeliveryEvent(inputData.repoPath, {
-        type: 'human_input_required',
-        stage: 'deploy:approval',
-        artifact_type: 'release-gate',
-        path: releaseGatePath,
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'human_input_required',
+          stage: 'deploy:approval',
+          artifact_type: 'release-gate',
+          path: releaseGatePath,
+        },
       });
 
       return await suspend(
@@ -2050,12 +2089,16 @@ const createDeploymentReportStep = createStep({
     }
 
     if (inputData.deployMode === 'real' && resumeData?.approved === false) {
-      appendDeliveryEvent(inputData.repoPath, {
-        type: 'human_approval',
-        stage: 'deploy:approval',
-        approved: false,
-        approver: resumeData.approver,
-        note: resumeData.notes,
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'human_approval',
+          stage: 'deploy:approval',
+          approved: false,
+          approver: resumeData.approver,
+          note: resumeData.notes,
+        },
       });
 
       return {
@@ -2067,25 +2110,34 @@ const createDeploymentReportStep = createStep({
     }
 
     if (inputData.deployMode === 'real' && resumeData?.approved) {
-      appendDeliveryEvent(inputData.repoPath, {
-        type: 'human_approval',
-        stage: 'deploy:approval',
-        approved: true,
-        approver: resumeData.approver,
-        note: resumeData.notes,
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'human_approval',
+          stage: 'deploy:approval',
+          approved: true,
+          approver: resumeData.approver,
+          note: resumeData.notes,
+        },
       });
     }
 
-    startDeliveryStage({
+    await startDeliveryStageState({
       repoPath: inputData.repoPath,
       stage,
       role: 'deployer',
+      mastra,
     });
-    appendDeliveryEvent(inputData.repoPath, {
-      type: 'artifact_read',
-      stage,
-      artifact_type: 'release-gate',
-      path: releaseGatePath,
+    await appendDeliveryEventState({
+      repoPath: inputData.repoPath,
+      mastra,
+      event: {
+        type: 'artifact_read',
+        stage,
+        artifact_type: 'release-gate',
+        path: releaseGatePath,
+      },
     });
 
     const deployResponse = await deployer.generate(
@@ -2120,17 +2172,19 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
       artifactPath: reportPath,
       artifact: report,
     });
-    recordDeliveryArtifact({
+    await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
       type: 'deployment-report',
       path: reportPath,
+      mastra,
     });
     artifacts.push(reportPath);
 
-    endDeliveryStage({
+    await endDeliveryStageState({
       repoPath: inputData.repoPath,
       stage,
       reason: 'complete_stage',
+      mastra,
     });
 
     return {
@@ -2149,8 +2203,8 @@ const createDeploymentJudgmentStep = createStep({
   outputSchema: workflowOutputSchema,
   scorers: deliveryDeploymentStepScorers,
   execute: async ({ inputData, mastra }) => {
-    const finishRun = async (status: Parameters<typeof finishDeliveryRun>[0]['status']) => {
-      finishDeliveryRun({ repoPath: inputData.repoPath, status });
+    const finishRun = async (status: DeliveryRunStatus) => {
+      await finishDeliveryRunState({ repoPath: inputData.repoPath, status, mastra });
       await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
     };
 
@@ -2194,10 +2248,11 @@ const createDeploymentJudgmentStep = createStep({
     const checks = [...inputData.checks];
     const judgments = [...inputData.judgments];
     const stage = 'deploy';
+    const deliveryEvents = await readDeliveryEventsState({ repoPath: inputData.repoPath, mastra });
     const deterministicResults = deploymentDeterministicResults({
-      repoPath: inputData.repoPath,
       stage,
       releaseGate: inputData.releaseGate,
+      events: deliveryEvents,
     });
     checks.push(...checkSummaries(deterministicResults, 'deployment'));
 
@@ -2209,7 +2264,7 @@ const createDeploymentJudgmentStep = createStep({
       subject: {
         report: inputData.deploymentReport,
         release_gate: inputData.releaseGate,
-        evidence_events: readDeliveryEvents(inputData.repoPath).filter((event) => event.stage === stage),
+        evidence_events: deliveryEvents.filter((event) => event.stage === stage),
       },
       deterministicResults,
       slug: 'deployment-report',
