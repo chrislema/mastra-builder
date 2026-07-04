@@ -95,6 +95,10 @@ project should become the native Mastra version.
     handoff readiness scorers
   - completion, rubric floor, judgment pass rate, and deterministic check pass rate scorers
   - direct scorer unit tests
+- Added native workflow decomposition:
+  - split planner artifact creation from plan gates and task-plan judgment
+  - split deployer report creation from deployment gates, judgment, and finalization
+  - moved scorer attachment to the explicit gate/judgment steps
 
 Checkpoint commit:
 
@@ -107,6 +111,7 @@ Checkpoint commit:
 - `1471391 Add deployment stage`
 - `99c4d0c Add delivery engine regression tests`
 - `30cc1dd Document delivery engine usage`
+- `5a775e6 Add native Mastra delivery scorers`
 
 ## Next Slices
 
@@ -300,6 +305,29 @@ Natural commit:
 
 - `Add native Mastra delivery scorers`
 
+### 9. Native Workflow Decomposition (Completed)
+
+Goal: make major generation and gate/judgment boundaries visible as first-class Mastra
+workflow steps.
+
+Work:
+
+- Split planner artifact generation into its own step.
+- Split task-plan deterministic gates and rubric judgment into a scored plan-gate step.
+- Split deployer report generation into its own step.
+- Split deployment deterministic gates, rubric judgment, and run finalization into a scored
+  deployment judgment step.
+- Preserve current behavior while increasing trace, retry, and Studio visibility.
+
+Done when:
+
+- The workflow exposes narrower step boundaries for planner and deployment stages.
+- TypeScript and deterministic tests pass.
+
+Natural commit:
+
+- `Decompose delivery workflow gate steps`
+
 ## Open Questions
 
 - Whether the target repo should be accessed by dynamic workspace context only, or whether
@@ -312,3 +340,9 @@ Natural commit:
   robust.
 - Whether to extend native scoring beyond workflow handoffs into per-agent and
   experiment/dataset evaluation flows once live scoring is stable.
+- Whether review retries should become native `.dountil()` loops with explicit planner
+  revision steps.
+- Whether the build loop should become a nested task workflow run through `.foreach()`
+  once task-level schemas are stable.
+- Whether release-gate retries should split tester artifact generation from release-gate
+  judgment in the same pattern as planner and deployment.

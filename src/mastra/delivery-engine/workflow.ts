@@ -178,6 +178,12 @@ const initializedSchema = workflowInputSchema.extend({
   runId: z.string(),
 });
 
+const plannerArtifactsSchema = initializedSchema.extend({
+  readout: readoutSchema,
+  taskPlan: taskPlanSchema,
+  artifacts: z.array(z.string()),
+});
+
 const judgmentRefSchema = z.object({
   subject: z.string(),
   rubric: z.string(),
@@ -213,6 +219,10 @@ const deliveryStageOutputSchema = workflowOutputSchema.extend({
   deployMode: z.enum(['mock', 'real']),
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
+});
+const deploymentReportStageSchema = deliveryStageOutputSchema.extend({
+  deploymentReport: deploymentReportSchema.optional(),
+  deploymentReportPath: z.string().optional(),
 });
 const planStageOutputSchema = deliveryStageOutputSchema;
 
@@ -501,12 +511,11 @@ const initializeRunStep = createStep({
   },
 });
 
-const createPlanStep = createStep({
-  id: 'create-readout-and-plan',
-  description: 'Use the planner agent to create readout and task-plan artifacts, then run deterministic plan gates.',
+const createPlannerArtifactsStep = createStep({
+  id: 'create-planner-artifacts',
+  description: 'Use the planner agent to create readout and task-plan artifacts.',
   inputSchema: initializedSchema,
-  outputSchema: planStageOutputSchema,
-  scorers: deliveryPlanStepScorers,
+  outputSchema: plannerArtifactsSchema,
   execute: async ({ inputData, mastra }) => {
     startDeliveryStage({
       repoPath: inputData.repoPath,
@@ -564,21 +573,36 @@ Every task must have checkable acceptance criteria and owned_surfaces.`,
       reason: output.readout.blocking_ambiguities.length ? 'escalation' : 'complete_stage',
     });
 
-    const deterministicResults = taskPlanDeterministicResults(output.taskPlan);
+    return {
+      ...inputData,
+      readout: output.readout,
+      taskPlan: output.taskPlan,
+      artifacts: ['.delivery/artifacts/readout.json', '.delivery/artifacts/task-plan.json'],
+    };
+  },
+});
+
+const createPlanGateStep = createStep({
+  id: 'judge-task-plan',
+  description: 'Run deterministic plan gates and rubric judgment before architect handoff.',
+  inputSchema: plannerArtifactsSchema,
+  outputSchema: planStageOutputSchema,
+  scorers: deliveryPlanStepScorers,
+  execute: async ({ inputData, mastra }) => {
+    const deterministicResults = taskPlanDeterministicResults(inputData.taskPlan);
     const checks = checkSummaries(deterministicResults);
     const taskPlanJudge = await judgeDeliveryArtifact({
       mastra,
       repoPath: inputData.repoPath,
       rubricName: 'task-plan',
       subjectName: '.delivery/artifacts/task-plan.json',
-      subject: output.taskPlan,
+      subject: inputData.taskPlan,
       deterministicResults,
       slug: 'task-plan',
     });
     const taskPlanJudgment = taskPlanJudge.judgment;
     const artifacts = [
-      '.delivery/artifacts/readout.json',
-      '.delivery/artifacts/task-plan.json',
+      ...inputData.artifacts,
       taskPlanJudge.judgeOutputPath,
       taskPlanJudge.judgmentPath,
     ];
@@ -587,19 +611,19 @@ Every task must have checkable acceptance criteria and owned_surfaces.`,
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
-      taskPlan: output.taskPlan,
+      taskPlan: inputData.taskPlan,
     };
 
-    if (output.readout.blocking_ambiguities.length) {
+    if (inputData.readout.blocking_ambiguities.length) {
       return {
         ...planContext,
         status: 'blocked_on_questions' as const,
         runId: inputData.runId,
-        summary: output.readout.recommended_next_step,
+        summary: inputData.readout.recommended_next_step,
         artifacts,
         checks,
         judgments,
-        questions: output.readout.blocking_ambiguities,
+        questions: inputData.readout.blocking_ambiguities,
         nextSteps: ['Answer the blocking questions, then rerun or resume delivery planning.'],
       };
     }
@@ -636,7 +660,7 @@ Every task must have checkable acceptance criteria and owned_surfaces.`,
       ...planContext,
       status: 'planned' as const,
       runId: inputData.runId,
-      summary: output.taskPlan.scope,
+      summary: inputData.taskPlan.scope,
       artifacts,
       checks,
       judgments,
@@ -1270,45 +1294,17 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
   },
 });
 
-const createDeploymentStep = createStep({
-  id: 'deployment',
-  description: 'Deploy only from a passing release gate, verify directly, judge the deployment report, and finish the run.',
+const createDeploymentReportStep = createStep({
+  id: 'create-deployment-report',
+  description: 'Run deployer from a passing release gate and write the deployment report artifact.',
   inputSchema: deliveryStageOutputSchema,
-  outputSchema: workflowOutputSchema,
-  scorers: deliveryDeploymentStepScorers,
+  outputSchema: deploymentReportStageSchema,
   execute: async ({ inputData, mastra }) => {
-    const baseOutput = () => ({
-      status: inputData.status,
-      runId: inputData.runId,
-      summary: inputData.summary,
-      artifacts: inputData.artifacts,
-      checks: inputData.checks,
-      judgments: inputData.judgments,
-      questions: inputData.questions,
-      nextSteps: inputData.nextSteps,
-    });
-
-    if (inputData.status === 'gate_failed') {
-      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'failed' });
-      return {
-        ...baseOutput(),
-        status: 'failed' as const,
-        nextSteps: inputData.nextSteps.length ? inputData.nextSteps : ['Fix release gate blockers before deployment.'],
-      };
-    }
-
-    if (inputData.status === 'stuck') {
-      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'stuck' });
-      return baseOutput();
-    }
-
-    if (inputData.status !== 'release_ready') return baseOutput();
+    if (inputData.status !== 'release_ready') return inputData;
     if (!inputData.releaseGate) throw new Error('release gate stage did not provide a gate for deployment');
 
     const deployer = requiredAgent(mastra, 'deployer');
     const artifacts = [...inputData.artifacts];
-    const checks = [...inputData.checks];
-    const judgments = [...inputData.judgments];
     const stage = 'deploy';
     const releaseGatePath = latestArtifactPath(artifacts, 'release-gate', '.delivery/artifacts/release-gate.json');
 
@@ -1369,6 +1365,57 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
       reason: 'complete_stage',
     });
 
+    return {
+      ...inputData,
+      artifacts,
+      deploymentReport: report,
+      deploymentReportPath: reportPath,
+    };
+  },
+});
+
+const createDeploymentJudgmentStep = createStep({
+  id: 'judge-deployment-report',
+  description: 'Run deployment deterministic gates and rubric judgment, then finish the delivery run.',
+  inputSchema: deploymentReportStageSchema,
+  outputSchema: workflowOutputSchema,
+  scorers: deliveryDeploymentStepScorers,
+  execute: async ({ inputData, mastra }) => {
+    const baseOutput = () => ({
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts: inputData.artifacts,
+      checks: inputData.checks,
+      judgments: inputData.judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+    });
+
+    if (inputData.status === 'gate_failed') {
+      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'failed' });
+      return {
+        ...baseOutput(),
+        status: 'failed' as const,
+        nextSteps: inputData.nextSteps.length ? inputData.nextSteps : ['Fix release gate blockers before deployment.'],
+      };
+    }
+
+    if (inputData.status === 'stuck') {
+      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'stuck' });
+      return baseOutput();
+    }
+
+    if (inputData.status !== 'release_ready') return baseOutput();
+    if (!inputData.releaseGate) throw new Error('release gate stage did not provide a gate for deployment judgment');
+    if (!inputData.deploymentReport || !inputData.deploymentReportPath) {
+      throw new Error('deployment report stage did not provide a deployment report for judgment');
+    }
+
+    const artifacts = [...inputData.artifacts];
+    const checks = [...inputData.checks];
+    const judgments = [...inputData.judgments];
+    const stage = 'deploy';
     const deterministicResults = deploymentDeterministicResults({
       repoPath: inputData.repoPath,
       stage,
@@ -1380,9 +1427,9 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
       mastra,
       repoPath: inputData.repoPath,
       rubricName: 'deployment-report',
-      subjectName: reportPath,
+      subjectName: inputData.deploymentReportPath,
       subject: {
-        report,
+        report: inputData.deploymentReport,
         release_gate: inputData.releaseGate,
         evidence_events: readDeliveryEvents(inputData.repoPath).filter((event) => event.stage === stage),
       },
@@ -1392,7 +1439,7 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
     artifacts.push(deploymentJudge.judgeOutputPath, deploymentJudge.judgmentPath);
     judgments.push(deploymentJudge.ref);
 
-    const complete = report.result === 'success' && deploymentJudge.judgment.passed;
+    const complete = inputData.deploymentReport.result === 'success' && deploymentJudge.judgment.passed;
     finishDeliveryRun({
       repoPath: inputData.repoPath,
       status: complete ? 'complete' : 'failed',
@@ -1401,12 +1448,14 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
     return {
       status: complete ? ('complete' as const) : ('failed' as const),
       runId: inputData.runId,
-      summary: complete ? `Deployment complete: ${report.environment} ${report.revision}` : 'Deployment failed judgment or reported failure.',
+      summary: complete
+        ? `Deployment complete: ${inputData.deploymentReport.environment} ${inputData.deploymentReport.revision}`
+        : 'Deployment failed judgment or reported failure.',
       artifacts,
       checks,
       judgments,
       questions: [],
-      nextSteps: complete ? [report.next_action] : deploymentJudge.judgment.remediation,
+      nextSteps: complete ? [inputData.deploymentReport.next_action] : deploymentJudge.judgment.remediation,
     };
   },
 });
@@ -1419,9 +1468,11 @@ export const deliveryWorkflow = createWorkflow({
   outputSchema: workflowOutputSchema,
 })
   .then(initializeRunStep)
-  .then(createPlanStep)
+  .then(createPlannerArtifactsStep)
+  .then(createPlanGateStep)
   .then(createReviewStep)
   .then(createBuildStep)
   .then(createReleaseGateStep)
-  .then(createDeploymentStep)
+  .then(createDeploymentReportStep)
+  .then(createDeploymentJudgmentStep)
   .commit();

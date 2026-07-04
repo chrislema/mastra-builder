@@ -74,12 +74,13 @@ The workflow currently runs:
 
 1. Initialize `.delivery/run.json`.
 2. Planner creates readout and task plan.
-3. Judge scores the task plan.
+3. Plan gate runs deterministic checks and judges the task plan.
 4. Architect reviews the plan and can bounce to planner within `maxRetries`.
 5. Engineer/designer build loop executes tasks in dependency order.
 6. Tester produces and judges a release gate.
-7. Deployer runs mock or real deployment and produces a judged deployment report.
-8. The run finishes as `complete`, `failed`, or `stuck`.
+7. Deployer runs mock or real deployment and writes a deployment report.
+8. Deployment gate runs deterministic checks, judges the deployment report, and finalizes the run.
+9. The run finishes as `complete`, `failed`, or `stuck`.
 
 Judgment math is always computed in TypeScript. Models only produce raw gate and dimension
 scores.
@@ -87,8 +88,9 @@ scores.
 ## Native Scoring
 
 Delivery scorers are registered in `src/mastra/index.ts`, so Mastra Studio can see and run
-them as first-class scorers. The plan, review, build, release-gate, and deployment steps
-attach stage-specific scorer groups with full sampling for live workflow scoring.
+them as first-class scorers. The plan gate, review, build, release-gate, and deployment
+judgment steps attach stage-specific scorer groups with full sampling for live workflow
+scoring.
 
 The current scorer set covers:
 
