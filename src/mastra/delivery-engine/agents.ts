@@ -1,5 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
+import { z } from 'zod';
 import { deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
 import { deliveryInputProcessors, deliveryOutputProcessors } from './processors';
@@ -7,6 +8,9 @@ import { deliveryBuildTaskWorkflow, deliveryWorkflow } from './workflow';
 
 const deliveryModel = 'openai/gpt-5-mini';
 const judgeModel = 'openai/gpt-5-mini';
+const deliveryRequestContextSchema = z.object({
+  repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
+});
 
 const skill = (name: string) => `./src/mastra/delivery-engine/skills/${name}`;
 
@@ -32,6 +36,7 @@ When operating on a target repo, use requestContext.repoPath as the workspace ro
 `;
 
 const deliveryProcessorConfig = {
+  requestContextSchema: deliveryRequestContextSchema,
   inputProcessors: deliveryInputProcessors,
   outputProcessors: deliveryOutputProcessors,
   maxProcessorRetries: 1,
@@ -398,3 +403,5 @@ export const deliveryAgents = {
   deployer: deployerAgent,
   judge: judgeAgent,
 };
+
+export const deliveryAgentRequestContextSchema = deliveryRequestContextSchema;
