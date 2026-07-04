@@ -30,6 +30,7 @@ import {
   deliveryReleaseGateStepScorers,
   deliveryReviewStepScorers,
 } from './scorers';
+import { safeMirrorDeliveryStateWithMastra } from './observability';
 
 const deliveryModel = 'openai/gpt-5-mini';
 
@@ -1488,6 +1489,11 @@ const createDeploymentJudgmentStep = createStep({
   outputSchema: workflowOutputSchema,
   scorers: deliveryDeploymentStepScorers,
   execute: async ({ inputData, mastra }) => {
+    const finishRun = async (status: Parameters<typeof finishDeliveryRun>[0]['status']) => {
+      finishDeliveryRun({ repoPath: inputData.repoPath, status });
+      await safeMirrorDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
+    };
+
     const baseOutput = () => ({
       status: inputData.status,
       runId: inputData.runId,
@@ -1500,7 +1506,7 @@ const createDeploymentJudgmentStep = createStep({
     });
 
     if (inputData.status === 'gate_failed') {
-      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'failed' });
+      await finishRun('failed');
       return {
         ...baseOutput(),
         status: 'failed' as const,
@@ -1509,12 +1515,12 @@ const createDeploymentJudgmentStep = createStep({
     }
 
     if (inputData.status === 'stuck') {
-      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'stuck' });
+      await finishRun('stuck');
       return baseOutput();
     }
 
     if (inputData.status === 'failed') {
-      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'failed' });
+      await finishRun('failed');
       return baseOutput();
     }
 
@@ -1552,10 +1558,7 @@ const createDeploymentJudgmentStep = createStep({
     judgments.push(deploymentJudge.ref);
 
     const complete = inputData.deploymentReport.result === 'success' && deploymentJudge.judgment.passed;
-    finishDeliveryRun({
-      repoPath: inputData.repoPath,
-      status: complete ? 'complete' : 'failed',
-    });
+    await finishRun(complete ? 'complete' : 'failed');
 
     return {
       status: complete ? ('complete' as const) : ('failed' as const),

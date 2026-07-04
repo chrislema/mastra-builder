@@ -4,6 +4,11 @@ import { deliveryRoles } from './boundaries';
 import { runDeterministicCheck } from './checks';
 import { aggregateJudgment } from './judgment';
 import {
+  getDeliveryObservabilityStore,
+  listDeliveryStateMirrorLogs,
+  mirrorDeliveryStateWithMastra,
+} from './observability';
+import {
   appendDeliveryEvent,
   endDeliveryStage,
   finishDeliveryRun,
@@ -229,6 +234,40 @@ export const aggregateJudgmentTool = createTool({
   execute: async (input) => aggregateJudgment(input as Parameters<typeof aggregateJudgment>[0]),
 });
 
+export const mirrorDeliveryStateTool = createTool({
+  id: 'mirror-delivery-state',
+  description: 'Mirror the current .delivery run and event state into Mastra observability storage.',
+  inputSchema: z.object({
+    repoPath: z.string(),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    runId: z.string(),
+    status: z.string(),
+    stage: z.string(),
+    eventCount: z.number(),
+    logsSubmitted: z.number(),
+  }),
+  execute: async ({ repoPath }, context) => mirrorDeliveryStateWithMastra({ repoPath, mastra: context?.mastra }),
+});
+
+export const listDeliveryStateMirrorsTool = createTool({
+  id: 'list-delivery-state-mirrors',
+  description: 'List delivery state mirror records from Mastra observability storage.',
+  inputSchema: z.object({
+    repoPath: z.string().optional(),
+    runId: z.string().optional(),
+    page: z.number().int().min(0).default(0),
+    perPage: z.number().int().min(1).max(100).default(25),
+  }),
+  outputSchema: z.any(),
+  execute: async ({ repoPath, runId, page, perPage }, context) => {
+    const store = await getDeliveryObservabilityStore(context?.mastra);
+    if (!store) throw new Error('Mastra observability storage is not configured');
+    return listDeliveryStateMirrorLogs({ store, repoPath, runId, page, perPage });
+  },
+});
+
 export const deliveryStateTools = {
   initializeDeliveryRunTool,
   startDeliveryStageTool,
@@ -242,4 +281,6 @@ export const deliveryStateTools = {
   getDeliveryRunStatusTool,
   runDeterministicCheckTool,
   aggregateJudgmentTool,
+  mirrorDeliveryStateTool,
+  listDeliveryStateMirrorsTool,
 };

@@ -12,10 +12,11 @@ scorers.
 
 - `deliveryWorkflow`
 - role agents: planner, architect, engineer, designer, tester, deployer, judge
-- delivery state tools for `.delivery/`
+- delivery state tools for `.delivery/`, including observability mirror/list tools
 - delivery scorers for handoff readiness, workflow completion, rubric floor, judgment
   pass rate, and deterministic check pass rate
 - a dynamic delivery workspace rooted by `requestContext.repoPath`
+- storage-backed observability for final delivery run state snapshots and event mirrors
 
 The default weather scaffold has been removed.
 
@@ -81,9 +82,20 @@ The workflow currently runs:
 7. Deployer runs mock or real deployment and writes a deployment report.
 8. Deployment gate runs deterministic checks, judges the deployment report, and finalizes the run.
 9. The run finishes as `complete`, `failed`, or `stuck`.
+10. Final `.delivery` run state is mirrored into Mastra observability storage.
 
 Judgment math is always computed in TypeScript. Models only produce raw gate and dimension
 scores.
+
+## Native Delivery State Storage
+
+`.delivery/run.json` and `.delivery/events.jsonl` remain the portable source of truth inside
+the target repo. Mastra also gets first-class observability records:
+
+- `mirror-delivery-state` writes one delivery snapshot log plus event logs into the
+  configured observability store.
+- `list-delivery-state-mirrors` queries those records by `repoPath` and/or `runId`.
+- The workflow automatically mirrors terminal states after finalizing a run.
 
 ## Native Scoring
 
