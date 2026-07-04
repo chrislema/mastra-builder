@@ -76,6 +76,12 @@ project should become the native Mastra version.
   - deploy/live verification deterministic gates
   - deployment-report rubric judgment
   - final run complete/failed/stuck finish handling
+- Added regression and self-tests:
+  - deterministic check tests
+  - aggregation behavior tests
+  - `.delivery/` state lifecycle fixture test
+  - rubric exemplar integrity harness
+  - `npm test` script
 
 Checkpoint commit:
 
@@ -85,6 +91,7 @@ Checkpoint commit:
 - `9fc5e09 Add architect review stage`
 - `66d5cf1 Add delivery build loop skeleton`
 - `4cec422 Add release gate stage`
+- `1471391 Add deployment stage`
 
 ## Next Slices
 
@@ -212,7 +219,7 @@ Natural commit:
 
 - `Add deployment stage`
 
-### 6. Regression And Self-Tests
+### 6. Regression And Self-Tests (Completed)
 
 Goal: make the port trustworthy without relying on full LLM runs.
 

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start"
@@ -29,6 +29,7 @@
   "devDependencies": {
     "@types/node": "^26.1.0",
     "mastra": "^1.18.0",
+    "tsx": "^4.23.0",
     "typescript": "^6.0.3"
   }
 }
