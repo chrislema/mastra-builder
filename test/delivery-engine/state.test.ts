@@ -29,7 +29,7 @@ test('delivery state lifecycle writes inspectable run state and events', () => {
     repoPath,
     stage: 'build:T1',
     role: 'engineer',
-    surfaces: ['functions/api/login.js'],
+    surfaces: ['workers/tally.js'],
   });
   assert.equal(boundary.boundary.role, 'engineer');
   assert.equal(readDeliveryRun(repoPath).stage, 'build:T1');

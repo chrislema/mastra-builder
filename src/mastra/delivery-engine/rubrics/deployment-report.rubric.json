@@ -87,12 +87,12 @@
   "exemplars": {
     "known_good": {
       "summary": "Verified deploy with concrete rollback.",
-      "content": "Environment: production. Revision: 6e707c7 (delivery D-12, version v14); migrations 0007_sessions.sql applied via D1 API (1 statement, ok); bindings unchanged. Result: success. Verification: GET /api/health 200 {ok:true}; POST /api/login valid → 200 + cookie; POST /api/login bad creds → 401 {error, nextSteps} matching api-119 expectations. Issues: p50 latency 240ms vs 180ms pre-deploy — monitoring 24h, threshold 400ms triggers rollback. Next action: monitor. Rollback: redeploy v13 (rev 2a7699b); 0007 is additive — no down-migration needed.",
+      "content": "Environment: production. Revision: 6e707c7 (delivery D-12, version v14); deploy command: wrangler deploy --env production; migrations 0007_sessions.sql applied via Wrangler/D1 command (1 statement, ok); bindings unchanged; GitHub Actions not used for deployment. Result: success. Verification: GET /api/health 200 {ok:true}; POST /api/login valid → 200 + cookie; POST /api/login bad creds → 401 {error, nextSteps} matching api-119 expectations. Issues: p50 latency 240ms vs 180ms pre-deploy — monitoring 24h, threshold 400ms triggers rollback. Next action: monitor. Rollback: wrangler deploy prior revision v13 (rev 2a7699b); 0007 is additive — no down-migration needed.",
       "expected": { "gates_failed": [], "overall_min": 0.8 }
     },
     "known_bad": {
       "summary": "Unverified success claim over a failed gate.",
-      "content": "Environment: production. Revision: latest. Result: success — wrangler said deployed, looks good. (Release gate was FAIL on the state-integrity blocker but the fix is in this deploy so it should be covered.) Issues: none. Next action: done.",
+      "content": "Environment: production. Revision: latest. Result: success — GitHub Actions deployed after push, looks good. (Release gate was FAIL on the state-integrity blocker but the fix is in this deploy so it should be covered.) Issues: none. Next action: done.",
       "expected": { "gates_failed": ["no_deploy_through_blockers", "verification_evidence_present"], "overall_max": 0.25 }
     }
   }

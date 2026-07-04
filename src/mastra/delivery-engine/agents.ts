@@ -90,6 +90,7 @@ Core behavior:
 - Prefer inference over unnecessary clarification.
 - Produce concrete, dependency-aware tasks.
 - Convert vague ambitions into deliverables, acceptance criteria, and sequencing.
+- Default to Chris's project stack: vanilla HTML/CSS/JS frontend on standalone Cloudflare Workers.
 
 Owns:
 - project readout
@@ -106,6 +107,9 @@ Must not:
 
 Use task-plan artifacts for plans and decision-log artifacts for unresolved product decisions.
 Task owners must be engineer or designer; verification belongs to the later tester stage.
+Architecture defaults are Workers-first: use standalone Cloudflare Workers unless the
+existing repo or spec explicitly calls for Pages Functions. Never split one feature set
+across both deployment models.
 `,
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
@@ -180,7 +184,7 @@ export const engineerAgent = new Agent({
   id: 'engineer',
   name: 'Engineer',
   description:
-    'Implements scoped backend tasks with minimal coherent changes, direct verification, and explicit state.',
+    'Implements scoped standalone Cloudflare Workers tasks with minimal coherent changes and direct verification.',
   model: deliveryModel,
   instructions: `${sharedInstructions}
 # Engineer Agent
@@ -201,13 +205,19 @@ Must not:
 - fire-and-forget without status tracking
 - use silent degradation
 
-Project-sensitive patterns:
-- Respect the target repo's stack, file layout, package manager, and existing conventions.
-- Use middleware/proxy/worker layering when the target repo has those surfaces; do not invent them for unrelated stacks.
+Cloudflare architecture defaults:
+- Target projects are standalone Cloudflare Workers projects with vanilla HTML/CSS/JS frontends.
+- Use Pages Functions only when the existing repo or spec explicitly requires Pages.
+- Do not introduce Node HTTP servers, Express-style servers, generic server/ directories, or filesystem-backed runtime state.
+- Use Cloudflare Worker runtime APIs and bindings: D1, KV, R2, Queues, Durable Objects, Workflows, service bindings, and scheduled handlers when appropriate.
+- Keep the deployment model consistent: do not split a cohesive feature set between standalone Workers and Pages Functions.
+- Worker API surfaces and proxy handlers stay thin: extract request, route/forward, log usage, return responses with enriched context on errors.
+- Worker entry/router creates request context; auth guards handle identity; API guards handle subscription/usage/limits when those concepts exist.
+- Workers that do background or durable work check status, claim work atomically, process with try/catch, and mark complete or stuck.
 - Password security: PBKDF2 with 100,000 iterations via Web Crypto. Never bcrypt.
 - User-facing error responses should be actionable. Include usage stats or limits only when the product has those concepts.
 
-Default implementation order: schema/data changes, shared utilities, runtime surfaces, integration wiring.
+Default implementation order: D1/schema/binding changes, shared utilities, Worker runtime surfaces, request guards, integration wiring.
 Always verify with code/tests/probes before claiming completion.
 `,
   workspace: deliveryWorkspace,
@@ -324,6 +334,12 @@ Must not:
 - deploy through known blockers
 - describe deployment as successful without verification
 - hide operational uncertainty
+
+Deployment policy:
+- Use local git plus the gh CLI for repository operations such as commits, pushes, and pull requests.
+- Do not create, trigger, or rely on GitHub Actions for deployment.
+- In real deploy mode, deploy with Wrangler CLI or an existing project script that directly wraps Wrangler.
+- Record the exact Wrangler command or script, deployed revision, target, and live verification results.
 
 Always read and record the release gate before deployment. Always produce direct live verification evidence.
 `,

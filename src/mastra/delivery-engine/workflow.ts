@@ -2154,7 +2154,8 @@ Deploy mode: ${inputData.deployMode}
 Rules:
 - Do not deploy unless the release gate is PASS with zero blockers.
 - In mock mode, start the application locally or its closest runnable form, record a deploy event, run direct probes, and record live_verify events.
-- In real mode, use the project's deployment command, record deploy and live_verify events with real targets.
+- In real mode, use Wrangler CLI or an existing project script that directly wraps Wrangler. Do not use GitHub Actions as the deployment path.
+- Local git and gh CLI may be used for source-control operations such as commit, push, or PR metadata, but deployment evidence must come from Wrangler and live probes.
 - Verification must include at least one happy path and one error path when the app shape allows it.
 - Return a deployment report with exact revision, verification results, issues, next action, and rollback steps.
 

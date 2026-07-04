@@ -26,15 +26,14 @@
       "workers/**",
       "src/**",
       "lib/**",
-      "server/**",
-      "api/**",
       "scripts/**",
       "db/**",
-      "prisma/**",
+      "migrations/**",
+      "wrangler.jsonc",
       "wrangler.toml",
       "**/*.sql"
     ],
-    "forbidden": ["public/**", "tests/**", "**/*.jsx", "**/*.tsx", "next.config.*"]
+    "forbidden": ["public/**", "tests/**", "server/**", "api/**", "app/**", "prisma/**", "**/*.jsx", "**/*.tsx", "next.config.*"]
   },
   "designer": {
     "max_turns": 40,
@@ -59,6 +58,7 @@
       "db/**",
       "prisma/**",
       "tests/**",
+      "wrangler.jsonc",
       "wrangler.toml",
       "**/*.sql",
       "**/*.jsx",

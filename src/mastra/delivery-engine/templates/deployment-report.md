@@ -8,6 +8,12 @@
 
 - Commit, tag, or artifact
 
+## Deploy Command
+
+- Wrangler command or project script that directly wraps Wrangler
+- Local git/gh CLI source-control action, if any
+- Confirmation that GitHub Actions was not used as the deployment path
+
 ## Result
 
 - Success or failure

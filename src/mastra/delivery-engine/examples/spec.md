@@ -1,11 +1,21 @@
-# Spec — Tally v1
+# Spec - Tally v1
 
-A single Node.js HTTP service (standard library only — `node:http`; no npm
-dependencies), file-backed storage. Small enough to read in one sitting.
+A standalone Cloudflare Worker with D1 for storage and no frontend build step. Keep
+the app small enough to read in one sitting.
 
-## Endpoints
+## Runtime
+
+- Cloudflare Worker module syntax is the runtime surface.
+- D1 is the source of truth. No Node HTTP server, no filesystem-backed runtime state,
+  no Express-style server, and no npm runtime dependencies.
+- Use the configured D1 binding `DB`.
+- Static vanilla UI is optional and may live under `public/`, but the API and redirect
+  behavior belong in the Worker.
+
+## Routes
 
 ### `POST /api/links`
+- Handled by the Worker fetch router.
 - Body: JSON `{ "url": "<destination>" }`.
 - Validates the destination: must parse as a URL with protocol `http:` or `https:`.
 - On success: `201` with `{ "id": "<short id>", "url": "<destination>", "clicks": 0 }`.
@@ -25,20 +35,31 @@ dependencies), file-backed storage. Small enough to read in one sitting.
 
 ## Storage
 
-- JSON file `data/links.json` — a map of id → `{ url, clicks, created_at }`.
-- Written synchronously on every mutation (create, click). The file is the single
-  source of truth; no in-memory-only state survives a restart.
-- Missing or empty file on boot = empty store, not an error.
+- Migration `migrations/0001_links.sql` creates a `links` table.
+- Columns: `id TEXT PRIMARY KEY`, `url TEXT NOT NULL`, `clicks INTEGER NOT NULL DEFAULT 0`,
+  `created_at TEXT NOT NULL`.
+- Click increments are atomic D1 updates. No in-memory-only state is authoritative.
+- Missing rows return the explicit unknown-link error shape.
+
+## Files
+
+- `workers/tally.js` is the Worker entry and fetch router.
+- `src/utils/links.js` contains D1 link operations.
+- `src/utils/id.js` contains id generation.
+- `migrations/0001_links.sql` contains the D1 schema.
+- `wrangler.jsonc` declares the Worker and D1 binding. Use an existing
+  `wrangler.toml` only if the repository already has one.
 
 ## Error behavior
 
 - Every error response is JSON with `error` and `next_steps` fields. No stack traces,
   no HTML error pages, no silent fallbacks.
-- Malformed JSON body → `400`, not a crash.
+- Malformed JSON body returns `400`, not a crash.
 
 ## Constraints
 
-- Files: `workers/server.js` (HTTP layer — thin: parse, route, respond),
-  `workers/store.js` (storage: load, create, click, get), `workers/id.js` (id generation).
-- Server starts with `node workers/server.js` on `PORT` env var, default 3000.
-- No frameworks, no dependencies, no build step.
+- Keep the Worker route layer thin: parse request, call helpers or D1, log enough context,
+  and return actionable responses.
+- No Pages Functions unless explicitly requested.
+- No React, JSX/TSX, frontend frameworks, preprocessors, Node HTTP server, Express,
+  filesystem-backed runtime state, or new frontend build step.

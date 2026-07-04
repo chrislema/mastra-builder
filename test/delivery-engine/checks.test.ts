@@ -21,7 +21,7 @@ test('planSchemaComplete requires task rows to be executable', () => {
           deliverable: 'Implement login endpoint',
           depends_on: [],
           acceptance_criteria: ['valid credentials return 200'],
-          owned_surfaces: ['functions/api/login.js'],
+          owned_surfaces: ['workers/auth.js'],
         },
       ],
     }).passed,
@@ -125,12 +125,17 @@ test('tierOrderCheck enforces required tiers for pre-deployment', () => {
 });
 
 test('fileOwnership follows delivery role boundaries', () => {
-  assert.equal(fileOwnership({ role: 'engineer', paths: ['functions/api/login.js'] }).passed, true);
-  assert.equal(fileOwnership({ role: 'engineer', paths: ['package.json', 'src/app.ts'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['workers/auth.js'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['package.json', 'src/app.js'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['migrations/0001_links.sql'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['wrangler.jsonc'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['server/index.js'] }).passed, false);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['api/login.js'] }).passed, false);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['src/App.tsx'] }).passed, false);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['next.config.js'] }).passed, false);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['public/index.html'] }).passed, false);
   assert.equal(fileOwnership({ role: 'designer', paths: ['src/ui/login.js', 'src/ui/login.css'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'designer', paths: ['wrangler.jsonc'] }).passed, false);
   assert.equal(fileOwnership({ role: 'designer', paths: ['src/components/Login.tsx'] }).passed, false);
   assert.equal(fileOwnership({ role: 'designer', paths: ['src/api/login.ts'] }).passed, false);
   assert.equal(fileOwnership({ role: 'tester', paths: ['vitest.config.ts'] }).passed, true);

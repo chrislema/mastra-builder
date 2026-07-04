@@ -86,9 +86,15 @@ repo-relative paths. The workflow writes authoritative state and artifacts under
 
 Use `deployMode: "mock"` unless a real deployment is explicitly intended.
 
-Target projects are assumed to use vanilla HTML, CSS, and JavaScript. The delivery
-agents should not introduce React, JSX/TSX, frontend frameworks, preprocessors, or a
-new frontend build step.
+Target projects are assumed to be standalone Cloudflare Workers projects with vanilla
+HTML, CSS, and JavaScript frontends. Pages Functions are an explicit exception, not the
+default. The delivery agents should not introduce React, JSX/TSX, frontend frameworks,
+preprocessors, generic Node/Express servers, filesystem-backed runtime state, or a new
+frontend build step.
+
+Use local `git` plus the `gh` CLI for repository operations such as commits, pushes,
+and pull requests. Do not use GitHub Actions as the deployment path. Real deployments
+should use Wrangler CLI, or an existing project script that directly wraps Wrangler.
 
 ## Request Context
 

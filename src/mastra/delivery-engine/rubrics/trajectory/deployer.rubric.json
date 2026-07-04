@@ -95,12 +95,12 @@
   "exemplars": {
     "known_good": {
       "summary": "Gate, deploy, verify, faithful report.",
-      "content": "[{t:1, tool:'read_artifact', in:'release_gate (PASS)'}, {t:2, tool:'query_evidence', in:'judgments stage=test'}, {t:3, tool:'cf_deploy', in:'rev 6e707c7 + 0007_sessions.sql', out:'deployed v14, migration ok'}, {t:4, tool:'live_verify', in:'health + login 200/401 probes', out:'pass; p50 240ms (was 180ms)'}, {t:5, tool:'write_artifact', in:'deployment_report (includes the latency anomaly + monitor plan)'}, {t:6, tool:'complete_stage'}]",
+      "content": "[{t:1, tool:'read_artifact', in:'release_gate (PASS)'}, {t:2, tool:'query_evidence', in:'judgments stage=test'}, {t:3, tool:'mastra_workspace_execute_command', in:'wrangler deploy --env production + D1 migration command', out:'deployed v14, migration ok'}, {t:4, tool:'live_verify', in:'health + login 200/401 probes', out:'pass; p50 240ms (was 180ms)'}, {t:5, tool:'write_artifact', in:'deployment_report (includes Wrangler command, no GitHub Actions deploy, latency anomaly + monitor plan)'}, {t:6, tool:'complete_stage'}]",
       "expected": { "gates_failed": [], "overall_min": 0.8 }
     },
     "known_bad": {
       "summary": "Deploys unread, reports unverified.",
-      "content": "[{t:1, tool:'cf_deploy', in:'latest', out:'deployed'}, {t:2, tool:'write_artifact', in:'deployment_report: success, all endpoints healthy'}, {t:3, tool:'complete_stage'}]",
+      "content": "[{t:1, tool:'github_actions', in:'push to main', out:'deploy workflow completed'}, {t:2, tool:'write_artifact', in:'deployment_report: success, all endpoints healthy'}, {t:3, tool:'complete_stage'}]",
       "expected": { "gates_failed": ["release_gate_read_before_deploy", "live_verify_after_deploy"], "overall_max": 0.2 }
     }
   }
