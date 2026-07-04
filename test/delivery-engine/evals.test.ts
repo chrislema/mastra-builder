@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { Mastra } from '@mastra/core/mastra';
+import { LibSQLStore } from '@mastra/libsql';
 import {
   collectDeliveryRegressionScoreMismatches,
   deliveryRegressionDatasetItems,
+  deliveryRegressionDatasetName,
+  runDeliveryRegressionExperiment,
 } from '../../src/mastra/delivery-engine/evals.ts';
+import { deliveryScorers } from '../../src/mastra/delivery-engine/scorers.ts';
 
 test('delivery regression fixtures carry expected score labels', () => {
   assert.equal(deliveryRegressionDatasetItems.length >= 4, true);
@@ -58,4 +66,43 @@ test('delivery regression mismatch collector compares experiment scores to groun
   assert.equal(mismatches[0].scorerId, 'delivery-rubric-floor');
   assert.equal(mismatches[0].expected, 0.84);
   assert.equal(mismatches[0].actual, 0.5);
+});
+
+test('delivery regression experiment gates scorers through isolated Mastra storage', async (t) => {
+  const storageDir = mkdtempSync(join(tmpdir(), 'delivery-eval-gate-'));
+  const storage = new LibSQLStore({
+    id: 'delivery-eval-gate-storage',
+    url: `file:${join(storageDir, 'mastra.db')}`,
+  });
+  const mastra = new Mastra({
+    scorers: deliveryScorers,
+    storage,
+    logger: false,
+  });
+
+  t.after(async () => {
+    await mastra.shutdown();
+    await storage.close();
+    rmSync(storageDir, { recursive: true, force: true });
+  });
+
+  const { summary, mismatches } = await runDeliveryRegressionExperiment(mastra, {
+    name: 'delivery-scorecard-ci-gate',
+    description: 'CI gate for delivery scorecard scorers.',
+    maxConcurrency: 1,
+    itemTimeout: 10_000,
+    metadata: { suite: 'delivery-engine', gate: 'ci' },
+  });
+
+  assert.equal(summary.status, 'completed');
+  assert.equal(summary.totalItems, deliveryRegressionDatasetItems.length);
+  assert.equal(summary.succeededCount, deliveryRegressionDatasetItems.length);
+  assert.equal(summary.failedCount, 0);
+  assert.deepEqual(mismatches, []);
+
+  const listed = await mastra.datasets.list({
+    filters: { name: deliveryRegressionDatasetName, targetType: 'scorer' },
+    perPage: 10,
+  });
+  assert.equal(listed.datasets.some((dataset) => dataset.name === deliveryRegressionDatasetName), true);
 });
