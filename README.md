@@ -3,8 +3,8 @@
 This project is a Mastra-native port of the delivery engine ideas from
 `github.com/chrislema/claude-environments`. The Claude repo remains the Claude-specific
 implementation. This repo uses Mastra first-class pieces: agents, tools, workflow steps,
-workspace hooks, typed artifacts, deterministic checks, rubric aggregation, and native
-scorers.
+workspace hooks, typed artifacts, deterministic checks, rubric aggregation, native scorers,
+working memory, and custom API routes.
 
 ## What Is Registered
 
@@ -15,9 +15,11 @@ scorers.
 - delivery state tools for `.delivery/`, including observability mirror/list tools
 - delivery scorers for handoff readiness, workflow completion, rubric floor, judgment
   pass rate, and deterministic check pass rate
+- `deliveryMemory`, a thread-scoped Mastra working-memory contract for live run coordination
 - delivery processors for repo-bound execution, policy override blocking, evidence-backed
   completion claims, token limiting, Unicode normalization, and secret redaction
 - a dynamic delivery workspace rooted by `requestContext.repoPath`
+- custom route `POST /delivery/run` for starting a resource-scoped delivery workflow run
 - storage-backed observability for final delivery run state snapshots and event mirrors
 
 The default weather scaffold has been removed.
@@ -27,12 +29,39 @@ The default weather scaffold has been removed.
 ```shell
 npm install
 npm test
-./node_modules/.bin/tsc --noEmit
+npm run ci:delivery
+npm run build
 npm run dev
 ```
 
 Open `http://localhost:4111` for Mastra Studio, then run `deliveryWorkflow` from the
 Workflows tab.
+
+## Run A Delivery Workflow
+
+From the command line:
+
+```shell
+npm run delivery:run -- --repo /absolute/path/to/target-repo --vision vision.md --spec spec.md
+```
+
+The same native runner is exposed as a Mastra custom API route:
+
+```shell
+curl -X POST http://localhost:4111/delivery/run \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "repoPath": "/absolute/path/to/target-repo",
+    "visionPath": "vision.md",
+    "specPath": "spec.md",
+    "maxRetries": 2,
+    "deployMode": "mock"
+  }'
+```
+
+Both paths call `deliveryWorkflow.createRun({ resourceId })`, pass
+`requestContext.repoPath`, include delivery trace metadata, and return the native workflow
+result with workflow state by default.
 
 ## Workflow Input
 
@@ -61,6 +90,11 @@ can read, write, search, and run commands in. The workflow supplies that context
 agent call. If you call an agent directly from Studio or an API client, include the same
 request context. Delivery agents now use a Mastra input processor that blocks calls without
 `requestContext.repoPath`.
+
+The delivery agents also share registered `deliveryMemory`. It is thread-scoped and only
+for live coordination facts such as current stage, open questions, and approval state.
+Durable decisions, artifacts, scores, events, and task status still go through delivery
+tools, workflow state, and storage.
 
 ## Example Inputs
 
@@ -92,12 +126,13 @@ scores.
 
 ## Native Delivery State Storage
 
-`.delivery/run.json` and `.delivery/events.jsonl` remain the portable source of truth inside
-the target repo. Mastra also gets first-class observability records:
+`.delivery/run.json` and `.delivery/events.jsonl` remain the portable inspection layer
+inside the target repo. Mastra also gets first-class observability records:
 
-- `mirror-delivery-state` writes one delivery snapshot log plus event logs into the
+- `persist-delivery-state` writes one delivery snapshot log plus event logs into the
   configured observability store.
-- `list-delivery-state-mirrors` queries those records by `repoPath` and/or `runId`.
+- `list-delivery-state-records` queries those records by `repoPath` and/or `runId`.
+- `mirror-delivery-state` and `list-delivery-state-mirrors` remain compatibility aliases.
 - The workflow automatically mirrors terminal states after finalizing a run.
 
 ## Native Scoring
@@ -161,10 +196,11 @@ Use:
 
 ```shell
 npm test
-./node_modules/.bin/tsc --noEmit
+npm run eval:delivery:gate
+npm run ci:delivery
 npm run build
 ```
 
-In this sandbox, `npm run build` bundled the Mastra app successfully, then stalled during
-the dependency-install phase because network access was blocked. In a normal networked
-environment, rerun the same package script rather than calling `mastra build` directly.
+`npm run build` has completed successfully for this project. If a restricted sandbox stalls
+while Mastra installs generated output dependencies, rerun the same package script in a
+network-enabled environment rather than calling `mastra build` directly.

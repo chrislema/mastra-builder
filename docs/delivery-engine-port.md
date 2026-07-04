@@ -103,6 +103,12 @@ project should become the native Mastra version.
   - planner blocking questions suspend with `answer-planner-questions`
   - real deployment approval suspends with `approve-real-deployment`
   - rejected real deployments finalize as failed without running deployer
+- Added native delivery memory and run surfaces:
+  - typed `requestContext.repoPath` contract on all delivery agents
+  - registered thread-scoped `deliveryMemory`
+  - `POST /delivery/run` custom API route with OpenAPI metadata
+  - `npm run delivery:run` workflow runner script
+  - resource-scoped workflow runs with delivery tracing metadata
 
 Checkpoint commit:
 
@@ -117,6 +123,10 @@ Checkpoint commit:
 - `30cc1dd Document delivery engine usage`
 - `5a775e6 Add native Mastra delivery scorers`
 - `8b9e2b6 Decompose delivery workflow gate steps`
+- `8d6bb94 Add typed delivery agent request context`
+- `18fd2c0 Add delivery working memory contract`
+- `fa5d4da Add native delivery workflow run route`
+- `56e670a Add delivery workflow runner script`
 
 ## Next Slices
 
@@ -355,10 +365,59 @@ Natural commit:
 
 - `Add native workflow HITL approvals`
 
+### 11. Native Run Surfaces (Completed)
+
+Goal: make full delivery runs easy to start from Studio, HTTP, or package scripts without
+bespoke orchestration.
+
+Work:
+
+- Publish a typed delivery workflow run input contract.
+- Create a reusable runner around `deliveryWorkflow.createRun()`.
+- Scope workflow runs by deterministic `resourceId`.
+- Pass `requestContext.repoPath` and delivery tracing metadata into `Run.start()`.
+- Register `POST /delivery/run` as a Mastra custom API route.
+- Add `npm run delivery:run` for local full-run tests with a vision and spec.
+
+Done when:
+
+- A workflow run can be launched through the package script.
+- The same runner backs a registered Mastra route.
+- Unit tests cover resource IDs, request context, route registration, and workflow start
+  options.
+- `npm test` and `npm run build` pass.
+
+Natural commit:
+
+- `Add native delivery workflow run route`
+- `Add delivery workflow runner script`
+
+### 12. Native Memory Contract (Completed)
+
+Goal: make delivery memory intentional instead of incidental per-agent defaults.
+
+Work:
+
+- Add a shared delivery working-memory template.
+- Configure bounded recent-message history.
+- Scope working memory by thread.
+- Register `deliveryMemory` in the Mastra instance.
+- Ensure every delivery agent uses the same memory contract.
+
+Done when:
+
+- Delivery agents expose a typed request context contract.
+- Delivery agents share registered `deliveryMemory`.
+- Tests assert the merged memory config through Mastra's memory API.
+- `npm test` and `npm run build` pass.
+
+Natural commit:
+
+- `Add typed delivery agent request context`
+- `Add delivery working memory contract`
+
 ## Open Questions
 
-- Whether the target repo should be accessed by dynamic workspace context only, or whether
-  we should also provide a direct workflow input for single-repo deployments.
 - Whether to keep file-based skills under `src/mastra/delivery-engine/skills` long term or
   convert some high-traffic skills to `createSkill()` definitions.
 - Whether judge models should stay `openai/gpt-5-mini` initially or use a cheaper model
