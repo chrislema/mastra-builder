@@ -9,6 +9,7 @@ import {
   finishDeliveryRun,
   initializeDeliveryRun,
   readDeliveryEvents,
+  readDeliveryRun,
   recordDeliveryArtifact,
   recordDeliveryJudgment,
   startDeliveryStage,
@@ -239,6 +240,17 @@ const deliveryStageOutputSchema = workflowOutputSchema.extend({
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
 });
+const buildTaskWorkItemSchema = deliveryStageOutputSchema.extend({
+  task: taskSchema.optional(),
+  taskIndex: z.number().int().min(0).default(0),
+  skipped: z.boolean().default(false),
+});
+const buildTaskWorkItemsSchema = z.array(buildTaskWorkItemSchema);
+const buildTaskResultSchema = deliveryStageOutputSchema.extend({
+  taskId: z.string().optional(),
+  taskStatus: z.enum(['complete', 'stuck', 'blocked', 'skipped']).optional(),
+});
+const buildTaskResultsSchema = z.array(buildTaskResultSchema);
 const deploymentReportStageSchema = deliveryStageOutputSchema.extend({
   deploymentReport: deploymentReportSchema.optional(),
   deploymentReportPath: z.string().optional(),
@@ -988,13 +1000,12 @@ ${JSON.stringify(reviewReport, null, 2)}`,
   },
 });
 
-const createBuildStep = createStep({
-  id: 'delivery-build-loop',
-  description: 'Execute reviewed task plans in dependency order with role boundaries and implementation judgments.',
+const prepareBuildTasksStep = createStep({
+  id: 'prepare-build-tasks',
+  description: 'Expand the reviewed task plan into workflow-native build work items.',
   inputSchema: deliveryStageOutputSchema,
-  outputSchema: deliveryStageOutputSchema,
-  scorers: deliveryBuildStepScorers,
-  execute: async ({ inputData, mastra }) => {
+  outputSchema: buildTaskWorkItemsSchema,
+  execute: async ({ inputData }) => {
     const passThrough = () => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
@@ -1009,58 +1020,137 @@ const createBuildStep = createStep({
       judgments: inputData.judgments,
       questions: inputData.questions,
       nextSteps: inputData.nextSteps,
+      taskIndex: 0,
+      skipped: true,
     });
 
-    if (inputData.status !== 'reviewed') return passThrough();
+    if (inputData.status !== 'reviewed') return [passThrough()];
     if (!inputData.taskPlan) throw new Error('review stage did not provide a task plan for the build loop');
 
+    const orderedTasks = topoOrderTasks(inputData.taskPlan.tasks);
+    if (!orderedTasks.length) {
+      return [
+        {
+          ...passThrough(),
+          status: 'built' as const,
+          summary: 'Build loop completed: no implementation tasks were present.',
+          nextSteps: ['Run the release gate stage against the reviewed task plan.'],
+        },
+      ];
+    }
+
+    return orderedTasks.map((task, taskIndex) => ({
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: inputData.taskPlan,
+      releaseGate: inputData.releaseGate,
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts: inputData.artifacts,
+      checks: inputData.checks,
+      judgments: inputData.judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+      task,
+      taskIndex,
+      skipped: false,
+    }));
+  },
+});
+
+const executeBuildTaskStep = createStep({
+  id: 'execute-build-task',
+  description: 'Run one build task through the owning agent, deterministic checks, and implementation judgment.',
+  inputSchema: buildTaskWorkItemSchema,
+  outputSchema: buildTaskResultSchema,
+  execute: async ({ inputData, mastra }) => {
+    const passThrough = (taskStatus: 'complete' | 'stuck' | 'blocked' | 'skipped' = 'skipped') => ({
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
+      taskPlan: inputData.taskPlan,
+      releaseGate: inputData.releaseGate,
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts: inputData.artifacts,
+      checks: inputData.checks,
+      judgments: inputData.judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+      taskId: inputData.task?.id,
+      taskStatus,
+    });
+
+    if (inputData.skipped) return passThrough();
+    if (inputData.status !== 'reviewed') return passThrough();
+    if (!inputData.taskPlan) throw new Error('review stage did not provide a task plan for the build task');
+    if (!inputData.task) throw new Error('build task work item did not include a task');
+
     const taskPlan = inputData.taskPlan;
-    const orderedTasks = topoOrderTasks(taskPlan.tasks);
+    const task = inputData.task;
     const artifacts = [...inputData.artifacts];
     const checks = [...inputData.checks];
     const judgments = [...inputData.judgments];
-    const taskState: Record<string, 'complete' | 'stuck' | 'blocked'> = {};
 
-    for (const task of orderedTasks) {
-      const blockedBy = task.depends_on.filter((dependency) => taskState[dependency] !== 'complete');
-      if (blockedBy.length) {
-        taskState[task.id] = 'blocked';
-        updateDeliveryTask({
-          repoPath: inputData.repoPath,
-          id: task.id,
-          status: 'blocked',
-          owner: task.owner,
-          note: `blocked by dependency ${blockedBy.join(', ')}`,
-        });
-        continue;
-      }
+    const run = readDeliveryRun(inputData.repoPath);
+    const blockedBy = task.depends_on.filter((dependency) => run.tasks[dependency]?.status !== 'complete');
+    if (blockedBy.length) {
+      updateDeliveryTask({
+        repoPath: inputData.repoPath,
+        id: task.id,
+        status: 'blocked',
+        owner: task.owner,
+        note: `blocked by dependency ${blockedBy.join(', ')}`,
+      });
 
-      const role = buildRoleForTask(task);
-      const agent = requiredAgent(mastra, role);
-      let taskComplete = false;
-      let remediation: string[] = [];
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan,
+        releaseGate: inputData.releaseGate,
+        status: 'stuck' as const,
+        runId: inputData.runId,
+        summary: `Build task ${task.id} blocked by dependencies.`,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: blockedBy.map((dependency) => `${task.id} blocked by ${dependency}`),
+        taskId: task.id,
+        taskStatus: 'blocked' as const,
+      };
+    }
 
-      for (let attempt = 0; attempt <= inputData.maxRetries && !taskComplete; attempt += 1) {
-        const attemptNumber = attempt + 1;
-        const stage = `build:${task.id}`;
-        const usableSurfaces = task.owned_surfaces.filter((surface) => !/^unknown\b/i.test(surface));
-        updateDeliveryTask({
-          repoPath: inputData.repoPath,
-          id: task.id,
-          status: 'building',
-          owner: role,
-          note: attempt > 0 ? `retry ${attemptNumber}` : undefined,
-          bumpRetries: attempt > 0,
-        });
-        startDeliveryStage({
-          repoPath: inputData.repoPath,
-          stage,
-          role,
-          surfaces: usableSurfaces.length ? usableSurfaces : undefined,
-        });
+    const role = buildRoleForTask(task);
+    const agent = requiredAgent(mastra, role);
+    let taskComplete = false;
+    let remediation: string[] = [];
 
-        const buildResponse = await agent.generate(
-          `Implement task ${task.id}: ${task.deliverable}
+    for (let attempt = 0; attempt <= inputData.maxRetries && !taskComplete; attempt += 1) {
+      const attemptNumber = attempt + 1;
+      const stage = `build:${task.id}`;
+      const usableSurfaces = task.owned_surfaces.filter((surface) => !/^unknown\b/i.test(surface));
+      updateDeliveryTask({
+        repoPath: inputData.repoPath,
+        id: task.id,
+        status: 'building',
+        owner: role,
+        note: attempt > 0 ? `retry ${attemptNumber}` : undefined,
+        bumpRetries: attempt > 0,
+      });
+      startDeliveryStage({
+        repoPath: inputData.repoPath,
+        stage,
+        role,
+        surfaces: usableSurfaces.length ? usableSurfaces : undefined,
+      });
+
+      const buildResponse = await agent.generate(
+        `Implement task ${task.id}: ${task.deliverable}
 
 Acceptance criteria:
 ${task.acceptance_criteria.map((criterion) => `- ${criterion}`).join('\n')}
@@ -1075,103 +1165,100 @@ Context artifacts:
 
 ${remediation.length ? `This is a bounce. Fix exactly these findings:\n${remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
 Use the workspace to make the smallest coherent code change. Stay inside the active boundary. Run code or tests that verify the acceptance criteria before returning. Return an implementation note with every changed file and visible verification gaps.`,
-          {
-            requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
-            structuredOutput: {
-              schema: builderOutputSchema,
-              model: deliveryModel,
-              instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
-            },
+        {
+          requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+          structuredOutput: {
+            schema: builderOutputSchema,
+            model: deliveryModel,
+            instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
           },
-        );
+        },
+      );
 
-        const { note } = builderOutputSchema.parse(buildResponse.object);
-        const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
-        writeDeliveryArtifact({
-          repoPath: inputData.repoPath,
-          artifactPath: notePath,
-          artifact: note,
-        });
-        recordDeliveryArtifact({
-          repoPath: inputData.repoPath,
-          type: `note-${task.id}`,
-          path: notePath,
-        });
-        artifacts.push(notePath);
+      const { note } = builderOutputSchema.parse(buildResponse.object);
+      const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
+      writeDeliveryArtifact({
+        repoPath: inputData.repoPath,
+        artifactPath: notePath,
+        artifact: note,
+      });
+      recordDeliveryArtifact({
+        repoPath: inputData.repoPath,
+        type: `note-${task.id}`,
+        path: notePath,
+      });
+      artifacts.push(notePath);
 
-        endDeliveryStage({
-          repoPath: inputData.repoPath,
-          stage,
-          reason: 'complete_stage',
-        });
+      endDeliveryStage({
+        repoPath: inputData.repoPath,
+        stage,
+        reason: 'complete_stage',
+      });
 
-        const deterministicResults = implementationDeterministicResults({
-          repoPath: inputData.repoPath,
-          stage,
-          role,
+      const deterministicResults = implementationDeterministicResults({
+        repoPath: inputData.repoPath,
+        stage,
+        role,
+        note,
+      });
+      checks.push(...checkSummaries(deterministicResults, `${task.id}.a${attemptNumber}`));
+
+      const implementationJudge = await judgeDeliveryArtifact({
+        mastra,
+        repoPath: inputData.repoPath,
+        rubricName: 'implementation',
+        subjectName: notePath,
+        subject: {
+          task,
           note,
-        });
-        checks.push(...checkSummaries(deterministicResults, `${task.id}.a${attemptNumber}`));
+          files: repoFileContents(inputData.repoPath, note.files_touched),
+          task_plan: taskPlan,
+        },
+        deterministicResults,
+        slug: `implementation-${task.id}-a${attemptNumber}`,
+      });
+      artifacts.push(implementationJudge.judgeOutputPath, implementationJudge.judgmentPath);
+      judgments.push(implementationJudge.ref);
 
-        const implementationJudge = await judgeDeliveryArtifact({
-          mastra,
-          repoPath: inputData.repoPath,
-          rubricName: 'implementation',
-          subjectName: notePath,
-          subject: {
-            task,
-            note,
-            files: repoFileContents(inputData.repoPath, note.files_touched),
-            task_plan: taskPlan,
-          },
-          deterministicResults,
-          slug: `implementation-${task.id}-a${attemptNumber}`,
-        });
-        artifacts.push(implementationJudge.judgeOutputPath, implementationJudge.judgmentPath);
-        judgments.push(implementationJudge.ref);
-
-        if (implementationJudge.judgment.passed) {
-          taskComplete = true;
-          taskState[task.id] = 'complete';
-          updateDeliveryTask({
-            repoPath: inputData.repoPath,
-            id: task.id,
-            status: 'complete',
-            owner: role,
-            note: `judged ${implementationJudge.judgment.overall}`,
-          });
-        } else {
-          remediation = implementationFindingSteps(task.id, implementationJudge.judgment.remediation);
-        }
-      }
-
-      if (!taskComplete) {
-        taskState[task.id] = 'stuck';
+      if (implementationJudge.judgment.passed) {
+        taskComplete = true;
         updateDeliveryTask({
           repoPath: inputData.repoPath,
           id: task.id,
-          status: 'stuck',
+          status: 'complete',
           owner: role,
-          note: remediation.join(' | ').slice(0, 300) || 'implementation did not pass judgment',
+          note: `judged ${implementationJudge.judgment.overall}`,
         });
+      } else {
+        remediation = implementationFindingSteps(task.id, implementationJudge.judgment.remediation);
       }
     }
 
-    const blockedOrStuck = Object.entries(taskState).filter(([, status]) => status !== 'complete');
-    if (blockedOrStuck.length) {
+    if (!taskComplete) {
+      updateDeliveryTask({
+        repoPath: inputData.repoPath,
+        id: task.id,
+        status: 'stuck',
+        owner: role,
+        note: remediation.join(' | ').slice(0, 300) || 'implementation did not pass judgment',
+      });
+
       return {
         repoPath: inputData.repoPath,
         maxRetries: inputData.maxRetries,
         deployMode: inputData.deployMode,
         taskPlan,
+        releaseGate: inputData.releaseGate,
         status: 'stuck' as const,
         runId: inputData.runId,
-        summary: 'Build loop stopped with stuck or blocked tasks.',
+        summary: `Build task ${task.id} did not pass implementation judgment.`,
         artifacts,
         checks,
         judgments,
         questions: [],
-        nextSteps: blockedOrStuck.map(([id, status]) => `${id}:${status}`),
+        nextSteps: implementationFindingSteps(task.id, remediation),
+        taskId: task.id,
+        taskStatus: 'stuck' as const,
       };
     }
 
@@ -1180,10 +1267,112 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
       taskPlan,
+      releaseGate: inputData.releaseGate,
       status: 'built' as const,
       runId: inputData.runId,
-      summary: `Build loop completed: ${taskStatusSummary(taskState).join(', ')}`,
+      summary: `Build task ${task.id} completed.`,
       artifacts,
+      checks,
+      judgments,
+      questions: [],
+      nextSteps: ['Continue the delivery build loop.'],
+      taskId: task.id,
+      taskStatus: 'complete' as const,
+    };
+  },
+});
+
+const executeBuildTaskWorkflow = createWorkflow({
+  id: 'delivery-build-task',
+  description: 'Nested workflow that executes one implementation task with role boundary and judgment gates.',
+  inputSchema: buildTaskWorkItemSchema,
+  outputSchema: buildTaskResultSchema,
+})
+  .then(executeBuildTaskStep)
+  .commit();
+
+const aggregateBuildTaskResultsStep = createStep({
+  id: 'delivery-build-loop',
+  description: 'Aggregate workflow-native build task results into the delivery stage output.',
+  inputSchema: buildTaskResultsSchema,
+  outputSchema: deliveryStageOutputSchema,
+  scorers: deliveryBuildStepScorers,
+  execute: async ({ inputData }) => {
+    const first = inputData[0];
+    if (!first) throw new Error('build loop did not receive any task results');
+
+    const uniqueArtifacts = Array.from(new Set(inputData.flatMap((result) => result.artifacts)));
+    const checkKeys = new Set<string>();
+    const checks = inputData
+      .flatMap((result) => result.checks)
+      .filter((check) => {
+        const key = `${check.check}:${check.passed}:${check.reason}`;
+        if (checkKeys.has(key)) return false;
+        checkKeys.add(key);
+        return true;
+      });
+    const judgmentKeys = new Set<string>();
+    const judgments = inputData
+      .flatMap((result) => result.judgments)
+      .filter((judgment) => {
+        if (judgmentKeys.has(judgment.path)) return false;
+        judgmentKeys.add(judgment.path);
+        return true;
+      });
+    const taskState = Object.fromEntries(
+      inputData
+        .filter((result) => result.taskId && result.taskStatus && result.taskStatus !== 'skipped')
+        .map((result) => [result.taskId, result.taskStatus]),
+    ) as Record<string, 'complete' | 'stuck' | 'blocked'>;
+
+    const allSkipped = inputData.every((result) => result.taskStatus === 'skipped' || !result.taskId);
+    if (allSkipped) {
+      return {
+        repoPath: first.repoPath,
+        maxRetries: first.maxRetries,
+        deployMode: first.deployMode,
+        taskPlan: first.taskPlan,
+        releaseGate: first.releaseGate,
+        status: first.status,
+        runId: first.runId,
+        summary: first.summary,
+        artifacts: uniqueArtifacts,
+        checks,
+        judgments,
+        questions: first.questions,
+        nextSteps: first.nextSteps,
+      };
+    }
+
+    const blockedOrStuck = Object.entries(taskState).filter(([, status]) => status !== 'complete');
+    if (blockedOrStuck.length) {
+      return {
+        repoPath: first.repoPath,
+        maxRetries: first.maxRetries,
+        deployMode: first.deployMode,
+        taskPlan: first.taskPlan,
+        releaseGate: first.releaseGate,
+        status: 'stuck' as const,
+        runId: first.runId,
+        summary: 'Build loop stopped with stuck or blocked tasks.',
+        artifacts: uniqueArtifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: blockedOrStuck.map(([id, status]) => `${id}:${status}`),
+      };
+    }
+
+    return {
+      repoPath: first.repoPath,
+      maxRetries: first.maxRetries,
+      deployMode: first.deployMode,
+      taskPlan: first.taskPlan,
+      releaseGate: first.releaseGate,
+      status: 'built' as const,
+      runId: first.runId,
+      summary: `Build loop completed: ${taskStatusSummary(taskState).join(', ')}`,
+      artifacts: uniqueArtifacts,
       checks,
       judgments,
       questions: [],
@@ -1586,7 +1775,9 @@ export const deliveryWorkflow = createWorkflow({
   .then(createPlannerArtifactsStep)
   .then(createPlanGateStep)
   .then(createReviewStep)
-  .then(createBuildStep)
+  .then(prepareBuildTasksStep)
+  .foreach(executeBuildTaskWorkflow, { concurrency: 1 })
+  .then(aggregateBuildTaskResultsStep)
   .then(createReleaseGateStep)
   .then(createDeploymentReportStep)
   .then(createDeploymentJudgmentStep)
