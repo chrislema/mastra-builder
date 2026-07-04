@@ -1,0 +1,103 @@
+import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+import test from 'node:test';
+import { deliveryApiRoutes } from '../../src/mastra/delivery-engine/routes.ts';
+import {
+  createDeliveryWorkflowRequestContext,
+  deliveryWorkflowResourceId,
+  startDeliveryWorkflowRun,
+} from '../../src/mastra/delivery-engine/runner.ts';
+
+test('delivery workflow runner creates a resource-scoped workflow run', async () => {
+  const captured: {
+    workflowId?: string;
+    createRunOptions?: Record<string, unknown>;
+    startOptions?: Record<string, any>;
+  } = {};
+  const host = {
+    getWorkflow: (id: 'deliveryWorkflow') => {
+      captured.workflowId = id;
+      return {
+        createRun: async (options: Record<string, unknown>) => {
+          captured.createRunOptions = options;
+          return {
+            runId: 'workflow-run-1',
+            start: async (options: Record<string, any>) => {
+              captured.startOptions = options;
+              return { status: 'success' };
+            },
+          };
+        },
+      } as any;
+    },
+  };
+
+  const response = await startDeliveryWorkflowRun(host, {
+    repoPath: '/tmp/delivery-target',
+    visionPath: 'docs/vision.md',
+    specPath: 'docs/spec.md',
+    maxRetries: 1,
+    deployMode: 'mock',
+  });
+
+  const repoPath = resolve('/tmp/delivery-target');
+
+  assert.equal(captured.workflowId, 'deliveryWorkflow');
+  assert.deepEqual(captured.createRunOptions, {
+    resourceId: deliveryWorkflowResourceId(repoPath),
+  });
+  assert.deepEqual(captured.startOptions?.inputData, {
+    repoPath,
+    visionPath: 'docs/vision.md',
+    specPath: 'docs/spec.md',
+    maxRetries: 1,
+    deployMode: 'mock',
+  });
+  assert.equal(captured.startOptions?.requestContext.get('repoPath'), repoPath);
+  assert.deepEqual(captured.startOptions?.outputOptions, { includeState: true });
+  assert.equal(captured.startOptions?.tracingOptions.metadata.deliveryEngine, true);
+  assert.deepEqual(captured.startOptions?.tracingOptions.requestContextKeys, ['repoPath']);
+  assert.equal(response.workflowId, 'delivery-workflow');
+  assert.equal(response.runId, 'workflow-run-1');
+  assert.equal(response.resourceId, deliveryWorkflowResourceId(repoPath));
+  assert.deepEqual(response.result, { status: 'success' });
+});
+
+test('delivery workflow runner honors explicit resource and run ids', async () => {
+  let createRunOptions: Record<string, unknown> | undefined;
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async (options: Record<string, unknown>) => {
+          createRunOptions = options;
+          return {
+            runId: 'external-run',
+            start: async () => ({ status: 'success' }),
+          };
+        },
+      }) as any,
+  };
+
+  await startDeliveryWorkflowRun(host, {
+    repoPath: '/tmp/delivery-target',
+    resourceId: 'delivery:external',
+    runId: 'external-run',
+  });
+
+  assert.deepEqual(createRunOptions, {
+    runId: 'external-run',
+    resourceId: 'delivery:external',
+  });
+});
+
+test('delivery workflow request context carries the resolved repo path', () => {
+  const context = createDeliveryWorkflowRequestContext('/tmp/delivery-target');
+  assert.equal(context.get('repoPath'), resolve('/tmp/delivery-target'));
+});
+
+test('delivery API routes expose the workflow launch route', () => {
+  assert.equal(deliveryApiRoutes.length, 1);
+  assert.equal(deliveryApiRoutes[0].path, '/delivery/run');
+  assert.equal(deliveryApiRoutes[0].method, 'POST');
+  assert.equal(deliveryApiRoutes[0].openapi?.tags?.includes('Delivery Engine'), true);
+});

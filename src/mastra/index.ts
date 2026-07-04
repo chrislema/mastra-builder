@@ -5,8 +5,9 @@ import { LibSQLStore } from '@mastra/libsql';
 import { DuckDBStore } from "@mastra/duckdb";
 import { MastraCompositeStore } from '@mastra/core/storage';
 import { Observability, MastraStorageExporter, MastraPlatformExporter, SensitiveDataFilter } from '@mastra/observability';
-import { deliveryAgents } from './delivery-engine/agents';
+import { deliveryAgents, deliveryMemory } from './delivery-engine/agents';
 import { deliveryProcessors } from './delivery-engine/processors';
+import { deliveryApiRoutes } from './delivery-engine/routes';
 import { deliveryScorers } from './delivery-engine/scorers';
 import { deliveryStateTools } from './delivery-engine/tools';
 import { deliveryBuildTaskWorkflow, deliveryWorkflow } from './delivery-engine/workflow';
@@ -23,6 +24,7 @@ export {
 export const mastra = new Mastra({
   workflows: { deliveryWorkflow, deliveryBuildTaskWorkflow },
   agents: deliveryAgents,
+  memory: { deliveryMemory },
   processors: deliveryProcessors,
   scorers: deliveryScorers,
   tools: deliveryStateTools,
@@ -41,6 +43,9 @@ export const mastra = new Mastra({
     name: 'Mastra',
     level: 'info',
   }),
+  server: {
+    apiRoutes: deliveryApiRoutes,
+  },
   observability: new Observability({
     configs: {
       default: {
