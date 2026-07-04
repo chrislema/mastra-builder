@@ -4,7 +4,9 @@ import { RequestContext } from '@mastra/core/request-context';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import {
+  appendDeliveryEvent,
   endDeliveryStage,
+  finishDeliveryRun,
   initializeDeliveryRun,
   readDeliveryEvents,
   recordDeliveryArtifact,
@@ -114,6 +116,36 @@ const releaseGateSchema = z.object({
   summary: z.string(),
 });
 
+const deploymentReportSchema = z.object({
+  artifact_type: z.literal('deployment-report'),
+  environment: z.string(),
+  revision: z.string(),
+  migrations_applied: z.array(z.string()).default([]),
+  config_changes: z.array(z.string()).default([]),
+  result: z.enum(['success', 'failure']),
+  verification: z.array(
+    z.object({
+      check: z.string(),
+      expected: z.string().optional(),
+      actual: z.string(),
+      passed: z.boolean().optional(),
+    }),
+  ),
+  issues: z.array(
+    z.object({
+      description: z.string(),
+      impact: z.string(),
+      action: z.string(),
+    }),
+  ),
+  next_action: z.enum(['monitor', 'rollback', 'proceed']),
+  rollback: z.object({
+    prior_revision: z.string(),
+    steps: z.string(),
+    data_caveats: z.string().optional(),
+  }),
+});
+
 const plannerOutputSchema = z.object({
   readout: readoutSchema,
   taskPlan: taskPlanSchema,
@@ -125,6 +157,10 @@ const builderOutputSchema = z.object({
 
 const testerOutputSchema = z.object({
   gate: releaseGateSchema,
+});
+
+const deployerOutputSchema = z.object({
+  report: deploymentReportSchema,
 });
 
 const plannerRevisionOutputSchema = z.object({
@@ -144,7 +180,17 @@ const judgmentRefSchema = z.object({
 });
 
 const workflowOutputSchema = z.object({
-  status: z.enum(['planned', 'reviewed', 'built', 'release_ready', 'gate_failed', 'blocked_on_questions', 'stuck']),
+  status: z.enum([
+    'planned',
+    'reviewed',
+    'built',
+    'release_ready',
+    'gate_failed',
+    'complete',
+    'failed',
+    'blocked_on_questions',
+    'stuck',
+  ]),
   runId: z.string(),
   summary: z.string(),
   artifacts: z.array(z.string()),
@@ -167,6 +213,7 @@ type TaskPlan = z.infer<typeof taskPlanSchema>;
 type ReviewReport = z.infer<typeof reviewReportSchema>;
 type ImplementationNote = z.infer<typeof implementationNoteSchema>;
 type ReleaseGate = z.infer<typeof releaseGateSchema>;
+type DeploymentReport = z.infer<typeof deploymentReportSchema>;
 type JudgmentRef = z.infer<typeof judgmentRefSchema>;
 type Task = z.infer<typeof taskSchema>;
 
@@ -298,6 +345,39 @@ function releaseGateDeterministicResults({
       ...runDeterministicCheck({ name: 'harness_run_before_findings', events, stage }),
     },
   ];
+}
+
+function deploymentDeterministicResults({
+  repoPath,
+  stage,
+  releaseGate,
+}: {
+  repoPath: string;
+  stage: string;
+  releaseGate: ReleaseGate;
+}): DeterministicGateResult[] {
+  const events = readDeliveryEvents(repoPath);
+  return [
+    {
+      id: 'no_deploy_through_blockers',
+      check: 'release_blockers_zero',
+      ...runDeterministicCheck({ name: 'release_blockers_zero', subject: releaseGate, mode: 'deployable' }),
+    },
+    {
+      id: 'no_deploy_through_blockers_trajectory',
+      check: 'release_gate_read_before_deploy',
+      ...runDeterministicCheck({ name: 'release_gate_read_before_deploy', events, stage }),
+    },
+    {
+      id: 'verification_evidence_present_trajectory',
+      check: 'live_verify_after_deploy',
+      ...runDeterministicCheck({ name: 'live_verify_after_deploy', events, stage }),
+    },
+  ];
+}
+
+function latestArtifactPath(artifacts: string[], needle: string, fallback: string) {
+  return [...artifacts].reverse().find((path) => path.includes(needle) && !path.includes('/judgments/')) ?? fallback;
 }
 
 const requiredAgent = (mastra: any, id: string) => {
@@ -1179,10 +1259,150 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
   },
 });
 
+const createDeploymentStep = createStep({
+  id: 'deployment',
+  description: 'Deploy only from a passing release gate, verify directly, judge the deployment report, and finish the run.',
+  inputSchema: deliveryStageOutputSchema,
+  outputSchema: workflowOutputSchema,
+  execute: async ({ inputData, mastra }) => {
+    const baseOutput = () => ({
+      status: inputData.status,
+      runId: inputData.runId,
+      summary: inputData.summary,
+      artifacts: inputData.artifacts,
+      checks: inputData.checks,
+      judgments: inputData.judgments,
+      questions: inputData.questions,
+      nextSteps: inputData.nextSteps,
+    });
+
+    if (inputData.status === 'gate_failed') {
+      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'failed' });
+      return {
+        ...baseOutput(),
+        status: 'failed' as const,
+        nextSteps: inputData.nextSteps.length ? inputData.nextSteps : ['Fix release gate blockers before deployment.'],
+      };
+    }
+
+    if (inputData.status === 'stuck') {
+      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'stuck' });
+      return baseOutput();
+    }
+
+    if (inputData.status !== 'release_ready') return baseOutput();
+    if (!inputData.releaseGate) throw new Error('release gate stage did not provide a gate for deployment');
+
+    const deployer = requiredAgent(mastra, 'deployer');
+    const artifacts = [...inputData.artifacts];
+    const checks = [...inputData.checks];
+    const judgments = [...inputData.judgments];
+    const stage = 'deploy';
+    const releaseGatePath = latestArtifactPath(artifacts, 'release-gate', '.delivery/artifacts/release-gate.json');
+
+    startDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage,
+      role: 'deployer',
+    });
+    appendDeliveryEvent(inputData.repoPath, {
+      type: 'artifact_read',
+      stage,
+      artifact_type: 'release-gate',
+      path: releaseGatePath,
+    });
+
+    const deployResponse = await deployer.generate(
+      `Deploy the approved build.
+
+Release gate path: ${releaseGatePath}
+Deploy mode: ${inputData.deployMode}
+
+Rules:
+- Do not deploy unless the release gate is PASS with zero blockers.
+- In mock mode, start the application locally or its closest runnable form, record a deploy event, run direct probes, and record live_verify events.
+- In real mode, use the project's deployment command, record deploy and live_verify events with real targets.
+- Verification must include at least one happy path and one error path when the app shape allows it.
+- Return a deployment report with exact revision, verification results, issues, next action, and rollback steps.
+
+Release gate:
+${JSON.stringify(inputData.releaseGate, null, 2)}`,
+      {
+        requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
+        structuredOutput: {
+          schema: deployerOutputSchema,
+          model: deliveryModel,
+          instructions: 'Return only { "report": <deployment-report> } after deployment and live verification.',
+        },
+      },
+    );
+
+    const { report } = deployerOutputSchema.parse(deployResponse.object);
+    const reportPath = '.delivery/artifacts/deployment-report.json';
+    writeDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      artifactPath: reportPath,
+      artifact: report,
+    });
+    recordDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      type: 'deployment-report',
+      path: reportPath,
+    });
+    artifacts.push(reportPath);
+
+    endDeliveryStage({
+      repoPath: inputData.repoPath,
+      stage,
+      reason: 'complete_stage',
+    });
+
+    const deterministicResults = deploymentDeterministicResults({
+      repoPath: inputData.repoPath,
+      stage,
+      releaseGate: inputData.releaseGate,
+    });
+    checks.push(...checkSummaries(deterministicResults, 'deployment'));
+
+    const deploymentJudge = await judgeDeliveryArtifact({
+      mastra,
+      repoPath: inputData.repoPath,
+      rubricName: 'deployment-report',
+      subjectName: reportPath,
+      subject: {
+        report,
+        release_gate: inputData.releaseGate,
+        evidence_events: readDeliveryEvents(inputData.repoPath).filter((event) => event.stage === stage),
+      },
+      deterministicResults,
+      slug: 'deployment-report',
+    });
+    artifacts.push(deploymentJudge.judgeOutputPath, deploymentJudge.judgmentPath);
+    judgments.push(deploymentJudge.ref);
+
+    const complete = report.result === 'success' && deploymentJudge.judgment.passed;
+    finishDeliveryRun({
+      repoPath: inputData.repoPath,
+      status: complete ? 'complete' : 'failed',
+    });
+
+    return {
+      status: complete ? ('complete' as const) : ('failed' as const),
+      runId: inputData.runId,
+      summary: complete ? `Deployment complete: ${report.environment} ${report.revision}` : 'Deployment failed judgment or reported failure.',
+      artifacts,
+      checks,
+      judgments,
+      questions: [],
+      nextSteps: complete ? [report.next_action] : deploymentJudge.judgment.remediation,
+    };
+  },
+});
+
 export const deliveryWorkflow = createWorkflow({
   id: 'delivery-workflow',
   description:
-    'Native Delivery Engine workflow: initialize run state, create/judge a plan, review, build, and produce a judged release gate.',
+    'Native Delivery Engine workflow: initialize run state, plan, review, build, release-gate, deploy, and finish.',
   inputSchema: workflowInputSchema,
   outputSchema: workflowOutputSchema,
 })
@@ -1191,4 +1411,5 @@ export const deliveryWorkflow = createWorkflow({
   .then(createReviewStep)
   .then(createBuildStep)
   .then(createReleaseGateStep)
+  .then(createDeploymentStep)
   .commit();

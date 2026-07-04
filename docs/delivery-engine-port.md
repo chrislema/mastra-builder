@@ -69,6 +69,13 @@ project should become the native Mastra version.
   - tier-order and blocker deterministic gates
   - release-gate rubric judgment
   - deployment stop on gate failure
+- Added deployment stage:
+  - release-gate read event before deploy
+  - mock/real deploy mode prompt contract
+  - deployment-report artifact
+  - deploy/live verification deterministic gates
+  - deployment-report rubric judgment
+  - final run complete/failed/stuck finish handling
 
 Checkpoint commit:
 
@@ -77,6 +84,7 @@ Checkpoint commit:
 - `f59419c Add native rubric judgment harness`
 - `9fc5e09 Add architect review stage`
 - `66d5cf1 Add delivery build loop skeleton`
+- `4cec422 Add release gate stage`
 
 ## Next Slices
 
@@ -180,7 +188,7 @@ Natural commit:
 
 - `Add release gate stage`
 
-### 5. Deployment Stage
+### 5. Deployment Stage (Completed)
 
 Goal: port deployer behavior.
 
