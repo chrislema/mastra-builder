@@ -99,6 +99,10 @@ project should become the native Mastra version.
   - split planner artifact creation from plan gates and task-plan judgment
   - split deployer report creation from deployment gates, judgment, and finalization
   - moved scorer attachment to the explicit gate/judgment steps
+- Added native workflow HITL:
+  - planner blocking questions suspend with `answer-planner-questions`
+  - real deployment approval suspends with `approve-real-deployment`
+  - rejected real deployments finalize as failed without running deployer
 
 Checkpoint commit:
 
@@ -112,6 +116,7 @@ Checkpoint commit:
 - `99c4d0c Add delivery engine regression tests`
 - `30cc1dd Document delivery engine usage`
 - `5a775e6 Add native Mastra delivery scorers`
+- `8b9e2b6 Decompose delivery workflow gate steps`
 
 ## Next Slices
 
@@ -328,6 +333,28 @@ Natural commit:
 
 - `Decompose delivery workflow gate steps`
 
+### 10. Native Workflow HITL (Completed)
+
+Goal: use Mastra suspend/resume for human input instead of plain status handoffs.
+
+Work:
+
+- Add typed planner question suspend payloads and answer resume payloads.
+- Resume planner artifact generation with human answers before plan judgment.
+- Add typed real-deployment approval suspend payloads and approval resume payloads.
+- Prevent real deployer execution until the workflow is resumed with approval.
+- Finalize rejected real deployments as failed without running deployment commands.
+
+Done when:
+
+- Planner blocking ambiguities suspend the workflow with a resume label.
+- Real deployments suspend the workflow before the deployer stage.
+- TypeScript and deterministic tests pass.
+
+Natural commit:
+
+- `Add native workflow HITL approvals`
+
 ## Open Questions
 
 - Whether the target repo should be accessed by dynamic workspace context only, or whether
@@ -346,3 +373,5 @@ Natural commit:
   once task-level schemas are stable.
 - Whether release-gate retries should split tester artifact generation from release-gate
   judgment in the same pattern as planner and deployment.
+- Whether architect conditions should optionally suspend for human approval before the build
+  loop begins.

@@ -184,6 +184,24 @@ const plannerArtifactsSchema = initializedSchema.extend({
   artifacts: z.array(z.string()),
 });
 
+const plannerQuestionAnswerSchema = z.object({
+  question: z.string(),
+  answer: z.string(),
+});
+
+const plannerQuestionsResumeSchema = z.object({
+  answers: z.array(plannerQuestionAnswerSchema).min(1),
+  notes: z.string().optional(),
+});
+
+const plannerQuestionsSuspendSchema = z.object({
+  reason: z.string(),
+  questions: z.array(z.string()),
+  recommendedNextStep: z.string(),
+  readoutPath: z.string(),
+  taskPlanPath: z.string(),
+});
+
 const judgmentRefSchema = z.object({
   subject: z.string(),
   rubric: z.string(),
@@ -223,6 +241,19 @@ const deliveryStageOutputSchema = workflowOutputSchema.extend({
 const deploymentReportStageSchema = deliveryStageOutputSchema.extend({
   deploymentReport: deploymentReportSchema.optional(),
   deploymentReportPath: z.string().optional(),
+});
+const deploymentApprovalResumeSchema = z.object({
+  approved: z.boolean(),
+  approver: z.string().optional(),
+  notes: z.string().optional(),
+});
+const deploymentApprovalSuspendSchema = z.object({
+  reason: z.string(),
+  deployMode: z.literal('real'),
+  releaseGatePath: z.string(),
+  releaseGateSummary: z.string(),
+  blockers: z.array(z.string()),
+  nextSteps: z.array(z.string()),
 });
 const planStageOutputSchema = deliveryStageOutputSchema;
 
@@ -516,7 +547,9 @@ const createPlannerArtifactsStep = createStep({
   description: 'Use the planner agent to create readout and task-plan artifacts.',
   inputSchema: initializedSchema,
   outputSchema: plannerArtifactsSchema,
-  execute: async ({ inputData, mastra }) => {
+  resumeSchema: plannerQuestionsResumeSchema,
+  suspendSchema: plannerQuestionsSuspendSchema,
+  execute: async ({ inputData, mastra, resumeData, suspend }) => {
     startDeliveryStage({
       repoPath: inputData.repoPath,
       stage: 'plan',
@@ -524,6 +557,11 @@ const createPlannerArtifactsStep = createStep({
     });
 
     const planner = requiredAgent(mastra, 'planner');
+    const humanAnswers = resumeData
+      ? `\nHuman answers to prior blocking questions:\n${resumeData.answers
+          .map((answer) => `- Q: ${answer.question}\n  A: ${answer.answer}`)
+          .join('\n')}${resumeData.notes ? `\nAdditional notes: ${resumeData.notes}` : ''}\n`
+      : '';
 
     const response = await planner.generate(
       `Read ${inputData.visionPath} and ${inputData.specPath} from the workspace. Produce:
@@ -532,7 +570,7 @@ const createPlannerArtifactsStep = createStep({
 
 Do not write code. Ask only blocking questions. Record safe assumptions in the readout.
 Task owners may be engineer or designer unless another role is genuinely required.
-Every task must have checkable acceptance criteria and owned_surfaces.`,
+Every task must have checkable acceptance criteria and owned_surfaces.${humanAnswers}`,
       {
         requestContext: new RequestContext([['repoPath', inputData.repoPath]]),
         structuredOutput: {
@@ -572,6 +610,25 @@ Every task must have checkable acceptance criteria and owned_surfaces.`,
       stage: 'plan',
       reason: output.readout.blocking_ambiguities.length ? 'escalation' : 'complete_stage',
     });
+
+    if (output.readout.blocking_ambiguities.length) {
+      appendDeliveryEvent(inputData.repoPath, {
+        type: 'human_input_required',
+        stage: 'plan',
+        questions: output.readout.blocking_ambiguities,
+      });
+
+      return await suspend(
+        {
+          reason: 'Planner found blocking ambiguities that require human answers before plan judgment.',
+          questions: output.readout.blocking_ambiguities,
+          recommendedNextStep: output.readout.recommended_next_step,
+          readoutPath: '.delivery/artifacts/readout.json',
+          taskPlanPath: '.delivery/artifacts/task-plan.json',
+        },
+        { resumeLabel: 'answer-planner-questions' },
+      );
+    }
 
     return {
       ...inputData,
@@ -1299,7 +1356,9 @@ const createDeploymentReportStep = createStep({
   description: 'Run deployer from a passing release gate and write the deployment report artifact.',
   inputSchema: deliveryStageOutputSchema,
   outputSchema: deploymentReportStageSchema,
-  execute: async ({ inputData, mastra }) => {
+  resumeSchema: deploymentApprovalResumeSchema,
+  suspendSchema: deploymentApprovalSuspendSchema,
+  execute: async ({ inputData, mastra, resumeData, suspend }) => {
     if (inputData.status !== 'release_ready') return inputData;
     if (!inputData.releaseGate) throw new Error('release gate stage did not provide a gate for deployment');
 
@@ -1307,6 +1366,54 @@ const createDeploymentReportStep = createStep({
     const artifacts = [...inputData.artifacts];
     const stage = 'deploy';
     const releaseGatePath = latestArtifactPath(artifacts, 'release-gate', '.delivery/artifacts/release-gate.json');
+
+    if (inputData.deployMode === 'real' && !resumeData) {
+      appendDeliveryEvent(inputData.repoPath, {
+        type: 'human_input_required',
+        stage: 'deploy:approval',
+        artifact_type: 'release-gate',
+        path: releaseGatePath,
+      });
+
+      return await suspend(
+        {
+          reason: 'Real deployment requires human approval before the deployer runs.',
+          deployMode: 'real' as const,
+          releaseGatePath,
+          releaseGateSummary: inputData.releaseGate.summary,
+          blockers: inputData.releaseGate.blockers,
+          nextSteps: inputData.nextSteps,
+        },
+        { resumeLabel: 'approve-real-deployment' },
+      );
+    }
+
+    if (inputData.deployMode === 'real' && resumeData?.approved === false) {
+      appendDeliveryEvent(inputData.repoPath, {
+        type: 'human_approval',
+        stage: 'deploy:approval',
+        approved: false,
+        approver: resumeData.approver,
+        note: resumeData.notes,
+      });
+
+      return {
+        ...inputData,
+        status: 'failed' as const,
+        summary: 'Real deployment was rejected by human approval.',
+        nextSteps: resumeData.notes ? [resumeData.notes] : ['Deployment rejected before any real deploy command ran.'],
+      };
+    }
+
+    if (inputData.deployMode === 'real' && resumeData?.approved) {
+      appendDeliveryEvent(inputData.repoPath, {
+        type: 'human_approval',
+        stage: 'deploy:approval',
+        approved: true,
+        approver: resumeData.approver,
+        note: resumeData.notes,
+      });
+    }
 
     startDeliveryStage({
       repoPath: inputData.repoPath,
@@ -1403,6 +1510,11 @@ const createDeploymentJudgmentStep = createStep({
 
     if (inputData.status === 'stuck') {
       finishDeliveryRun({ repoPath: inputData.repoPath, status: 'stuck' });
+      return baseOutput();
+    }
+
+    if (inputData.status === 'failed') {
+      finishDeliveryRun({ repoPath: inputData.repoPath, status: 'failed' });
       return baseOutput();
     }
 

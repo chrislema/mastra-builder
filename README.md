@@ -103,6 +103,31 @@ The current scorer set covers:
 - rubric judgment pass rate
 - deterministic check pass rate
 
+## Native HITL
+
+The workflow uses Mastra suspend/resume for human input:
+
+- `create-planner-artifacts` suspends with resume label `answer-planner-questions` when
+  planner readout finds blocking ambiguities. Resume with:
+
+```json
+{
+  "answers": [{ "question": "...", "answer": "..." }],
+  "notes": "optional extra context"
+}
+```
+
+- `create-deployment-report` suspends with resume label `approve-real-deployment` before
+  any real deployment command runs. Resume with:
+
+```json
+{
+  "approved": true,
+  "approver": "name or handle",
+  "notes": "optional approval context"
+}
+```
+
 ## Verification
 
 Use:
