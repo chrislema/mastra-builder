@@ -1,7 +1,9 @@
 import { relative, resolve } from 'node:path';
 import { Workspace, LocalFilesystem, LocalSandbox, WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import { fileOwnership, matchesAny, noBcryptWeakHash } from './checks';
-import { hasDeliveryDirectory, readDeliveryBoundary, appendDeliveryEvent } from './state';
+import { hasDeliveryDirectory, readDeliveryBoundary } from './state';
+import { appendDeliveryEventState } from './state-service';
+import type { MastraLike } from './observability';
 
 function contextValue(requestContext: unknown, key: string) {
   const ctx = requestContext as { get?: (name: string) => unknown; [name: string]: unknown };
@@ -11,6 +13,10 @@ function contextValue(requestContext: unknown, key: string) {
 
 function repoPathFromContext(requestContext: unknown) {
   return String(contextValue(requestContext, 'repoPath') ?? process.cwd());
+}
+
+function mastraFromToolContext(context: unknown) {
+  return (context as { mastra?: MastraLike } | undefined)?.mastra;
 }
 
 function extractPaths(input: unknown): string[] {
@@ -154,19 +160,26 @@ export const deliveryWorkspace = new Workspace({
 
         return undefined;
       },
-      afterToolCall: ({ workspaceToolName, input, output, error, context }) => {
+      afterToolCall: async ({ workspaceToolName, input, output, error, context }) => {
         const requestContext = (context as { requestContext?: unknown })?.requestContext;
         const repoPath = repoPathFromContext(requestContext);
         if (!hasDeliveryDirectory(repoPath)) return;
 
-        appendDeliveryEvent(repoPath, {
-          type: 'tool_use',
-          tool: workspaceToolName,
-          ok: !error,
-          paths: extractPaths(input).map((path) => repoRelativePath(repoPath, path)),
-          command: typeof (input as { command?: unknown })?.command === 'string' ? String((input as { command: string }).command).slice(0, 500) : undefined,
-          output_summary: output ? 'workspace tool produced output' : undefined,
-          error: error instanceof Error ? error.message : error ? String(error) : undefined,
+        await appendDeliveryEventState({
+          repoPath,
+          mastra: mastraFromToolContext(context),
+          event: {
+            type: 'tool_use',
+            tool: workspaceToolName,
+            ok: !error,
+            paths: extractPaths(input).map((path) => repoRelativePath(repoPath, path)),
+            command:
+              typeof (input as { command?: unknown })?.command === 'string'
+                ? String((input as { command: string }).command).slice(0, 500)
+                : undefined,
+            output_summary: output ? 'workspace tool produced output' : undefined,
+            error: error instanceof Error ? error.message : error ? String(error) : undefined,
+          },
         });
       },
     },
