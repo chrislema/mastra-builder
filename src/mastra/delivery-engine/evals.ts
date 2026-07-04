@@ -207,6 +207,44 @@ export type DeliveryRegressionScoreMismatch = {
   reason?: string | null;
 };
 
+export type DeliveryRegressionGateThresholds = {
+  minTotalItems: number;
+  minSucceededRate: number;
+  maxFailedItems: number;
+  maxMismatches: number;
+};
+
+export type DeliveryRegressionGateReport = {
+  generatedAt: string;
+  datasetId: string;
+  experimentId: string;
+  status: string;
+  totalItems: number;
+  succeededCount: number;
+  failedCount: number;
+  succeededRate: number;
+  scorerAverages: Record<string, number>;
+  thresholds: DeliveryRegressionGateThresholds;
+  mismatches: DeliveryRegressionScoreMismatch[];
+  gate: {
+    passed: boolean;
+    reasons: string[];
+  };
+  trend?: {
+    previousExperimentId?: string;
+    mismatchDelta?: number;
+    succeededRateDelta?: number;
+    scorerAverageDelta: Record<string, number>;
+  };
+};
+
+export const deliveryRegressionGateThresholds: DeliveryRegressionGateThresholds = {
+  minTotalItems: deliveryRegressionDatasetItems.length,
+  minSucceededRate: 1,
+  maxFailedItems: 0,
+  maxMismatches: 0,
+};
+
 function datasetItemsFromListResult(result: Awaited<ReturnType<Dataset['listItems']>>) {
   return Array.isArray(result) ? result : result.items;
 }
@@ -290,6 +328,93 @@ export function collectDeliveryRegressionScoreMismatches(
       ];
     });
   });
+}
+
+const rounded = (score: number) => Math.round(score * 1000) / 1000;
+
+function scorerAverages(summary: DeliveryExperimentSummary) {
+  const byScorer = new Map<string, number[]>();
+  for (const result of summary.results) {
+    for (const score of result.scores) {
+      if (typeof score.score !== 'number') continue;
+      const scores = byScorer.get(score.scorerId) ?? [];
+      scores.push(score.score);
+      byScorer.set(score.scorerId, scores);
+    }
+  }
+
+  return Object.fromEntries(
+    [...byScorer.entries()].map(([scorerId, scores]) => [
+      scorerId,
+      rounded(scores.reduce((sum, score) => sum + score, 0) / scores.length),
+    ]),
+  );
+}
+
+export function buildDeliveryRegressionGateReport({
+  datasetId,
+  summary,
+  mismatches,
+  thresholds = deliveryRegressionGateThresholds,
+  previousReport,
+}: {
+  datasetId: string;
+  summary: DeliveryExperimentSummary;
+  mismatches: DeliveryRegressionScoreMismatch[];
+  thresholds?: DeliveryRegressionGateThresholds;
+  previousReport?: DeliveryRegressionGateReport;
+}): DeliveryRegressionGateReport {
+  const succeededRate = summary.totalItems ? rounded(summary.succeededCount / summary.totalItems) : 0;
+  const reasons: string[] = [];
+
+  if (summary.status !== 'completed') reasons.push(`Experiment status is ${summary.status}, expected completed.`);
+  if (summary.totalItems < thresholds.minTotalItems) {
+    reasons.push(`Experiment ran ${summary.totalItems} item(s), expected at least ${thresholds.minTotalItems}.`);
+  }
+  if (summary.failedCount > thresholds.maxFailedItems) {
+    reasons.push(`Experiment had ${summary.failedCount} failed item(s), allowed ${thresholds.maxFailedItems}.`);
+  }
+  if (succeededRate < thresholds.minSucceededRate) {
+    reasons.push(`Experiment success rate ${succeededRate} is below ${thresholds.minSucceededRate}.`);
+  }
+  if (mismatches.length > thresholds.maxMismatches) {
+    reasons.push(`Experiment had ${mismatches.length} score mismatch(es), allowed ${thresholds.maxMismatches}.`);
+  }
+
+  const currentAverages = scorerAverages(summary);
+  const report: DeliveryRegressionGateReport = {
+    generatedAt: new Date().toISOString(),
+    datasetId,
+    experimentId: summary.experimentId,
+    status: summary.status,
+    totalItems: summary.totalItems,
+    succeededCount: summary.succeededCount,
+    failedCount: summary.failedCount,
+    succeededRate,
+    scorerAverages: currentAverages,
+    thresholds,
+    mismatches,
+    gate: {
+      passed: reasons.length === 0,
+      reasons,
+    },
+  };
+
+  if (previousReport) {
+    report.trend = {
+      previousExperimentId: previousReport.experimentId,
+      mismatchDelta: mismatches.length - previousReport.mismatches.length,
+      succeededRateDelta: rounded(succeededRate - previousReport.succeededRate),
+      scorerAverageDelta: Object.fromEntries(
+        Object.entries(currentAverages).map(([scorerId, average]) => [
+          scorerId,
+          rounded(average - (previousReport.scorerAverages[scorerId] ?? 0)),
+        ]),
+      ),
+    };
+  }
+
+  return report;
 }
 
 export async function runDeliveryRegressionExperiment(
