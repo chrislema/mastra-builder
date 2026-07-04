@@ -1,30 +1,96 @@
-# builders
+# Delivery Engine for Mastra
 
-Welcome to your new [Mastra](https://mastra.ai/) project! We're excited to see what you'll build.
+This project is a Mastra-native port of the delivery engine ideas from
+`github.com/chrislema/claude-environments`. The Claude repo remains the Claude-specific
+implementation. This repo uses Mastra first-class pieces: agents, tools, workflow steps,
+workspace hooks, typed artifacts, deterministic checks, and rubric aggregation.
 
-## Getting Started
+## What Is Registered
 
-Start the development server:
+`src/mastra/index.ts` registers:
+
+- `deliveryWorkflow`
+- role agents: planner, architect, engineer, designer, tester, deployer, judge
+- delivery state tools for `.delivery/`
+- a dynamic delivery workspace rooted by `requestContext.repoPath`
+
+The default weather scaffold has been removed.
+
+## Run Locally
 
 ```shell
+npm install
+npm test
+./node_modules/.bin/tsc --noEmit
 npm run dev
 ```
 
-Open [http://localhost:4111](http://localhost:4111) in your browser to access [Mastra Studio](https://mastra.ai/docs/studio/overview). It provides an interactive UI for building and testing your agents, along with a REST API that exposes your Mastra application as a local service. This lets you start building without worrying about integration right away.
+Open `http://localhost:4111` for Mastra Studio, then run `deliveryWorkflow` from the
+Workflows tab.
 
-You can start editing files inside the `src/mastra` directory. The development server will automatically reload whenever you make changes.
+## Workflow Input
 
-## Learn more
+`deliveryWorkflow` expects:
 
-To learn more about Mastra, visit our [documentation](https://mastra.ai/docs/). Your bootstrapped project includes example code for [agents](https://mastra.ai/docs/agents/overview), [tools](https://mastra.ai/docs/agents/using-tools), [workflows](https://mastra.ai/docs/workflows/overview), [scorers](https://mastra.ai/docs/evals/overview), and [observability](https://mastra.ai/docs/observability/overview).
+```json
+{
+  "repoPath": "/absolute/path/to/target-repo",
+  "visionPath": "vision.md",
+  "specPath": "spec.md",
+  "maxRetries": 2,
+  "deployMode": "mock"
+}
+```
 
-If you're new to AI agents, check out our [course](https://mastra.ai/learn) and [YouTube videos](https://youtube.com/@mastra-ai). You can also join our [Discord](https://discord.gg/BTYqqHKUrf) community to get help and share your projects.
+`visionPath` and `specPath` may be absolute paths, but relative paths are resolved under
+`repoPath`. The workflow writes authoritative state and artifacts under
+`<repoPath>/.delivery/`.
 
-## Deploy to the Mastra platform
+Use `deployMode: "mock"` unless a real deployment is explicitly intended.
 
-The [Mastra platform](https://projects.mastra.ai) provides two products for deploying and managing AI applications built with the Mastra framework:
+## Request Context
 
-- **Studio**: A hosted visual environment for testing agents, running workflows, and inspecting traces
-- **Server**: A production deployment target that runs your Mastra application as an API server
+Agents and workspace tools use `requestContext.repoPath` to decide which repository they
+can read, write, search, and run commands in. The workflow supplies that context for every
+agent call. If you call an agent directly from Studio or an API client, include the same
+request context or the workspace will fall back to the current process directory.
 
-Learn more in the [Mastra platform documentation](https://mastra.ai/docs/mastra-platform/overview).
+## Example Inputs
+
+Example product docs are included at:
+
+- `src/mastra/delivery-engine/examples/vision.md`
+- `src/mastra/delivery-engine/examples/spec.md`
+
+To dry-run with them, create a target repo, place those files at its root, and pass that
+repo path into `deliveryWorkflow`.
+
+## Pipeline Shape
+
+The workflow currently runs:
+
+1. Initialize `.delivery/run.json`.
+2. Planner creates readout and task plan.
+3. Judge scores the task plan.
+4. Architect reviews the plan and can bounce to planner within `maxRetries`.
+5. Engineer/designer build loop executes tasks in dependency order.
+6. Tester produces and judges a release gate.
+7. Deployer runs mock or real deployment and produces a judged deployment report.
+8. The run finishes as `complete`, `failed`, or `stuck`.
+
+Judgment math is always computed in TypeScript. Models only produce raw gate and dimension
+scores.
+
+## Verification
+
+Use:
+
+```shell
+npm test
+./node_modules/.bin/tsc --noEmit
+npm run build
+```
+
+In this sandbox, `npm run build` bundled the Mastra app successfully, then stalled during
+the dependency-install phase because network access was blocked. In a normal networked
+environment, rerun the same package script rather than calling `mastra build` directly.
