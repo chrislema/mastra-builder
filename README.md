@@ -15,6 +15,8 @@ scorers.
 - delivery state tools for `.delivery/`, including observability mirror/list tools
 - delivery scorers for handoff readiness, workflow completion, rubric floor, judgment
   pass rate, and deterministic check pass rate
+- delivery processors for repo-bound execution, policy override blocking, evidence-backed
+  completion claims, token limiting, Unicode normalization, and secret redaction
 - a dynamic delivery workspace rooted by `requestContext.repoPath`
 - storage-backed observability for final delivery run state snapshots and event mirrors
 
@@ -57,7 +59,8 @@ Use `deployMode: "mock"` unless a real deployment is explicitly intended.
 Agents and workspace tools use `requestContext.repoPath` to decide which repository they
 can read, write, search, and run commands in. The workflow supplies that context for every
 agent call. If you call an agent directly from Studio or an API client, include the same
-request context or the workspace will fall back to the current process directory.
+request context. Delivery agents now use a Mastra input processor that blocks calls without
+`requestContext.repoPath`.
 
 ## Example Inputs
 
@@ -139,6 +142,18 @@ The workflow uses Mastra suspend/resume for human input:
   "notes": "optional approval context"
 }
 ```
+
+## Native Processors / Guardrails
+
+Delivery agents attach shared Mastra processors:
+
+- input: Unicode normalization, required `requestContext.repoPath`, delivery policy override
+  blocking, and per-step token limiting
+- output: secret redaction plus a retryable guardrail for completion claims without delivery
+  artifacts, events, checks, judgments, or release-gate evidence
+
+The same processor instances are registered in `src/mastra/index.ts` under `processors`, so
+they are inspectable as native Mastra resources.
 
 ## Verification
 

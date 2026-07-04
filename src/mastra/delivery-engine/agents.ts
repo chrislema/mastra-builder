@@ -2,6 +2,7 @@ import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
+import { deliveryInputProcessors, deliveryOutputProcessors } from './processors';
 
 const deliveryModel = 'openai/gpt-5-mini';
 const judgeModel = 'openai/gpt-5-mini';
@@ -27,6 +28,12 @@ workflow artifact should exist.
 
 When operating on a target repo, use requestContext.repoPath as the workspace root.
 `;
+
+const deliveryProcessorConfig = {
+  inputProcessors: deliveryInputProcessors,
+  outputProcessors: deliveryOutputProcessors,
+  maxProcessorRetries: 1,
+};
 
 export const plannerAgent = new Agent({
   id: 'planner',
@@ -69,6 +76,7 @@ Task owners should usually be engineer or designer; verification belongs to test
     skill('select-cloudflare-components'),
     skill('design-observability'),
   ],
+  ...deliveryProcessorConfig,
   memory: new Memory(),
 });
 
@@ -125,6 +133,7 @@ Return either an approved plan with conditions, or blocking findings with requir
     skill('design-observability'),
     skill('design-cache-strategy'),
   ],
+  ...deliveryProcessorConfig,
   memory: new Memory(),
 });
 
@@ -175,6 +184,7 @@ Always verify with code/tests/probes before claiming completion.
     skill('enrich-error-context'),
     skill('audit-state-boundaries'),
   ],
+  ...deliveryProcessorConfig,
   memory: new Memory(),
 });
 
@@ -207,6 +217,7 @@ Must not touch backend, test, or deployment configuration surfaces unless the ta
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
   skills: [skill('build-ui'), skill('enforce-blast-radius')],
+  ...deliveryProcessorConfig,
   memory: new Memory(),
 });
 
@@ -249,6 +260,7 @@ Findings must trace to harness output.
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
   skills: [skill('audit-traceability'), skill('check-release-gate'), skill('audit-trust-boundaries')],
+  ...deliveryProcessorConfig,
   memory: new Memory(),
 });
 
@@ -278,6 +290,7 @@ Always read and record the release gate before deployment. Always produce direct
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
   skills: [skill('check-release-gate')],
+  ...deliveryProcessorConfig,
   memory: new Memory(),
 });
 
@@ -310,6 +323,7 @@ Return only strict JSON with:
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
   skills: [],
+  ...deliveryProcessorConfig,
   memory: new Memory(),
 });
 

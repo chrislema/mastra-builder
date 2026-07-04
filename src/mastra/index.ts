@@ -6,6 +6,7 @@ import { DuckDBStore } from "@mastra/duckdb";
 import { MastraCompositeStore } from '@mastra/core/storage';
 import { Observability, MastraStorageExporter, MastraPlatformExporter, SensitiveDataFilter } from '@mastra/observability';
 import { deliveryAgents } from './delivery-engine/agents';
+import { deliveryProcessors } from './delivery-engine/processors';
 import { deliveryScorers } from './delivery-engine/scorers';
 import { deliveryStateTools } from './delivery-engine/tools';
 import { deliveryWorkflow } from './delivery-engine/workflow';
@@ -14,6 +15,7 @@ import { deliveryWorkspace } from './delivery-engine/workspace';
 export const mastra = new Mastra({
   workflows: { deliveryWorkflow },
   agents: deliveryAgents,
+  processors: deliveryProcessors,
   scorers: deliveryScorers,
   tools: deliveryStateTools,
   workspace: deliveryWorkspace,
