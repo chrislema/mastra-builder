@@ -5,9 +5,7 @@ import { deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
 import { deliveryInputProcessors, deliveryOutputProcessors } from './processors';
 import { deliveryBuildTaskWorkflow, deliveryWorkflow } from './workflow';
-
-const deliveryModel = 'openai/gpt-5-mini';
-const judgeModel = 'openai/gpt-5-mini';
+import { deliveryModel, judgeModel } from './models';
 
 export const deliveryWorkingMemoryTemplate = `# Delivery Run Working Memory
 

@@ -38,8 +38,7 @@ import {
   deliveryReviewStepScorers,
 } from './scorers';
 import { safePersistDeliveryStateWithMastra } from './observability';
-
-const deliveryModel = 'openai/gpt-5-mini';
+import { deliveryModel } from './models';
 
 const workflowInputSchema = z.object({
   repoPath: z.string().describe('Absolute path to the target repo.'),

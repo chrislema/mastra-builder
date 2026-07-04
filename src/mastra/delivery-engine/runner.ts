@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { createDeliveryRequestContext } from './context';
 import { finishDeliveryRunState } from './state-service';
 import type { MastraLike } from './observability';
+import { assertDeliveryModelEnvironment } from './models';
 import { deliveryWorkflow } from './workflow';
 
 export { createDeliveryRequestContext as createDeliveryWorkflowRequestContext } from './context';
@@ -90,6 +91,7 @@ async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: Del
 }
 
 export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
+  assertDeliveryModelEnvironment();
   const { run, repoPath, resourceId, startOptions } = await prepareDeliveryWorkflowRun(host, input);
 
   const result = await run.start(startOptions);
@@ -117,6 +119,7 @@ async function closeFailedDeliveryRun({ host, repoPath }: { host: DeliveryWorkfl
 }
 
 export async function startDeliveryWorkflowRunAsync(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
+  assertDeliveryModelEnvironment();
   const { run, resourceId, startOptions } = await prepareDeliveryWorkflowRun(host, input);
   const started = await run.startAsync(startOptions);
 

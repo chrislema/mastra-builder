@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
-    "delivery:run": "node --import tsx scripts/run-delivery-workflow.ts",
+    "delivery:run": "node --env-file-if-exists=.env --import tsx scripts/run-delivery-workflow.ts",
     "eval:delivery": "node --import tsx scripts/run-delivery-evals.ts",
     "eval:delivery:gate": "node --import tsx scripts/run-delivery-eval-gate.ts",
     "ci:delivery": "npm test && npm run eval:delivery:gate",

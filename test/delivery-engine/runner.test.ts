@@ -7,10 +7,38 @@ import { deliveryApiRoutes } from '../../src/mastra/delivery-engine/routes.ts';
 import {
   createDeliveryWorkflowRequestContext,
   deliveryWorkflowResourceId,
+  type DeliveryWorkflowRunInput,
   startDeliveryWorkflowRun,
   startDeliveryWorkflowRunAsync,
 } from '../../src/mastra/delivery-engine/runner.ts';
 import { initializeDeliveryRun, readDeliveryRun } from '../../src/mastra/delivery-engine/state.ts';
+
+const withOpenAIKey = async <T>(value: string | undefined, fn: () => Promise<T>) => {
+  const previous = process.env.OPENAI_API_KEY;
+  if (value === undefined) {
+    delete process.env.OPENAI_API_KEY;
+  } else {
+    process.env.OPENAI_API_KEY = value;
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = previous;
+    }
+  }
+};
+
+const startDeliveryWorkflowRunWithKey = (host: Parameters<typeof startDeliveryWorkflowRun>[0], input: DeliveryWorkflowRunInput) =>
+  withOpenAIKey('test-openai-key', () => startDeliveryWorkflowRun(host, input));
+
+const startDeliveryWorkflowRunAsyncWithKey = (
+  host: Parameters<typeof startDeliveryWorkflowRunAsync>[0],
+  input: DeliveryWorkflowRunInput,
+) => withOpenAIKey('test-openai-key', () => startDeliveryWorkflowRunAsync(host, input));
 
 test('delivery workflow runner creates a resource-scoped workflow run', async () => {
   const captured: {
@@ -36,7 +64,7 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
     },
   };
 
-  const response = await startDeliveryWorkflowRun(host, {
+  const response = await startDeliveryWorkflowRunWithKey(host, {
     repoPath: '/tmp/delivery-target',
     visionPath: 'docs/vision.md',
     specPath: 'docs/spec.md',
@@ -82,7 +110,7 @@ test('delivery workflow runner honors explicit resource and run ids', async () =
       }) as any,
   };
 
-  await startDeliveryWorkflowRun(host, {
+  await startDeliveryWorkflowRunWithKey(host, {
     repoPath: '/tmp/delivery-target',
     resourceId: 'delivery:external',
     runId: 'external-run',
@@ -110,13 +138,37 @@ test('delivery workflow runner closes initialized delivery state after a failed 
       }) as any,
   };
 
-  const response = await startDeliveryWorkflowRun(host, { repoPath });
+  const response = await startDeliveryWorkflowRunWithKey(host, { repoPath });
 
   assert.equal((response.result as Record<string, unknown>).status, 'failed');
   const deliveryRun = readDeliveryRun(repoPath);
   assert.equal(deliveryRun.status, 'failed');
   assert.equal(deliveryRun.stage, 'done');
   assert.equal(typeof deliveryRun.finished_at, 'string');
+});
+
+test('delivery workflow runner fails preflight before creating a run without model credentials', async () => {
+  let createRunCalled = false;
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => {
+          createRunCalled = true;
+          return {
+            runId: 'should-not-exist',
+            start: async () => ({ status: 'success' }),
+          };
+        },
+      }) as any,
+  };
+
+  await withOpenAIKey(undefined, async () => {
+    await assert.rejects(
+      startDeliveryWorkflowRun(host, { repoPath: '/tmp/delivery-target' }),
+      /Delivery workflow requires OPENAI_API_KEY/,
+    );
+  });
+  assert.equal(createRunCalled, false);
 });
 
 test('delivery workflow async runner starts without waiting for completion', async () => {
@@ -139,7 +191,7 @@ test('delivery workflow async runner starts without waiting for completion', asy
       }) as any,
   };
 
-  const response = await startDeliveryWorkflowRunAsync(host, {
+  const response = await startDeliveryWorkflowRunAsyncWithKey(host, {
     repoPath: '/tmp/delivery-target',
     deployMode: 'mock',
   });
