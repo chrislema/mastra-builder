@@ -12,6 +12,38 @@ const deliveryRequestContextSchema = z.object({
   repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
 });
 
+export const deliveryWorkingMemoryTemplate = `# Delivery Run Working Memory
+
+## Workspace
+- Repo Path:
+- Vision Source:
+- Spec Source:
+
+## Current Run
+- Run Id:
+- Stage:
+- Active Task:
+- Open Questions:
+- Assumptions:
+- Risks:
+
+## Quality State
+- Last Gate:
+- Required Evidence:
+- Human Approval:
+`;
+
+export const deliveryMemory = new Memory({
+  options: {
+    lastMessages: 12,
+    workingMemory: {
+      enabled: true,
+      scope: 'thread',
+      template: deliveryWorkingMemoryTemplate,
+    },
+  },
+});
+
 const skill = (name: string) => `./src/mastra/delivery-engine/skills/${name}`;
 
 const sharedInstructions = `
@@ -33,6 +65,9 @@ workflow state, and the .delivery projection stay aligned. Do not keep hidden st
 a workflow artifact should exist.
 
 When operating on a target repo, use requestContext.repoPath as the workspace root.
+Use thread-scoped Mastra working memory only for live coordination facts inside the current
+conversation or delegated run. Persist durable decisions, artifacts, scores, and status through
+the delivery tools and workflows.
 `;
 
 const deliveryProcessorConfig = {
@@ -84,7 +119,7 @@ Task owners should usually be engineer or designer; verification belongs to test
     skill('design-observability'),
   ],
   ...deliveryProcessorConfig,
-  memory: new Memory(),
+  memory: deliveryMemory,
 });
 
 export const architectAgent = new Agent({
@@ -141,7 +176,7 @@ Return either an approved plan with conditions, or blocking findings with requir
     skill('design-cache-strategy'),
   ],
   ...deliveryProcessorConfig,
-  memory: new Memory(),
+  memory: deliveryMemory,
 });
 
 export const engineerAgent = new Agent({
@@ -192,7 +227,7 @@ Always verify with code/tests/probes before claiming completion.
     skill('audit-state-boundaries'),
   ],
   ...deliveryProcessorConfig,
-  memory: new Memory(),
+  memory: deliveryMemory,
 });
 
 export const designerAgent = new Agent({
@@ -225,7 +260,7 @@ Must not touch backend, test, or deployment configuration surfaces unless the ta
   tools: deliveryStateTools,
   skills: [skill('build-ui'), skill('enforce-blast-radius')],
   ...deliveryProcessorConfig,
-  memory: new Memory(),
+  memory: deliveryMemory,
 });
 
 export const testerAgent = new Agent({
@@ -268,7 +303,7 @@ Findings must trace to harness output.
   tools: deliveryStateTools,
   skills: [skill('audit-traceability'), skill('check-release-gate'), skill('audit-trust-boundaries')],
   ...deliveryProcessorConfig,
-  memory: new Memory(),
+  memory: deliveryMemory,
 });
 
 export const deployerAgent = new Agent({
@@ -298,7 +333,7 @@ Always read and record the release gate before deployment. Always produce direct
   tools: deliveryStateTools,
   skills: [skill('check-release-gate')],
   ...deliveryProcessorConfig,
-  memory: new Memory(),
+  memory: deliveryMemory,
 });
 
 export const judgeAgent = new Agent({
@@ -331,7 +366,7 @@ Return only strict JSON with:
   tools: deliveryStateTools,
   skills: [],
   ...deliveryProcessorConfig,
-  memory: new Memory(),
+  memory: deliveryMemory,
 });
 
 export const deliverySupervisorAgent = new Agent({
@@ -390,7 +425,7 @@ registered workflow tools, delivery tools, and Mastra workflow state.
     skill('check-release-gate'),
   ],
   ...deliveryProcessorConfig,
-  memory: new Memory(),
+  memory: deliveryMemory,
 });
 
 export const deliveryAgents = {

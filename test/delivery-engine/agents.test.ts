@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   deliveryAgentRequestContextSchema,
   deliveryAgents,
+  deliveryMemory,
   deliverySupervisorAgent,
+  deliveryWorkingMemoryTemplate,
 } from '../../src/mastra/delivery-engine/agents.ts';
 
 test('delivery agents include a native supervisor surface', () => {
@@ -18,5 +20,21 @@ test('delivery agents publish a typed repoPath request context contract', () => 
   assert.equal(deliveryAgentRequestContextSchema.safeParse({}).success, false);
   for (const agent of Object.values(deliveryAgents)) {
     assert.equal(agent.requestContextSchema, deliveryAgentRequestContextSchema);
+  }
+});
+
+test('delivery agents share a thread-scoped working memory contract', async () => {
+  const memoryConfig = deliveryMemory.getMergedThreadConfig();
+
+  assert.equal(memoryConfig.lastMessages, 12);
+  assert.deepEqual(memoryConfig.workingMemory, {
+    enabled: true,
+    scope: 'thread',
+    template: deliveryWorkingMemoryTemplate,
+  });
+
+  for (const agent of Object.values(deliveryAgents)) {
+    assert.equal(agent.hasOwnMemory(), true);
+    assert.equal(await agent.getMemory(), deliveryMemory);
   }
 });
