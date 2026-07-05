@@ -1256,7 +1256,6 @@ const implementationWriteOnlyWorkspaceTools = [
 ] as string[];
 
 const implementationRepairWorkspaceTools = [
-  WORKSPACE_TOOLS.FILESYSTEM.READ_FILE,
   WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
   WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
 ] as string[];
@@ -2543,6 +2542,9 @@ const executeBuildTaskAttemptStep = createStep({
     const maxSteps = writeFirstRecovery ? 3 : focusedRepairRecovery ? 4 : 8;
     const packageManifestOwned = taskOwnsPackageManifest(task);
     const existingPackageDependencies = packageDependencyNames(inputData.repoPath);
+    const focusedRepairFileContext = focusedRepairRecovery
+      ? repoFileContents(inputData.repoPath, usableSurfaces.filter((surface) => !surface.includes('*')))
+      : [];
     const taskPacket = {
       scope: taskPlan.scope,
       task,
@@ -2554,6 +2556,7 @@ const executeBuildTaskAttemptStep = createStep({
       boundary_surfaces: usableSurfaces,
       package_manifest_owned: packageManifestOwned,
       existing_package_dependencies: existingPackageDependencies,
+      focused_repair_file_context: focusedRepairFileContext,
     };
     await updateDeliveryTaskState({
       repoPath: inputData.repoPath,
@@ -2606,8 +2609,8 @@ Timeout recovery is active.
 Focused repair mode is active.
 - Fix the remediation below before doing anything else:
 ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
-- Do not list files in this attempt.
-- Read only boundary surfaces that are needed to fix this remediation.
+- Use focused_repair_file_context as your source for current file contents.
+- Do not list or read files in this attempt.
 - Prefer editing existing generated files over adding new files.
 - Do not read spec.md, wrangler.toml, package.json, or package-lock.json unless that exact file is listed in boundary_surfaces.
 - Do not add or import a package that is not already listed in existing_package_dependencies unless package_manifest_owned is true.`
