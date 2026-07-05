@@ -561,10 +561,21 @@ function responseText(response: unknown) {
 }
 
 function existingOwnedFiles(repoPath: string, task: Task) {
-  return task.owned_surfaces.filter((surface) => {
+  return effectiveOwnedSurfaces(task).filter((surface) => {
     if (surface.includes('*')) return false;
     return existsSync(join(resolve(repoPath), surface));
   });
+}
+
+function effectiveOwnedSurfaces(task: Task) {
+  const surfaces = new Set(task.owned_surfaces);
+  const taskText = [task.deliverable, ...task.acceptance_criteria].join('\n');
+
+  if (/\bsrc\/\s+directories\b|\bproject structure\b|\bsrc\/\s+directories for\b/i.test(taskText)) {
+    surfaces.add('src/**');
+  }
+
+  return [...surfaces];
 }
 
 function implementationFilesTouched({
@@ -650,14 +661,31 @@ async function runBuildVerification({
         stage,
         command,
         ok: false,
-        error: compactDiagnostic(error, 500),
+        error: commandFailureSummary(error, 1000),
       },
     });
     return {
       performed: [] as string[],
-      missing: [`${command} failed: ${compactDiagnostic(error, 300)}`],
+      missing: [`${command} failed: ${commandFailureSummary(error, 600)}`],
     };
   }
+}
+
+function commandFailureSummary(error: unknown, limit = 1000) {
+  if (error && typeof error === 'object') {
+    const record = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
+    const parts = [
+      typeof record.message === 'string' ? record.message : undefined,
+      typeof record.stdout === 'string' && record.stdout.trim() ? `stdout:\n${record.stdout}` : undefined,
+      typeof record.stderr === 'string' && record.stderr.trim() ? `stderr:\n${record.stderr}` : undefined,
+    ].filter(Boolean);
+    if (parts.length) {
+      const text = parts.join('\n');
+      return text.length > limit ? `${text.slice(0, limit)}... (${text.length} chars total)` : text;
+    }
+  }
+
+  return compactDiagnostic(error, limit);
 }
 
 function synthesizeImplementationNote({
@@ -1941,7 +1969,7 @@ const executeBuildTaskAttemptStep = createStep({
     const attempt = inputData.attempt;
     const attemptNumber = attempt + 1;
     const stage = `build:${task.id}`;
-    const usableSurfaces = task.owned_surfaces.filter((surface) => !/^unknown\b/i.test(surface));
+    const usableSurfaces = effectiveOwnedSurfaces(task).filter((surface) => !/^unknown\b/i.test(surface));
     const taskPacket = {
       scope: taskPlan.scope,
       task,
