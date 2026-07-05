@@ -238,6 +238,29 @@ const builderOutputSchema = z.object({
   note: implementationNoteSchema,
 });
 
+function parseBuilderResponse(response: unknown, label: string) {
+  try {
+    return {
+      output: parseDeliveryStructuredOutput(builderOutputSchema, response, label),
+      repairedFromBareNote: false,
+    };
+  } catch (error) {
+    const note = parseDeliveryStructuredOutput(
+      z.union([implementationNoteSchema, z.array(implementationNoteSchema).min(1)]),
+      response,
+      `${label} note`,
+    );
+
+    return {
+      output: {
+        note: Array.isArray(note) ? note[0] : note,
+      },
+      repairedFromBareNote: true,
+      repairReason: compactDiagnostic(error),
+    };
+  }
+}
+
 const testerOutputSchema = z.object({
   gate: releaseGateSchema,
 });
@@ -1887,7 +1910,20 @@ Execution rules:
         ),
     });
 
-    const { note } = parseDeliveryStructuredOutput(builderOutputSchema, buildResponse, `${role} build`);
+    const parsedBuild = parseBuilderResponse(buildResponse, `${role} build`);
+    if (parsedBuild.repairedFromBareNote) {
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'structured_output_repair',
+          stage,
+          repair: 'bare_implementation_note',
+          reason: parsedBuild.repairReason,
+        },
+      });
+    }
+    const { note } = parsedBuild.output;
     const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
