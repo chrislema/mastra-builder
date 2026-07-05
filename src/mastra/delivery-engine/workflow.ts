@@ -661,22 +661,24 @@ export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
     .filter((path) => !existsSync(join(resolve(repoPath), path)));
 }
 
+const deliveryPreflightStubMarker = 'Delivery preflight stub';
+
 function compileSafeStubForSurface(path: string) {
   if (/\.(?:ts|mts|cts)$/.test(path)) {
     return [
-      '// Delivery preflight stub. The implementation agent should replace this with task code.',
+      `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.`,
       'export {};',
       '',
     ].join('\n');
   }
   if (/\.(?:js|mjs|cjs)$/.test(path)) {
-    return '// Delivery preflight stub. The implementation agent should replace this with task code.\n';
+    return `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.\n`;
   }
   if (/\.json$/.test(path)) return '{}\n';
-  if (/\.(?:sql)$/.test(path)) return '-- Delivery preflight stub. The implementation agent should replace this with task SQL.\n';
-  if (/\.(?:toml|ya?ml)$/.test(path)) return '# Delivery preflight stub. The implementation agent should replace this with task config.\n';
-  if (/\.css$/.test(path)) return '/* Delivery preflight stub. The implementation agent should replace this with task styles. */\n';
-  if (/\.html?$/.test(path)) return '<!doctype html>\n';
+  if (/\.(?:sql)$/.test(path)) return `-- ${deliveryPreflightStubMarker}. The implementation agent should replace this with task SQL.\n`;
+  if (/\.(?:toml|ya?ml)$/.test(path)) return `# ${deliveryPreflightStubMarker}. The implementation agent should replace this with task config.\n`;
+  if (/\.css$/.test(path)) return `/* ${deliveryPreflightStubMarker}. The implementation agent should replace this with task styles. */\n`;
+  if (/\.html?$/.test(path)) return `<!doctype html>\n<!-- ${deliveryPreflightStubMarker}. The implementation agent should replace this with task markup. -->\n`;
   return '';
 }
 
@@ -713,6 +715,17 @@ export async function createMissingOwnedSurfaceStubs({
   }
 
   return created;
+}
+
+export function unreplacedPreflightStubPaths(repoPath: string, task: Task) {
+  return taskBoundarySurfaces(repoPath, task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .filter((path) => {
+      const fullPath = join(resolve(repoPath), path);
+      if (!existsSync(fullPath)) return false;
+      return readFileSync(fullPath, 'utf8').includes(deliveryPreflightStubMarker);
+    });
 }
 
 export function taskBoundarySurfaces(repoPath: string, task: Task) {
@@ -809,6 +822,10 @@ function remediationHasMissingSurfaceFailure(remediation: string[]) {
   return remediation.some((item) => /\bowned_surfaces_present\b.*\bmissing owned surfaces\b/i.test(item));
 }
 
+function remediationHasUnreplacedPreflightStubFailure(remediation: string[]) {
+  return remediation.some((item) => /\b(preflight_stubs_replaced|preflight stubs remain)\b/i.test(item));
+}
+
 function remediationHasPolicyBoundaryFailure(remediation: string[]) {
   return remediation.some((item) =>
     /\b(file_ownership|write_paths_in_boundary|owned globs|owned surfaces|forbidden glob|outside this task)\b/i.test(
@@ -823,6 +840,7 @@ export function implementationFailureClass(remediation: string[]) {
   }
   if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
   if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
+  if (remediationHasUnreplacedPreflightStubFailure(remediation)) return 'preflight_stub' as const;
   if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
   if (remediationHasPolicyBoundaryFailure(remediation)) return 'policy_boundary' as const;
   if (remediationHasImplementationJudgmentFailure(remediation)) return 'judge_quality' as const;
@@ -845,6 +863,7 @@ export function implementationRetryMode({
   if (
     timeoutRecovery ||
     noActionRecovery ||
+    failureClass === 'preflight_stub' ||
     failureClass === 'policy_boundary' ||
     remediationHasVerificationFailure(remediation) ||
     remediationHasImplementationJudgmentFailure(remediation)
@@ -1310,6 +1329,7 @@ function implementationDeterministicResults({
 }): DeterministicGateResult[] {
   const files = repoFileContents(repoPath, note.files_touched);
   const missingSurfaces = missingOwnedSurfacePaths(repoPath, task);
+  const unreplacedStubs = unreplacedPreflightStubPaths(repoPath, task);
   const noteOwnership = runDeterministicCheck({
     name: 'file_ownership',
     role,
@@ -1338,6 +1358,12 @@ function implementationDeterministicResults({
       passed: missingSurfaces.length === 0,
       reason: missingSurfaces.length ? `missing owned surfaces: ${missingSurfaces.join(', ')}` : 'ok',
     },
+    {
+      id: 'preflight_stubs_replaced',
+      check: 'preflight_stubs_replaced',
+      passed: unreplacedStubs.length === 0,
+      reason: unreplacedStubs.length ? `preflight stubs remain: ${unreplacedStubs.join(', ')}` : 'ok',
+    },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
     {
       id: 'verification_passed',
@@ -1357,6 +1383,7 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'file_ownership',
         'write_paths_in_boundary',
         'owned_surfaces_present',
+        'preflight_stubs_replaced',
         'module_loads',
         'ran_code_before_complete',
         'verification_passed',
@@ -2824,6 +2851,7 @@ const executeBuildTaskAttemptStep = createStep({
       mastra,
     });
     const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
+    const unreplacedStubs = unreplacedPreflightStubPaths(inputData.repoPath, task);
     const verificationRecovery = remediationHasVerificationFailure(inputData.remediation);
     const retryMode = implementationRetryMode({ remediation: inputData.remediation, missingSurfaces });
     const failureClass = implementationFailureClass(inputData.remediation);
@@ -2849,6 +2877,7 @@ const executeBuildTaskAttemptStep = createStep({
       remediation: inputData.remediation,
       failure_class: failureClass,
       missing_owned_surfaces: missingSurfaces,
+      unreplaced_preflight_stubs: unreplacedStubs,
       preflight_created_surfaces: preflightCreatedSurfaces,
       boundary_surfaces: usableSurfaces,
       package_manifest_owned: packageManifestOwned,
@@ -2872,6 +2901,7 @@ Execution rules:
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
 - If failure_class is missing_surface, create every missing_owned_surface before editing any other file.
+- If failure_class is preflight_stub, replace every unreplaced_preflight_stub before editing any other file.
 - If failure_class is policy_boundary, do not repeat blocked writes; use only normalized boundary_surfaces paths.
 - Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.

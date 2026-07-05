@@ -16,6 +16,7 @@ import {
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
   taskBoundarySurfaces,
+  unreplacedPreflightStubPaths,
   verificationWithAcceptanceGaps,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 
@@ -115,6 +116,19 @@ test('missing owned surface preflight creates compile-safe stubs', async () => {
   assert.equal(existsSync(join(repoPath, 'src/routes/runs.ts')), true);
   assert.match(readFileSync(join(repoPath, 'src/routes/runs.ts'), 'utf8'), /export \{\};/);
   assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), []);
+});
+
+test('preflight stub detector fails until generated stubs are replaced', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-preflight-stub-detector-'));
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/routes/runs.ts'] }]).tasks;
+
+  await createMissingOwnedSurfaceStubs({ repoPath, task, stage: 'build:T1' });
+
+  assert.deepEqual(unreplacedPreflightStubPaths(repoPath, task), ['src/routes/runs.ts']);
+
+  writeFileSync(join(repoPath, 'src/routes/runs.ts'), 'export function routes() { return true; }\n');
+
+  assert.deepEqual(unreplacedPreflightStubPaths(repoPath, task), []);
 });
 
 test('task boundaries include existing sibling TypeScript barrel files', () => {
@@ -269,11 +283,13 @@ test('deterministic implementation blockers produce retry remediation before mod
   assert.deepEqual(
     implementationDeterministicRemediation([
       { id: 'owned_surfaces_present', check: 'owned_surfaces_present', passed: false, reason: 'missing owned surfaces: src/ai/client.ts' },
+      { id: 'preflight_stubs_replaced', check: 'preflight_stubs_replaced', passed: false, reason: 'preflight stubs remain: src/routes/runs.ts' },
       { id: 'verification_passed', check: 'build_verification_passed', passed: false, reason: 'npm run typecheck failed: TS1128' },
       { id: 'crypto_compliance', check: 'no_bcrypt_weak_hash', passed: false, reason: 'bcrypt found' },
     ]),
     [
       'DETERMINISTIC owned_surfaces_present failed: missing owned surfaces: src/ai/client.ts',
+      'DETERMINISTIC preflight_stubs_replaced failed: preflight stubs remain: src/routes/runs.ts',
       'DETERMINISTIC verification_passed failed: npm run typecheck failed: TS1128',
     ],
   );
@@ -465,6 +481,18 @@ test('implementation retry mode classifies deterministic failure families', () =
       missingSurfaces: ['src/routes/runs.ts'],
     }),
     'write-first',
+  );
+
+  const preflightStubRemediation = [
+    'DETERMINISTIC preflight_stubs_replaced failed: preflight stubs remain: src/workflows/steps/create-briefs.ts',
+  ];
+  assert.equal(implementationFailureClass(preflightStubRemediation), 'preflight_stub');
+  assert.equal(
+    implementationRetryMode({
+      remediation: preflightStubRemediation,
+      missingSurfaces: [],
+    }),
+    'focused-repair',
   );
 
   const policyBoundaryRemediation = [
