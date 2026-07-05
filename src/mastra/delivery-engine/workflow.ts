@@ -21,6 +21,8 @@ import {
 import { readDeliveryEvents, writeDeliveryArtifact, type DeliveryRunStatus } from './state';
 import {
   dependencyGraphAcyclic,
+  fileOwnership,
+  matchesAny,
   noBcryptWeakHash,
   normalizeDeliveryPathReference,
   planSchemaComplete,
@@ -731,6 +733,45 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
   }
 
   return [...surfaces];
+}
+
+function policyDeniedWriteEvents(events: DeliveryEvent[], stage: string) {
+  return stageSlice(events, stage).filter(
+    (event) =>
+      event.type === 'tool_use' &&
+      event.ok === false &&
+      /\b(outside this task's owned surfaces|outside .* owned globs|forbidden glob)\b/i.test(String(event.error ?? '')),
+  );
+}
+
+export function implementationEnginePolicyMismatch({
+  repoPath,
+  stage,
+  role,
+  task,
+  events,
+}: {
+  repoPath: string;
+  stage: string;
+  role: 'engineer' | 'designer';
+  task: Task;
+  events: DeliveryEvent[];
+}) {
+  const taskSurfaces = taskBoundarySurfaces(repoPath, task);
+  const mismatchedPaths = policyDeniedWriteEvents(events, stage)
+    .flatMap((event) => event.paths ?? [])
+    .filter((path) => {
+      const clean = normalizeDeliveryPathReference(path);
+      if (!clean || clean.startsWith('.delivery/')) return false;
+      return fileOwnership({ role, paths: [clean] }).passed && matchesAny(clean, taskSurfaces);
+    });
+
+  const uniquePaths = Array.from(new Set(mismatchedPaths.map(normalizeDeliveryPathReference)));
+  if (!uniquePaths.length) return [];
+
+  return [
+    `ENGINE_POLICY_MISMATCH ${task.id}: workspace policy rejected path(s) that normalize inside ${role}/${task.id} boundaries: ${uniquePaths.join(', ')}. This is a delivery engine boundary bug; do not spend model retries on it.`,
+  ];
 }
 
 function taskOwnsPackageManifest(task: Task) {
@@ -2973,6 +3014,13 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
 
     const deterministicRemediation = implementationDeterministicRemediation(deterministicResults);
     if (deterministicRemediation.length) {
+      const enginePolicyMismatch = implementationEnginePolicyMismatch({
+        repoPath: inputData.repoPath,
+        stage,
+        role,
+        task,
+        events: deliveryEvents,
+      });
       await appendDeliveryEventState({
         repoPath: inputData.repoPath,
         mastra,
@@ -2983,8 +3031,45 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
           task: task.id,
           attempt: attemptNumber,
           remediation: deterministicRemediation,
+          engine_policy_mismatch: enginePolicyMismatch,
         },
       });
+
+      if (enginePolicyMismatch.length) {
+        const remediation = [...enginePolicyMismatch, ...deterministicRemediation];
+        await updateDeliveryTaskState({
+          repoPath: inputData.repoPath,
+          id: task.id,
+          status: 'stuck',
+          owner: role,
+          note: remediation.join(' | ').slice(0, 300),
+          mastra,
+        });
+
+        return {
+          repoPath: inputData.repoPath,
+          maxRetries: inputData.maxRetries,
+          deployMode: inputData.deployMode,
+          taskPlan,
+          releaseGate: inputData.releaseGate,
+          status: 'stuck' as const,
+          runId: inputData.runId,
+          summary: `Build task ${task.id} stopped on a delivery engine policy mismatch.`,
+          artifacts,
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: remediation,
+          taskId: task.id,
+          taskStatus: 'stuck' as const,
+          task,
+          taskIndex: inputData.taskIndex,
+          skipped: false,
+          attempt,
+          terminal: true,
+          remediation,
+        };
+      }
 
       if (attempt >= inputData.maxRetries) {
         await updateDeliveryTaskState({

@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   createMissingOwnedSurfaceStubs,
   implementationDeterministicRemediation,
+  implementationEnginePolicyMismatch,
   implementationFailureClass,
   implementationRetryMode,
   missingOwnedSurfacePaths,
@@ -136,6 +137,57 @@ test('route task boundaries include the existing Worker entry integration surfac
     'src/routes/index.ts',
     'src/index.ts',
   ]);
+});
+
+test('engine policy mismatch stops retries for normalized in-boundary paths', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-engine-policy-mismatch-'));
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.toml'] }]).tasks;
+
+  const remediation = implementationEnginePolicyMismatch({
+    repoPath,
+    stage: 'build:T1',
+    role: 'engineer',
+    task,
+    events: [
+      { type: 'stage_start', stage: 'build:T1', role: 'engineer' },
+      {
+        type: 'tool_use',
+        tool: 'mastra_workspace_edit_file',
+        ok: false,
+        paths: ['wrangler.toml (triggers section)'],
+        error: "wrangler.toml (triggers section) is outside this task's owned surfaces [wrangler.toml]",
+      },
+    ],
+  });
+
+  assert.equal(remediation.length, 1);
+  assert.match(remediation[0], /ENGINE_POLICY_MISMATCH T1/);
+  assert.match(remediation[0], /wrangler\.toml/);
+});
+
+test('engine policy mismatch ignores genuinely out-of-boundary paths', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-engine-policy-real-block-'));
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/routes/runs.ts'] }]).tasks;
+
+  assert.deepEqual(
+    implementationEnginePolicyMismatch({
+      repoPath,
+      stage: 'build:T1',
+      role: 'engineer',
+      task,
+      events: [
+        { type: 'stage_start', stage: 'build:T1', role: 'engineer' },
+        {
+          type: 'tool_use',
+          tool: 'mastra_workspace_edit_file',
+          ok: false,
+          paths: ['wrangler.toml'],
+          error: "wrangler.toml is outside this task's owned surfaces [src/routes/runs.ts]",
+        },
+      ],
+    }),
+    [],
+  );
 });
 
 const implementationNote = {
