@@ -61,7 +61,13 @@ try {
   });
 
   console.log(JSON.stringify(response, null, 2));
+  if ((response.result as { status?: unknown }).status === 'failed') {
+    if (response.reportPath) console.error(`Delivery run report: ${response.reportPath}`);
+    process.exitCode = 1;
+  }
 } catch (error) {
+  const reportPath = error instanceof Error ? (error as Error & { deliveryReportPath?: string }).deliveryReportPath : undefined;
+  if (reportPath) console.error(`Delivery run report: ${reportPath}`);
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 } finally {

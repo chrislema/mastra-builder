@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { resolve } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { createDeliveryRequestContext } from './context';
 import { finishDeliveryRunState } from './state-service';
@@ -24,6 +25,7 @@ export const deliveryWorkflowRunResponseSchema = z.object({
   workflowId: z.literal('delivery-workflow'),
   runId: z.string(),
   resourceId: z.string(),
+  reportPath: z.string().optional(),
   result: z.any(),
 });
 
@@ -45,6 +47,76 @@ export function deliveryWorkflowResourceId(repoPath: string) {
   const repo = resolve(repoPath);
   const hash = createHash('sha256').update(repo).digest('hex').slice(0, 16);
   return `delivery:${hash}`;
+}
+
+function serializeError(error: unknown) {
+  if (error instanceof z.ZodError) {
+    return {
+      name: error.name,
+      message: error.message,
+      issues: error.issues,
+      stack: error.stack,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+
+  return {
+    name: 'Error',
+    message: String(error),
+  };
+}
+
+function writeDeliveryWorkflowRunReport({
+  repoPath,
+  runId,
+  resourceId,
+  result,
+  error,
+}: {
+  repoPath: string;
+  runId: string;
+  resourceId: string;
+  result?: unknown;
+  error?: unknown;
+}) {
+  const runsDir = join(resolve(repoPath), '.delivery', 'runs');
+  const reportPath = join(runsDir, `${runId}.json`);
+  const report = {
+    generatedAt: new Date().toISOString(),
+    workflowId: 'delivery-workflow',
+    runId,
+    resourceId,
+    repoPath: resolve(repoPath),
+    status: error ? 'threw' : (result as { status?: unknown } | undefined)?.status ?? 'unknown',
+    ...(result === undefined ? {} : { result }),
+    ...(error === undefined ? {} : { error: serializeError(error) }),
+  };
+
+  mkdirSync(dirname(reportPath), { recursive: true });
+  writeFileSync(reportPath, JSON.stringify(report, null, 2));
+  writeFileSync(join(runsDir, 'latest.json'), JSON.stringify(report, null, 2));
+
+  return reportPath;
+}
+
+function tryWriteDeliveryWorkflowRunReport(args: Parameters<typeof writeDeliveryWorkflowRunReport>[0], host?: MastraLike) {
+  try {
+    return writeDeliveryWorkflowRunReport(args);
+  } catch (error) {
+    host?.getLogger?.().warn('Failed to write delivery workflow run report', {
+      repoPath: args.repoPath,
+      runId: args.runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
 }
 
 async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
@@ -94,17 +166,28 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
   assertDeliveryModelEnvironment();
   const { run, repoPath, resourceId, startOptions } = await prepareDeliveryWorkflowRun(host, input);
 
-  const result = await run.start(startOptions);
-  if ((result as { status?: unknown }).status === 'failed') {
-    await closeFailedDeliveryRun({ host, repoPath });
-  }
+  try {
+    const result = await run.start(startOptions);
+    if ((result as { status?: unknown }).status === 'failed') {
+      await closeFailedDeliveryRun({ host, repoPath });
+    }
+    const reportPath = tryWriteDeliveryWorkflowRunReport({ repoPath, runId: run.runId, resourceId, result }, host);
 
-  return {
-    workflowId: 'delivery-workflow' as const,
-    runId: run.runId,
-    resourceId,
-    result,
-  };
+    return {
+      workflowId: 'delivery-workflow' as const,
+      runId: run.runId,
+      resourceId,
+      reportPath,
+      result,
+    };
+  } catch (error) {
+    await closeFailedDeliveryRun({ host, repoPath });
+    const reportPath = tryWriteDeliveryWorkflowRunReport({ repoPath, runId: run.runId, resourceId, error }, host);
+    if (error instanceof Error && reportPath) {
+      (error as Error & { deliveryReportPath?: string }).deliveryReportPath = reportPath;
+    }
+    throw error;
+  }
 }
 
 async function closeFailedDeliveryRun({ host, repoPath }: { host: DeliveryWorkflowHost; repoPath: string }) {

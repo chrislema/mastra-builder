@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -39,6 +39,8 @@ const startDeliveryWorkflowRunAsyncWithKey = (
   host: Parameters<typeof startDeliveryWorkflowRunAsync>[0],
   input: DeliveryWorkflowRunInput,
 ) => withZhipuKey('test-zhipu-key', () => startDeliveryWorkflowRunAsync(host, input));
+
+const readJson = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as Record<string, any>;
 
 test('delivery workflow runner creates a resource-scoped workflow run', async () => {
   const captured: {
@@ -92,6 +94,9 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
   assert.equal(response.workflowId, 'delivery-workflow');
   assert.equal(response.runId, 'workflow-run-1');
   assert.equal(response.resourceId, deliveryWorkflowResourceId(repoPath));
+  assert.equal(response.reportPath, join(repoPath, '.delivery', 'runs', 'workflow-run-1.json'));
+  assert.equal(existsSync(response.reportPath), true);
+  assert.equal(readJson(join(repoPath, '.delivery', 'runs', 'latest.json')).status, 'success');
   assert.deepEqual(response.result, { status: 'success' });
 });
 
@@ -141,10 +146,49 @@ test('delivery workflow runner closes initialized delivery state after a failed 
   const response = await startDeliveryWorkflowRunWithKey(host, { repoPath });
 
   assert.equal((response.result as Record<string, unknown>).status, 'failed');
+  assert.equal(response.reportPath, join(repoPath, '.delivery', 'runs', 'failed-run.json'));
+  const report = readJson(response.reportPath);
+  assert.equal(report.status, 'failed');
+  assert.equal(report.result.error.message, 'boom');
+  assert.deepEqual(readJson(join(repoPath, '.delivery', 'runs', 'latest.json')), report);
   const deliveryRun = readDeliveryRun(repoPath);
   assert.equal(deliveryRun.status, 'failed');
   assert.equal(deliveryRun.stage, 'done');
   assert.equal(typeof deliveryRun.finished_at, 'string');
+});
+
+test('delivery workflow runner writes a report when workflow start throws', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-runner-thrown-'));
+  writeFileSync(join(repoPath, 'vision.md'), '# Vision\n');
+  writeFileSync(join(repoPath, 'spec.md'), '# Spec\n');
+  initializeDeliveryRun({ repoPath, visionPath: 'vision.md', specPath: 'spec.md' });
+
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => ({
+          runId: 'thrown-run',
+          start: async () => {
+            throw new Error('structured output missing');
+          },
+        }),
+      }) as any,
+  };
+
+  await assert.rejects(startDeliveryWorkflowRunWithKey(host, { repoPath }), (error: unknown) => {
+    assert.equal(error instanceof Error, true);
+    assert.equal((error as Error).message, 'structured output missing');
+    assert.equal(
+      (error as Error & { deliveryReportPath?: string }).deliveryReportPath,
+      join(repoPath, '.delivery', 'runs', 'thrown-run.json'),
+    );
+    return true;
+  });
+
+  const report = readJson(join(repoPath, '.delivery', 'runs', 'thrown-run.json'));
+  assert.equal(report.status, 'threw');
+  assert.equal(report.error.message, 'structured output missing');
+  assert.equal(readDeliveryRun(repoPath).status, 'failed');
 });
 
 test('delivery workflow runner fails preflight before creating a run without model credentials', async () => {

@@ -1,5 +1,9 @@
 export const deliveryModel = 'zai-coding-plan/glm-5.2';
 export const judgeModel = deliveryModel;
+export const deliveryStructuredOutputOptions = {
+  model: deliveryModel,
+  jsonPromptInjection: true,
+} as const;
 
 const providerApiKeyEnvVars: Record<string, string[]> = {
   openai: ['OPENAI_API_KEY'],

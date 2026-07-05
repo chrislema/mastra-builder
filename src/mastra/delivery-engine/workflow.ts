@@ -38,7 +38,7 @@ import {
   deliveryReviewStepScorers,
 } from './scorers';
 import { safePersistDeliveryStateWithMastra } from './observability';
-import { deliveryModel } from './models';
+import { deliveryStructuredOutputOptions } from './models';
 
 const workflowInputSchema = z.object({
   repoPath: z.string().describe('Absolute path to the target repo.'),
@@ -47,6 +47,17 @@ const workflowInputSchema = z.object({
   maxRetries: z.number().int().min(0).default(2),
   deployMode: z.enum(['mock', 'real']).default('mock'),
 });
+
+function parseDeliveryStructuredOutput<T>(schema: z.ZodType<T>, object: unknown, label: string): T {
+  const parsed = schema.safeParse(object);
+  if (parsed.success) return parsed.data;
+
+  const reason =
+    object === undefined
+      ? 'response.object was undefined; the model provider did not return a structured object'
+      : parsed.error.message;
+  throw new Error(`${label} returned invalid structured output: ${reason}`);
+}
 
 const taskSchema = z.object({
   id: z.string(),
@@ -588,13 +599,13 @@ async function judgeDeliveryArtifact({
       requestContext: createDeliveryRequestContext(repoPath),
       structuredOutput: {
         schema: judgeOutputSchema,
-        model: deliveryModel,
+        ...deliveryStructuredOutputOptions,
         instructions: 'Return only the judge gates and dimensions. Do not compute aggregate scores.',
       },
     },
   );
 
-  const judgeOutput = judgeOutputSchema.parse(response.object);
+  const judgeOutput = parseDeliveryStructuredOutput(judgeOutputSchema, response.object, `${subjectName} judge`);
   const judgeOutputPath = `.delivery/artifacts/judgments/${slug}.judge.json`;
   writeDeliveryArtifact({
     repoPath,
@@ -774,13 +785,13 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
           requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: plannerOutputSchema,
-          model: deliveryModel,
+          ...deliveryStructuredOutputOptions,
           instructions: 'Return only the structured readout and taskPlan objects.',
         },
       },
     );
 
-    const output = plannerOutputSchema.parse(response.object);
+    const output = parseDeliveryStructuredOutput(plannerOutputSchema, response.object, 'planner');
 
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
@@ -1063,13 +1074,13 @@ ${JSON.stringify(taskPlan, null, 2)}`,
         requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: reviewReportSchema,
-          model: deliveryModel,
+          ...deliveryStructuredOutputOptions,
           instructions: 'Return only a review-report object.',
         },
       },
     );
 
-    const reviewReport = reviewReportSchema.parse(reviewResponse.object);
+    const reviewReport = parseDeliveryStructuredOutput(reviewReportSchema, reviewResponse.object, 'architect review');
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
       artifactPath: reviewPath,
@@ -1181,13 +1192,13 @@ ${JSON.stringify(reviewReport, null, 2)}`,
         requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: plannerRevisionOutputSchema,
-          model: deliveryModel,
+          ...deliveryStructuredOutputOptions,
           instructions: 'Return only the revised taskPlan object wrapped as { "taskPlan": ... }.',
         },
       },
     );
 
-    const revision = plannerRevisionOutputSchema.parse(revisionResponse.object);
+    const revision = parseDeliveryStructuredOutput(plannerRevisionOutputSchema, revisionResponse.object, 'planner revision');
     const revisedTaskPlan = revision.taskPlan;
     const revisionPath = `.delivery/artifacts/task-plan.revision-${revisionNumber}.json`;
     writeDeliveryArtifact({
@@ -1518,13 +1529,13 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
         requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: builderOutputSchema,
-          model: deliveryModel,
+          ...deliveryStructuredOutputOptions,
           instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
         },
       },
     );
 
-    const { note } = builderOutputSchema.parse(buildResponse.object);
+    const { note } = parseDeliveryStructuredOutput(builderOutputSchema, buildResponse.object, `${role} build`);
     const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
@@ -1893,13 +1904,13 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
         requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: testerOutputSchema,
-          model: deliveryModel,
+          ...deliveryStructuredOutputOptions,
           instructions: 'Return only { "gate": <release-gate> }.',
         },
       },
     );
 
-    const { gate } = testerOutputSchema.parse(gateResponse.object);
+    const { gate } = parseDeliveryStructuredOutput(testerOutputSchema, gateResponse.object, 'tester release gate');
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
       artifactPath: gatePath,
@@ -2164,13 +2175,13 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
         requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: deployerOutputSchema,
-          model: deliveryModel,
+          ...deliveryStructuredOutputOptions,
           instructions: 'Return only { "report": <deployment-report> } after deployment and live verification.',
         },
       },
     );
 
-    const { report } = deployerOutputSchema.parse(deployResponse.object);
+    const { report } = parseDeliveryStructuredOutput(deployerOutputSchema, deployResponse.object, 'deployer');
     const reportPath = '.delivery/artifacts/deployment-report.json';
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
