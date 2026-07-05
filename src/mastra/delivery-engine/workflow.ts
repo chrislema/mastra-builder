@@ -1667,7 +1667,7 @@ const prepareBuildTaskAttemptLoopStep = createStep({
   description: 'Prepare one build task for native retry attempts.',
   inputSchema: buildTaskWorkItemSchema,
   outputSchema: buildTaskAttemptStateSchema,
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, mastra }) => {
     const passThrough = (taskStatus: 'complete' | 'stuck' | 'blocked' | 'skipped' = 'skipped') => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
