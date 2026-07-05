@@ -971,6 +971,34 @@ export function reusableImplementationArtifactForTask(repoPath: string, task: Ta
   return undefined;
 }
 
+export function deliveryBuildResumePlan(repoPath: string, taskPlan: TaskPlan) {
+  const orderedTasks = topoOrderTasks(taskPlan.tasks);
+  const reusableTaskIds: string[] = [];
+  const reusableSet = new Set<string>();
+
+  for (const task of orderedTasks) {
+    if (!task.depends_on.every((dependency) => reusableSet.has(dependency))) break;
+    if (!reusableImplementationArtifactForTask(repoPath, task)) break;
+    reusableTaskIds.push(task.id);
+    reusableSet.add(task.id);
+  }
+
+  const nextTask = orderedTasks[reusableTaskIds.length];
+  return {
+    reusableTaskIds,
+    resumeAfterTaskId: reusableTaskIds.at(-1),
+    nextTaskId: nextTask?.id,
+    totalTasks: orderedTasks.length,
+  };
+}
+
+function deliveryBuildResumeReason(plan: ReturnType<typeof deliveryBuildResumePlan>) {
+  if (!plan.reusableTaskIds.length) return undefined;
+  const resumeAfter = plan.resumeAfterTaskId ?? 'none';
+  const nextTask = plan.nextTaskId ?? 'release gate';
+  return `Resume cursor: ${plan.reusableTaskIds.length}/${plan.totalTasks} implementation task(s) already have passing artifacts; resume after ${resumeAfter}, next ${nextTask}.`;
+}
+
 function effectiveOwnedSurfaces(task: Task) {
   const surfaces = new Set(task.owned_surfaces);
   const taskText = [task.deliverable, ...task.acceptance_criteria].join('\n');
@@ -2489,6 +2517,28 @@ const prepareBuildTasksStep = createStep({
       ];
     }
 
+    const resumePlan = deliveryBuildResumePlan(inputData.repoPath, inputData.taskPlan);
+    const resumeReason = deliveryBuildResumeReason(resumePlan);
+    const checks = resumeReason
+      ? [...inputData.checks, { check: 'build_resume_cursor', passed: true, reason: resumeReason }]
+      : inputData.checks;
+
+    if (resumeReason) {
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'build_resume_cursor',
+          stage: 'build',
+          ok: true,
+          reusable_task_ids: resumePlan.reusableTaskIds,
+          resume_after_task: resumePlan.resumeAfterTaskId,
+          next_task: resumePlan.nextTaskId,
+          total_tasks: resumePlan.totalTasks,
+        },
+      }).catch(() => undefined);
+    }
+
     return orderedTasks.map((task, taskIndex) => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
@@ -2499,7 +2549,7 @@ const prepareBuildTasksStep = createStep({
       runId: inputData.runId,
       summary: inputData.summary,
       artifacts: inputData.artifacts,
-      checks: inputData.checks,
+      checks,
       judgments: inputData.judgments,
       questions: inputData.questions,
       nextSteps: inputData.nextSteps,

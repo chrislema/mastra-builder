@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   createMissingOwnedSurfaceStubs,
+  deliveryBuildResumePlan,
   implementationDeterministicRemediation,
   implementationEnginePolicyMismatch,
   implementationFailureClass,
@@ -320,6 +321,43 @@ test('reusable implementation artifacts require passing judgment and present own
     judgmentPath: '.delivery/artifacts/judgments/implementation-T1-a1.judgment.json',
     judgeOutputPath: undefined,
     attempt: 1,
+  });
+});
+
+test('build resume plan points to the next task after the passing artifact prefix', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-resume-plan-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, '.delivery/artifacts/judgments'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/one.ts'), 'export {};\n');
+  writeFileSync(join(repoPath, 'src/two.ts'), 'export {};\n');
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/note-T1.a1.json'),
+    JSON.stringify({
+      ...implementationNote,
+      task: 'T1',
+      files_touched: ['src/one.ts'],
+    }),
+  );
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/judgments/implementation-T1-a1.judgment.json'),
+    JSON.stringify({
+      rubric: 'implementation',
+      overall: 0.91,
+      passed: true,
+      gates_failed: [],
+      dimensions_missing: [],
+    }),
+  );
+  const plan = taskPlan([
+    { depends_on: [], owned_surfaces: ['src/one.ts'] },
+    { depends_on: ['T1'], owned_surfaces: ['src/two.ts'] },
+  ]);
+
+  assert.deepEqual(deliveryBuildResumePlan(repoPath, plan), {
+    reusableTaskIds: ['T1'],
+    resumeAfterTaskId: 'T1',
+    nextTaskId: 'T2',
+    totalTasks: 2,
   });
 });
 
