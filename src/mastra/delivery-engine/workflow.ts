@@ -33,6 +33,7 @@ import {
   buildJudgeArtifactPrompt,
   judgeOutputSchemaForRubric,
   loadDeliveryEngineRubric,
+  type AggregatedJudgment,
   type DeterministicGateResult,
 } from './judgment';
 import {
@@ -532,6 +533,23 @@ export const shouldSuspendForPlannerQuestions = (readout: z.infer<typeof readout
 const implementationFindingSteps = (taskId: string, remediation: string[]) =>
   remediation.length ? remediation : [`${taskId} did not produce a passing implementation judgment`];
 
+export function shouldProceedAfterNonActionableImplementationJudgment({
+  judgment,
+  deterministicResults,
+  note,
+}: {
+  judgment: AggregatedJudgment;
+  deterministicResults: DeterministicGateResult[];
+  note: ImplementationNote;
+}) {
+  if (judgment.passed) return false;
+  if (judgment.gates_failed.length || judgment.dimensions_missing.length || judgment.remediation.length) return false;
+  if (!deterministicResults.every((result) => result.passed)) return false;
+  if (!note.verification.performed.length) return false;
+  if (note.verification.missing.some((item) => /\bfailed:/i.test(item))) return false;
+  return true;
+}
+
 function repoFileContents(repoPath: string, paths: string[]) {
   return paths
     .map((path) => {
@@ -559,6 +577,63 @@ function responseText(response: unknown) {
   if (!response || typeof response !== 'object') return undefined;
   const text = (response as { text?: unknown }).text;
   return typeof text === 'string' && text.trim() ? text.trim() : undefined;
+}
+
+function knownSecretValues() {
+  return Object.entries(process.env)
+    .filter(([name, value]) => /(KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL)/i.test(name) && typeof value === 'string')
+    .map(([, value]) => value)
+    .filter((value): value is string => Boolean(value && value.length >= 8));
+}
+
+function redactSecretsFromText(text: string) {
+  return knownSecretValues().reduce((current, secret) => current.split(secret).join('[REDACTED]'), text);
+}
+
+function redactTraceValue(value: unknown): unknown {
+  if (typeof value === 'string') return redactSecretsFromText(value);
+  if (Array.isArray(value)) return value.map((item) => redactTraceValue(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactTraceValue(item)]));
+}
+
+function serializeAgentResponse(response: unknown) {
+  if (!response || typeof response !== 'object') return redactTraceValue(response);
+  const record = response as Record<string, unknown>;
+  return redactTraceValue({
+    text: record.text,
+    object: record.object,
+    finishReason: record.finishReason,
+    usage: record.usage,
+    warnings: record.warnings,
+  });
+}
+
+async function writeStageTraceArtifact({
+  repoPath,
+  mastra,
+  artifactType,
+  artifactPath,
+  trace,
+}: {
+  repoPath: string;
+  mastra: any;
+  artifactType: string;
+  artifactPath: string;
+  trace: unknown;
+}) {
+  writeDeliveryArtifact({
+    repoPath,
+    artifactPath,
+    artifact: redactTraceValue(trace),
+  });
+  await recordDeliveryArtifactState({
+    repoPath,
+    type: artifactType,
+    path: artifactPath,
+    mastra,
+  });
+  return artifactPath;
 }
 
 function existingOwnedFiles(repoPath: string, task: Task) {
@@ -728,6 +803,39 @@ async function runBuildVerification({
   }
 }
 
+function acceptanceCriterionCovered(criterion: string, performed: string[]) {
+  const text = criterion.toLowerCase();
+  const evidence = performed.join('\n').toLowerCase();
+
+  if (/\b(typecheck|tsc|typescript)\b/.test(text)) return /\b(typecheck|tsc)\b/.test(evidence);
+  if (/\btest(s|ing)?\b/.test(text)) return /\btest\b/.test(evidence);
+  if (/\bbuild\b/.test(text)) return /\bbuild\b/.test(evidence);
+  if (/\bwrangler dev\b/.test(text)) return /\bwrangler dev\b/.test(evidence);
+  if (/\bhealth\b|\/health\b|http 200|status 200/.test(text)) return /\bhealth\b|\/health\b|http 200|status 200/.test(evidence);
+
+  return false;
+}
+
+export function verificationWithAcceptanceGaps({
+  task,
+  verification,
+}: {
+  task: Task;
+  verification: { performed: string[]; missing: string[] };
+}) {
+  const missing = new Set(verification.missing);
+  for (const criterion of task.acceptance_criteria) {
+    if (!acceptanceCriterionCovered(criterion, verification.performed)) {
+      missing.add(`Acceptance criterion not verified by automated checks: ${criterion}`);
+    }
+  }
+
+  return {
+    performed: verification.performed,
+    missing: [...missing],
+  };
+}
+
 async function applyBuildVerificationRepair({
   repoPath,
   mastra,
@@ -804,6 +912,7 @@ function synthesizeImplementationNote({
 }): ImplementationNote {
   const filesTouched = implementationFilesTouched({ repoPath, stage, task, events });
   const summary = responseText(buildResponse);
+  const honestVerification = verificationWithAcceptanceGaps({ task, verification });
 
   return {
     artifact_type: 'implementation-note',
@@ -814,7 +923,7 @@ function synthesizeImplementationNote({
     ],
     files_touched: filesTouched.length ? filesTouched : task.owned_surfaces,
     assumptions: taskPlan.open_decisions,
-    verification,
+    verification: honestVerification,
     risks: taskPlan.risks,
   };
 }
@@ -1028,6 +1137,12 @@ async function judgeDeliveryArtifact({
   const judge = requiredAgent(mastra, 'judge');
   const rubric = loadDeliveryEngineRubric(rubricName);
   const rubricJudgeOutputSchema = judgeOutputSchemaForRubric(rubric);
+  const prompt = buildJudgeArtifactPrompt({
+    rubric,
+    subjectName,
+    subject,
+    deterministicResults,
+  });
   const response = await runWithDeliveryStageTimeout({
     repoPath,
     mastra,
@@ -1035,12 +1150,7 @@ async function judgeDeliveryArtifact({
     timeoutMs: deliveryAgentTimeouts.judge,
     operation: (abortSignal) =>
       judge.generate(
-        buildJudgeArtifactPrompt({
-          rubric,
-          subjectName,
-          subject,
-          deterministicResults,
-        }),
+        prompt,
         {
           ...structuredNoToolOptions,
           abortSignal,
@@ -1073,6 +1183,24 @@ async function judgeDeliveryArtifact({
     artifactPath: judgmentPath,
     artifact: judgment,
   });
+  const tracePath = await writeStageTraceArtifact({
+    repoPath,
+    mastra,
+    artifactType: `trace-judge-${slug}`,
+    artifactPath: `.delivery/artifacts/traces/judge-${slug}.json`,
+    trace: {
+      artifact_type: 'agent-turn-trace',
+      stage: `judge:${slug}`,
+      role: 'judge',
+      subject: subjectName,
+      prompt,
+      response: serializeAgentResponse(response),
+      deterministicResults,
+      judgeOutputPath,
+      judgmentPath,
+      judgment,
+    },
+  });
   await recordDeliveryJudgmentState({
     repoPath,
     subject: subjectName,
@@ -1101,6 +1229,7 @@ async function judgeDeliveryArtifact({
   return {
     judgeOutputPath,
     judgmentPath,
+    tracePath,
     judgment,
     ref,
   };
@@ -2090,14 +2219,7 @@ const executeBuildTaskAttemptStep = createStep({
       mastra,
     });
 
-    const buildResponse = await runWithDeliveryStageTimeout({
-      repoPath: inputData.repoPath,
-      mastra,
-      stage,
-      timeoutMs: deliveryAgentTimeouts.build,
-      operation: (abortSignal) =>
-        agent.generate(
-          `Implement build task ${task.id}.
+    const buildPrompt = `Implement build task ${task.id}.
 
 Use this task packet as the source of truth. Do not reread .delivery planning or review artifacts unless a specific required field is missing from the packet.
 
@@ -2111,7 +2233,15 @@ Execution rules:
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
-- Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`,
+- Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`;
+    const buildResponse = await runWithDeliveryStageTimeout({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage,
+      timeoutMs: deliveryAgentTimeouts.build,
+      operation: (abortSignal) =>
+        agent.generate(
+          buildPrompt,
           {
             abortSignal,
             activeTools: implementationWorkspaceTools,
@@ -2121,6 +2251,23 @@ Execution rules:
           },
         ),
     });
+    const buildTracePath = await writeStageTraceArtifact({
+      repoPath: inputData.repoPath,
+      mastra,
+      artifactType: `trace-build-${task.id}-a${attemptNumber}`,
+      artifactPath: `.delivery/artifacts/traces/build-${task.id}-a${attemptNumber}.json`,
+      trace: {
+        artifact_type: 'agent-turn-trace',
+        stage,
+        role,
+        task: task.id,
+        attempt: attemptNumber,
+        prompt: buildPrompt,
+        response: serializeAgentResponse(buildResponse),
+        activeTools: implementationWorkspaceTools,
+      },
+    });
+    artifacts.push(buildTracePath);
 
     const verification = await runBuildVerification({ repoPath: inputData.repoPath, mastra, stage });
     const buildEvents = await readDeliveryEventsState({ repoPath: inputData.repoPath, mastra });
@@ -2178,16 +2325,47 @@ Execution rules:
       deterministicResults,
       slug: `implementation-${task.id}-a${attemptNumber}`,
     });
-    artifacts.push(implementationJudge.judgeOutputPath, implementationJudge.judgmentPath);
+    artifacts.push(implementationJudge.judgeOutputPath, implementationJudge.judgmentPath, implementationJudge.tracePath);
     judgments.push(implementationJudge.ref);
 
-    if (implementationJudge.judgment.passed) {
+    if (
+      implementationJudge.judgment.passed ||
+      shouldProceedAfterNonActionableImplementationJudgment({
+        judgment: implementationJudge.judgment,
+        deterministicResults,
+        note,
+      })
+    ) {
+      const acceptedByFastPath = !implementationJudge.judgment.passed;
+      if (acceptedByFastPath) {
+        const check = {
+          check: `non_actionable_implementation_judgment:${task.id}.a${attemptNumber}`,
+          passed: true,
+          reason: `Implementation judgment scored ${implementationJudge.judgment.overall} without failed gates, failed deterministic checks, or actionable remediation.`,
+        };
+        checks.push(check);
+        await appendDeliveryEventState({
+          repoPath: inputData.repoPath,
+          mastra,
+          event: {
+            type: 'implementation_judgment_non_actionable',
+            stage,
+            ok: true,
+            task: task.id,
+            attempt: attemptNumber,
+            overall: implementationJudge.judgment.overall,
+            judgmentPath: implementationJudge.judgmentPath,
+          },
+        });
+      }
       await updateDeliveryTaskState({
         repoPath: inputData.repoPath,
         id: task.id,
         status: 'complete',
         owner: role,
-        note: `judged ${implementationJudge.judgment.overall}`,
+        note: acceptedByFastPath
+          ? `accepted non-actionable judgment ${implementationJudge.judgment.overall}`
+          : `judged ${implementationJudge.judgment.overall}`,
         mastra,
       });
 
@@ -2199,12 +2377,16 @@ Execution rules:
         releaseGate: inputData.releaseGate,
         status: 'built' as const,
         runId: inputData.runId,
-        summary: `Build task ${task.id} completed.`,
+        summary: acceptedByFastPath
+          ? `Build task ${task.id} completed with a non-actionable implementation score recorded for release-gate follow-up.`
+          : `Build task ${task.id} completed.`,
         artifacts,
         checks,
         judgments,
         questions: [],
-        nextSteps: ['Continue the delivery build loop.'],
+        nextSteps: acceptedByFastPath
+          ? ['Continue the delivery build loop; release gate should verify any missing acceptance checks.']
+          : ['Continue the delivery build loop.'],
         task,
         taskIndex: inputData.taskIndex,
         skipped: false,
