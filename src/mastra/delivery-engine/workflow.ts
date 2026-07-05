@@ -700,6 +700,19 @@ function remediationHasVerificationFailure(remediation: string[]) {
   );
 }
 
+export function implementationRetryMode({
+  remediation,
+  missingSurfaces,
+}: {
+  remediation: string[];
+  missingSurfaces: string[];
+}) {
+  const timeoutRecovery = remediation.some((item) => /timed out/i.test(item));
+  if (timeoutRecovery && missingSurfaces.length) return 'write-first' as const;
+  if (timeoutRecovery || remediationHasVerificationFailure(remediation)) return 'focused-repair' as const;
+  return 'normal' as const;
+}
+
 function buildTimeoutRemediation({
   task,
   timeoutMs,
@@ -2518,16 +2531,16 @@ const executeBuildTaskAttemptStep = createStep({
     const stage = `build:${task.id}`;
     const usableSurfaces = taskBoundarySurfaces(inputData.repoPath, task).filter((surface) => !/^unknown\b/i.test(surface));
     const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
-    const timeoutRecovery = inputData.remediation.some((item) => /timed out/i.test(item));
     const verificationRecovery = remediationHasVerificationFailure(inputData.remediation);
-    const writeFirstRecovery = timeoutRecovery && missingSurfaces.length > 0;
-    const compileRepairRecovery = verificationRecovery && !writeFirstRecovery;
+    const retryMode = implementationRetryMode({ remediation: inputData.remediation, missingSurfaces });
+    const writeFirstRecovery = retryMode === 'write-first';
+    const focusedRepairRecovery = retryMode === 'focused-repair';
     const activeTools = writeFirstRecovery
       ? implementationWriteOnlyWorkspaceTools
-      : compileRepairRecovery
+      : focusedRepairRecovery
         ? implementationRepairWorkspaceTools
         : implementationWorkspaceTools;
-    const maxSteps = writeFirstRecovery ? 3 : compileRepairRecovery ? 4 : 8;
+    const maxSteps = writeFirstRecovery ? 3 : focusedRepairRecovery ? 4 : 8;
     const packageManifestOwned = taskOwnsPackageManifest(task);
     const existingPackageDependencies = packageDependencyNames(inputData.repoPath);
     const taskPacket = {
@@ -2587,14 +2600,14 @@ Timeout recovery is active.
 - Do not read or list files in this attempt.
 - Create compile-safe placeholders that satisfy the task packet and allow workflow verification to run.`
       : '';
-    const repairPrompt = compileRepairRecovery
+    const repairPrompt = focusedRepairRecovery
       ? `
 
-Compile repair mode is active.
-- Fix exactly the remediation diagnostics below before doing anything else:
+Focused repair mode is active.
+- Fix the remediation below before doing anything else:
 ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
 - Do not list files in this attempt.
-- Read only boundary surfaces that are needed to fix these diagnostics.
+- Read only boundary surfaces that are needed to fix this remediation.
 - Prefer editing existing generated files over adding new files.
 - Do not read spec.md, wrangler.toml, package.json, or package-lock.json unless that exact file is listed in boundary_surfaces.
 - Do not add or import a package that is not already listed in existing_package_dependencies unless package_manifest_owned is true.`
@@ -2710,7 +2723,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
         prompt: finalBuildPrompt,
         response: serializeAgentResponse(buildResponse),
         activeTools,
-        retryMode: writeFirstRecovery ? 'write-first' : compileRepairRecovery ? 'compile-repair' : 'normal',
+        retryMode,
       },
     });
     artifacts.push(buildTracePath);

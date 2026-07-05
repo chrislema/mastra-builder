@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   implementationDeterministicRemediation,
+  implementationRetryMode,
   missingOwnedSurfacePaths,
   priorStoppedBuildTaskIds,
   reusableImplementationArtifactForTask,
@@ -284,5 +285,29 @@ test('build task preparation pauses after earlier stopped tasks', () => {
       },
     }),
     ['T2'],
+  );
+});
+
+test('implementation retry mode focuses timeout retries when owned files already exist', () => {
+  assert.equal(
+    implementationRetryMode({
+      remediation: ['T3 build attempt timed out after 180000ms. Create missing owned surfaces.'],
+      missingSurfaces: ['src/routes/profiles.ts'],
+    }),
+    'write-first',
+  );
+  assert.equal(
+    implementationRetryMode({
+      remediation: ['T3 build attempt timed out after 180000ms. Edit the boundary surfaces.'],
+      missingSurfaces: [],
+    }),
+    'focused-repair',
+  );
+  assert.equal(
+    implementationRetryMode({
+      remediation: ['DETERMINISTIC verification_passed failed: npm run typecheck failed: TS2307'],
+      missingSurfaces: [],
+    }),
+    'focused-repair',
   );
 });
