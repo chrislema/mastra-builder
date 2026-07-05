@@ -956,6 +956,7 @@ function implementationDeterministicResults({
   task,
   note,
   events,
+  verification,
 }: {
   repoPath: string;
   stage: string;
@@ -963,6 +964,7 @@ function implementationDeterministicResults({
   task: Task;
   note: ImplementationNote;
   events: DeliveryEvent[];
+  verification: { performed: string[]; missing: string[] };
 }): DeterministicGateResult[] {
   const files = repoFileContents(repoPath, note.files_touched);
   const missingSurfaces = missingOwnedSurfacePaths(repoPath, task);
@@ -984,6 +986,7 @@ function implementationDeterministicResults({
     stage,
   });
   const crypto = noBcryptWeakHash(files);
+  const failedVerification = verification.missing.find((item) => /\bfailed:/i.test(item));
 
   return [
     { id: 'file_ownership', check: 'write_paths_in_boundary', ...ownership },
@@ -994,6 +997,12 @@ function implementationDeterministicResults({
       reason: missingSurfaces.length ? `missing owned surfaces: ${missingSurfaces.join(', ')}` : 'ok',
     },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
+    {
+      id: 'verification_passed',
+      check: 'build_verification_passed',
+      passed: verification.performed.length > 0 && !failedVerification,
+      reason: failedVerification ?? (verification.performed.length ? 'ok' : 'no build verification command passed'),
+    },
     { id: 'crypto_compliance', check: 'no_bcrypt_weak_hash', ...crypto },
   ];
 }
@@ -1002,9 +1011,15 @@ export function implementationDeterministicRemediation(results: DeterministicGat
   return results
     .filter((result) => !result.passed)
     .filter((result) =>
-      ['file_ownership', 'write_paths_in_boundary', 'owned_surfaces_present', 'module_loads', 'ran_code_before_complete'].includes(
-        String(result.id ?? result.check),
-      ),
+      [
+        'file_ownership',
+        'write_paths_in_boundary',
+        'owned_surfaces_present',
+        'module_loads',
+        'ran_code_before_complete',
+        'verification_passed',
+        'build_verification_passed',
+      ].includes(String(result.id ?? result.check)),
     )
     .map((result) => {
       const id = String(result.id ?? result.check ?? 'deterministic_check');
@@ -2430,6 +2445,7 @@ Execution rules:
       task,
       note,
       events: deliveryEvents,
+      verification,
     });
     checks.push(...checkSummaries(deterministicResults, `${task.id}.a${attemptNumber}`));
 

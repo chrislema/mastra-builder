@@ -170,8 +170,12 @@ test('deterministic implementation blockers produce retry remediation before mod
   assert.deepEqual(
     implementationDeterministicRemediation([
       { id: 'owned_surfaces_present', check: 'owned_surfaces_present', passed: false, reason: 'missing owned surfaces: src/ai/client.ts' },
+      { id: 'verification_passed', check: 'build_verification_passed', passed: false, reason: 'npm run typecheck failed: TS1128' },
       { id: 'crypto_compliance', check: 'no_bcrypt_weak_hash', passed: false, reason: 'bcrypt found' },
     ]),
-    ['DETERMINISTIC owned_surfaces_present failed: missing owned surfaces: src/ai/client.ts'],
+    [
+      'DETERMINISTIC owned_surfaces_present failed: missing owned surfaces: src/ai/client.ts',
+      'DETERMINISTIC verification_passed failed: npm run typecheck failed: TS1128',
+    ],
   );
 });

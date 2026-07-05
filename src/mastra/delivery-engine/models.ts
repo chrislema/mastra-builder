@@ -1,5 +1,15 @@
-export const deliveryModel = 'zai-coding-plan/glm-5.2';
-export const judgeModel = deliveryModel;
+const defaultDeliveryModel = 'zai-coding-plan/glm-5.2';
+
+const configuredModel = (env: NodeJS.ProcessEnv, name: string, fallback: string) => env[name]?.trim() || fallback;
+
+export const configuredDeliveryModel = (env: NodeJS.ProcessEnv = process.env) =>
+  configuredModel(env, 'DELIVERY_MODEL', defaultDeliveryModel);
+
+export const configuredJudgeModel = (env: NodeJS.ProcessEnv = process.env) =>
+  configuredModel(env, 'DELIVERY_JUDGE_MODEL', configuredDeliveryModel(env));
+
+export const deliveryModel = configuredDeliveryModel();
+export const judgeModel = configuredJudgeModel();
 export const deliveryStructuredOutputOptions = {
   jsonPromptInjection: true,
   errorStrategy: 'warn',
@@ -31,7 +41,10 @@ export function requiredEnvVarsForModel(model: string) {
 }
 
 export function missingEnvVarsForDeliveryModels(env: NodeJS.ProcessEnv = process.env) {
-  const required = new Set([...requiredEnvVarsForModel(deliveryModel), ...requiredEnvVarsForModel(judgeModel)]);
+  const required = new Set([
+    ...requiredEnvVarsForModel(configuredDeliveryModel(env)),
+    ...requiredEnvVarsForModel(configuredJudgeModel(env)),
+  ]);
   return [...required].filter((name) => !isConfiguredEnvValue(env[name]));
 }
 
@@ -41,7 +54,8 @@ export function assertDeliveryModelEnvironment(env: NodeJS.ProcessEnv = process.
 
   throw new Error(
     [
-      `Delivery workflow requires ${missing.join(', ')} for model ${deliveryModel}.`,
+      `Delivery workflow requires ${missing.join(', ')} for the configured delivery models.`,
+      `Delivery model: ${configuredDeliveryModel(env)}. Judge model: ${configuredJudgeModel(env)}.`,
       'Set it in your shell or in .env, then rerun npm run delivery:run.',
     ].join(' '),
   );
