@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
-import { DuckDBStore } from '@mastra/duckdb';
+import { LibSQLStore } from '@mastra/libsql';
 import {
   buildDeliveryJudgmentScoreEvents,
   buildDeliveryJudgmentScorePayloads,
@@ -196,13 +196,13 @@ test('delivery status reads prefer Mastra storage snapshots over the local proje
   assert.equal(storedStatus?.status, 'complete');
 });
 
-test('delivery state listing is compatible with real DuckDB observability storage', async () => {
+test('delivery state listing is compatible with real LibSQL observability storage', async () => {
   const repoPath = createRepo();
-  const storageDir = mkdtempSync(join(tmpdir(), 'delivery-duckdb-observability-'));
-  const duckdb = new DuckDBStore({ path: join(storageDir, 'observability.duckdb') });
+  const storageDir = mkdtempSync(join(tmpdir(), 'delivery-libsql-observability-'));
+  const storage = new LibSQLStore({ id: 'test-libsql-observability', url: `file:${join(storageDir, 'observability.db')}` });
 
   try {
-    const store = (await duckdb.getStore('observability')) as DeliveryObservabilityStore;
+    const store = (await storage.getStore('observability')) as DeliveryObservabilityStore;
     await (store as DeliveryObservabilityStore & { init?: () => Promise<void> }).init?.();
     await persistDeliveryStateToObservability({ repoPath, store });
 
@@ -214,7 +214,7 @@ test('delivery state listing is compatible with real DuckDB observability storag
     assert.deepEqual(storedStatus?.tasks, ['T1:complete']);
     assert.equal(storedStatus?.status, 'complete');
   } finally {
-    await duckdb.close();
+    await storage.close();
   }
 });
 

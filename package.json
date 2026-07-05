@@ -10,7 +10,7 @@
     "eval:delivery:gate": "node --import tsx scripts/run-delivery-eval-gate.ts",
     "ci:delivery": "npm test && npm run eval:delivery:gate",
     "dev": "mastra dev",
-    "build": "mastra build",
+    "build": "MASTRA_TELEMETRY_DISABLED=1 npm_config_prefer_offline=true npm_config_fetch_retries=0 npm_config_fetch_timeout=10000 mastra build",
     "start": "mastra start"
   },
   "keywords": [],
@@ -22,10 +22,8 @@
   },
   "dependencies": {
     "@mastra/core": "^1.49.0",
-    "@mastra/duckdb": "^1.5.0",
     "@mastra/evals": "^1.5.1",
     "@mastra/libsql": "^1.15.0",
-    "@mastra/loggers": "^1.2.0",
     "@mastra/memory": "^1.22.1",
     "@mastra/observability": "^1.15.2",
     "zod": "^4.4.3"

@@ -1,20 +1,31 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { SaveScorePayload, ScoreRowData } from '@mastra/core/evals';
+import { EntityType, SpanType } from '@mastra/core/observability';
 import { getDeliveryRunStatus, readDeliveryEvents, readDeliveryRun, type DeliveryRun } from './state';
 import type { DeliveryEvent } from './checks';
 
 type DeliveryObservabilityLog = Record<string, unknown>;
 type DeliveryObservabilityScore = Record<string, unknown>;
+type DeliveryObservabilitySpan = Record<string, unknown>;
 
 export type DeliveryObservabilityStore = {
-  batchCreateLogs(args: { logs: DeliveryObservabilityLog[] }): Promise<void>;
+  batchCreateLogs?(args: { logs: DeliveryObservabilityLog[] }): Promise<void>;
+  batchCreateSpans?(args: { records: DeliveryObservabilitySpan[] }): Promise<void>;
   batchCreateScores?(args: { scores: DeliveryObservabilityScore[] }): Promise<void>;
-  listLogs(args: {
+  listLogs?(args: {
     filters?: Record<string, unknown>;
     pagination?: { page: number; perPage: number };
     orderBy?: { field: 'timestamp'; direction: 'ASC' | 'DESC' };
   }): Promise<{ logs: DeliveryObservabilityLog[]; pagination?: Record<string, unknown> }>;
+  listTraces?(args: {
+    filters?: Record<string, unknown>;
+    pagination?: { page: number; perPage: number };
+    orderBy?: { field: 'startedAt' | 'endedAt'; direction: 'ASC' | 'DESC' };
+  }): Promise<{ spans: DeliveryObservabilitySpan[]; pagination?: Record<string, unknown> }>;
+  getTrace?(args: {
+    traceId: string;
+  }): Promise<{ traceId: string; spans: DeliveryObservabilitySpan[] } | null>;
 };
 
 export type DeliveryScoresStore = {
@@ -72,8 +83,8 @@ const mastraStorageMaxPageSize = 100;
 const maxDeliveryStateReadPages = 100;
 const maxDeliveryScoreReadPages = 100;
 
-const stableHash = (value: unknown) =>
-  createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
+const stableHash = (value: unknown, length = 16) =>
+  createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, length);
 
 const toDate = (value: unknown, fallback: string) => {
   const date = new Date(typeof value === 'string' ? value : fallback);
@@ -206,6 +217,94 @@ export function buildDeliveryStatePersistenceLogs(repoPath: string) {
 
 export const buildDeliveryStateMirrorLogs = buildDeliveryStatePersistenceLogs;
 
+function traceIdForDeliveryRun(run: DeliveryRun, repoPath: string) {
+  return stableHash({ repoPath: resolve(repoPath), runId: run.run_id }, 32);
+}
+
+function spanIdForDeliveryLog(log: DeliveryObservabilityLog) {
+  return stableHash(log.logId ?? log, 16);
+}
+
+function buildDeliveryStateSpansFromLogs({
+  repoPath,
+  run,
+  logs,
+}: {
+  repoPath: string;
+  run: DeliveryRun;
+  logs: DeliveryObservabilityLog[];
+}) {
+  const traceId = traceIdForDeliveryRun(run, repoPath);
+  const snapshotLog = logs.find((log) => (log.data as Record<string, unknown> | undefined)?.kind === 'snapshot') ?? logs[0];
+  const rootSpanId = spanIdForDeliveryLog(snapshotLog);
+
+  return logs.map((log) => {
+    const data = log.data as Record<string, unknown> | undefined;
+    const isSnapshot = data?.kind === 'snapshot';
+    const startedAt = toDate(log.timestamp, run.started_at);
+
+    return {
+      traceId,
+      spanId: spanIdForDeliveryLog(log),
+      parentSpanId: isSnapshot ? undefined : rootSpanId,
+      name: String(log.message ?? `Delivery ${String(data?.kind ?? 'state')}`),
+      spanType: isSnapshot ? SpanType.WORKFLOW_RUN : SpanType.WORKFLOW_STEP,
+      isEvent: !isSnapshot,
+      startedAt,
+      endedAt: startedAt,
+      source: log.source ?? deliverySource,
+      entityType: isSnapshot ? EntityType.WORKFLOW_RUN : EntityType.WORKFLOW_STEP,
+      entityId: log.entityId ?? run.run_id,
+      entityName: log.entityName ?? deliveryWorkflowEntity,
+      parentEntityType: isSnapshot ? undefined : EntityType.WORKFLOW_RUN,
+      parentEntityId: isSnapshot ? undefined : run.run_id,
+      parentEntityName: isSnapshot ? undefined : deliveryWorkflowEntity,
+      rootEntityType: EntityType.WORKFLOW_RUN,
+      rootEntityId: run.run_id,
+      rootEntityName: deliveryWorkflowEntity,
+      resourceId: log.resourceId ?? resolve(repoPath),
+      runId: log.runId ?? run.run_id,
+      serviceName: log.serviceName ?? deliveryServiceName,
+      tags: log.tags,
+      metadata: log.metadata,
+      attributes: {
+        deliveryLogId: log.logId,
+        deliveryRecordKind: data?.kind,
+      },
+      scope: {
+        deliverySource,
+        recordKind: data?.kind,
+      },
+      output: data,
+    };
+  });
+}
+
+function spanToDeliveryStateLog(span: DeliveryObservabilitySpan): DeliveryObservabilityLog {
+  const output = span.output as Record<string, unknown> | undefined;
+  const attributes = span.attributes as Record<string, unknown> | undefined;
+
+  return {
+    logId: attributes?.deliveryLogId ?? span.spanId,
+    timestamp: span.startedAt,
+    level: 'info',
+    message: span.name,
+    data: output,
+    source: span.source,
+    serviceName: span.serviceName,
+    entityType: span.entityType,
+    entityId: span.entityId,
+    entityName: span.entityName,
+    rootEntityType: span.rootEntityType,
+    rootEntityId: span.rootEntityId,
+    rootEntityName: span.rootEntityName,
+    resourceId: span.resourceId,
+    runId: span.runId,
+    tags: span.tags,
+    metadata: span.metadata,
+  };
+}
+
 const deliveryRubricScorerId = (rubric: string) => `delivery-rubric:${rubric}`;
 const deliveryJudgmentScoreKey = (scorerId: string, path: unknown) => `${scorerId}:${String(path ?? '')}`;
 
@@ -321,7 +420,13 @@ export async function persistDeliveryStateToObservability({
   store: DeliveryObservabilityStore;
 }): Promise<DeliveryStatePersistenceSummary> {
   const { run, events, logs } = buildDeliveryStatePersistenceLogs(repoPath);
-  await store.batchCreateLogs({ logs });
+  if (store.batchCreateSpans) {
+    await store.batchCreateSpans({ records: buildDeliveryStateSpansFromLogs({ repoPath, run, logs }) });
+  } else if (store.batchCreateLogs) {
+    await store.batchCreateLogs({ logs });
+  } else {
+    throw new Error('Mastra observability storage does not support delivery state persistence');
+  }
 
   return {
     ok: true,
@@ -346,7 +451,13 @@ export async function persistDeliverySnapshotToMastraStorage({
   store: DeliveryObservabilityStore;
 }): Promise<DeliveryStatePersistenceSummary> {
   const { logs } = buildDeliveryStateLogsFromSnapshot({ repoPath, run, events });
-  await store.batchCreateLogs({ logs });
+  if (store.batchCreateSpans) {
+    await store.batchCreateSpans({ records: buildDeliveryStateSpansFromLogs({ repoPath, run, logs }) });
+  } else if (store.batchCreateLogs) {
+    await store.batchCreateLogs({ logs });
+  } else {
+    throw new Error('Mastra observability storage does not support delivery state persistence');
+  }
 
   return {
     ok: true,
@@ -380,6 +491,11 @@ function isDeliveryStateLog(log: DeliveryObservabilityLog, runId?: string) {
   if (metadata?.stateSource !== 'mastra-storage') return false;
   if (metadata?.projectionSource !== '.delivery') return false;
   return data?.kind === 'snapshot' || data?.kind === 'event';
+}
+
+function isUnsupportedObservabilityFeature(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /does not support|not implemented/i.test(message);
 }
 
 async function listDeliveryStateRecordsUntilSnapshot({
@@ -522,8 +638,14 @@ export async function persistDeliveryJudgmentScoresToStores({
   }
 
   const scoreEvents = buildDeliveryJudgmentScoreEvents(repoPath);
+  let observabilityScoresSubmitted = 0;
   if (observabilityStore?.batchCreateScores && scoreEvents.length) {
-    await observabilityStore.batchCreateScores({ scores: scoreEvents });
+    try {
+      await observabilityStore.batchCreateScores({ scores: scoreEvents });
+      observabilityScoresSubmitted = scoreEvents.length;
+    } catch (error) {
+      if (!isUnsupportedObservabilityFeature(error)) throw error;
+    }
   }
 
   return {
@@ -532,7 +654,7 @@ export async function persistDeliveryJudgmentScoresToStores({
     judgmentCount: payloads.length,
     scoresSubmitted,
     scoresSkipped,
-    observabilityScoresSubmitted: observabilityStore?.batchCreateScores ? scoreEvents.length : 0,
+    observabilityScoresSubmitted,
   };
 }
 
@@ -666,20 +788,55 @@ export async function listDeliveryStateRecords({
 }) {
   const normalizedPage = normalizePage(page);
   const normalizedPerPage = normalizePageSize(perPage);
-  const listed = await store.listLogs({
+
+  if (!store.listTraces && store.listLogs) {
+    const listed = await store.listLogs({
+      filters: {
+        // Query only durable cross-store columns; delivery-specific source checks happen in memory.
+        serviceName: deliveryServiceName,
+        ...(repoPath ? { resourceId: resolve(repoPath) } : {}),
+      },
+      pagination: { page: normalizedPage, perPage: normalizedPerPage },
+      orderBy: { field: 'timestamp', direction: 'DESC' },
+    });
+    return {
+      ...listed,
+      logs: listed.logs.filter((log) => isDeliveryStateLog(log, runId)),
+    };
+  }
+
+  if (!store.listTraces) {
+    throw new Error('Mastra observability storage does not support delivery state listing');
+  }
+
+  const listed = await store.listTraces({
     filters: {
-      // DuckDB's current observability log table accepts `source` in the input schema
-      // but does not persist it as a queryable log_events column. Keep source-specific
-      // filtering in memory and query only durable columns.
+      source: deliverySource,
       serviceName: deliveryServiceName,
+      entityType: EntityType.WORKFLOW_RUN,
       ...(repoPath ? { resourceId: resolve(repoPath) } : {}),
+      ...(runId ? { runId } : {}),
     },
     pagination: { page: normalizedPage, perPage: normalizedPerPage },
-    orderBy: { field: 'timestamp', direction: 'DESC' },
+    orderBy: { field: 'startedAt', direction: 'DESC' },
   });
+  const spans = (
+    await Promise.all(
+      listed.spans.map(async (span) => {
+        const traceId = typeof span.traceId === 'string' ? span.traceId : undefined;
+        if (!traceId || !store.getTrace) return [span];
+        return (await store.getTrace({ traceId }))?.spans ?? [span];
+      }),
+    )
+  ).flat();
+  const logs = spans
+    .map(spanToDeliveryStateLog)
+    .filter((log) => isDeliveryStateLog(log, runId))
+    .sort((left, right) => toDate(right.timestamp, new Date().toISOString()).getTime() - toDate(left.timestamp, new Date().toISOString()).getTime());
+
   return {
-    ...listed,
-    logs: listed.logs.filter((log) => isDeliveryStateLog(log, runId)),
+    pagination: listed.pagination,
+    logs,
   };
 }
 

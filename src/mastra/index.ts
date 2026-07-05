@@ -1,9 +1,7 @@
 
 import { Mastra } from '@mastra/core/mastra';
-import { PinoLogger } from '@mastra/loggers';
+import { ConsoleLogger } from '@mastra/core/logger';
 import { LibSQLStore } from '@mastra/libsql';
-import { DuckDBStore } from "@mastra/duckdb";
-import { MastraCompositeStore } from '@mastra/core/storage';
 import { Observability, MastraStorageExporter, MastraPlatformExporter, SensitiveDataFilter } from '@mastra/observability';
 import { deliveryAgents, deliveryMemory } from './delivery-engine/agents';
 import { deliveryProcessors } from './delivery-engine/processors';
@@ -29,17 +27,11 @@ export const mastra = new Mastra({
   scorers: deliveryScorers,
   tools: deliveryStateTools,
   workspace: deliveryWorkspace,
-  storage: new MastraCompositeStore({
-    id: 'composite-storage',
-    default: new LibSQLStore({
-      id: "mastra-storage",
-      url: "file:./mastra.db",
-    }),
-    domains: {
-      observability: await new DuckDBStore().getStore('observability'),
-    }
+  storage: new LibSQLStore({
+    id: "mastra-storage",
+    url: "file:./mastra.db",
   }),
-  logger: new PinoLogger({
+  logger: new ConsoleLogger({
     name: 'Mastra',
     level: 'info',
   }),

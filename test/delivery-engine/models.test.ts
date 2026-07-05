@@ -9,7 +9,6 @@ import {
 test('delivery model uses ZAI coding plan with prompt-injected structured output', () => {
   assert.equal(deliveryModel, 'zai-coding-plan/glm-5.2');
   assert.deepEqual(deliveryStructuredOutputOptions, {
-    model: 'zai-coding-plan/glm-5.2',
     jsonPromptInjection: true,
   });
   assert.deepEqual(missingEnvVarsForDeliveryModels({}), ['ZHIPU_API_KEY']);

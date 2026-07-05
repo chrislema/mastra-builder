@@ -39,6 +39,7 @@ import {
 } from './scorers';
 import { safePersistDeliveryStateWithMastra } from './observability';
 import { deliveryStructuredOutputOptions } from './models';
+import { parseDeliveryStructuredOutput } from './structured-output';
 
 const workflowInputSchema = z.object({
   repoPath: z.string().describe('Absolute path to the target repo.'),
@@ -47,17 +48,6 @@ const workflowInputSchema = z.object({
   maxRetries: z.number().int().min(0).default(2),
   deployMode: z.enum(['mock', 'real']).default('mock'),
 });
-
-function parseDeliveryStructuredOutput<T>(schema: z.ZodType<T>, object: unknown, label: string): T {
-  const parsed = schema.safeParse(object);
-  if (parsed.success) return parsed.data;
-
-  const reason =
-    object === undefined
-      ? 'response.object was undefined; the model provider did not return a structured object'
-      : parsed.error.message;
-  throw new Error(`${label} returned invalid structured output: ${reason}`);
-}
 
 const taskSchema = z.object({
   id: z.string(),
@@ -558,7 +548,7 @@ const requiredAgent = (mastra: any, id: string) => {
   const agent = mastra?.getAgentById(id);
   if (!agent) throw new Error(`${id} agent is not registered`);
   return agent as {
-    generate: (message: string, options: Record<string, unknown>) => Promise<{ object?: unknown }>;
+    generate: (message: string, options: Record<string, unknown>) => Promise<{ object?: unknown; text?: string }>;
   };
 };
 
@@ -605,7 +595,7 @@ async function judgeDeliveryArtifact({
     },
   );
 
-  const judgeOutput = parseDeliveryStructuredOutput(judgeOutputSchema, response.object, `${subjectName} judge`);
+  const judgeOutput = parseDeliveryStructuredOutput(judgeOutputSchema, response, `${subjectName} judge`);
   const judgeOutputPath = `.delivery/artifacts/judgments/${slug}.judge.json`;
   writeDeliveryArtifact({
     repoPath,
@@ -791,7 +781,7 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
       },
     );
 
-    const output = parseDeliveryStructuredOutput(plannerOutputSchema, response.object, 'planner');
+    const output = parseDeliveryStructuredOutput(plannerOutputSchema, response, 'planner');
 
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
@@ -1080,7 +1070,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
       },
     );
 
-    const reviewReport = parseDeliveryStructuredOutput(reviewReportSchema, reviewResponse.object, 'architect review');
+    const reviewReport = parseDeliveryStructuredOutput(reviewReportSchema, reviewResponse, 'architect review');
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
       artifactPath: reviewPath,
@@ -1198,7 +1188,7 @@ ${JSON.stringify(reviewReport, null, 2)}`,
       },
     );
 
-    const revision = parseDeliveryStructuredOutput(plannerRevisionOutputSchema, revisionResponse.object, 'planner revision');
+    const revision = parseDeliveryStructuredOutput(plannerRevisionOutputSchema, revisionResponse, 'planner revision');
     const revisedTaskPlan = revision.taskPlan;
     const revisionPath = `.delivery/artifacts/task-plan.revision-${revisionNumber}.json`;
     writeDeliveryArtifact({
@@ -1535,7 +1525,7 @@ Use the workspace to make the smallest coherent code change. Stay inside the act
       },
     );
 
-    const { note } = parseDeliveryStructuredOutput(builderOutputSchema, buildResponse.object, `${role} build`);
+    const { note } = parseDeliveryStructuredOutput(builderOutputSchema, buildResponse, `${role} build`);
     const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
@@ -1910,7 +1900,7 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
       },
     );
 
-    const { gate } = parseDeliveryStructuredOutput(testerOutputSchema, gateResponse.object, 'tester release gate');
+    const { gate } = parseDeliveryStructuredOutput(testerOutputSchema, gateResponse, 'tester release gate');
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
       artifactPath: gatePath,
@@ -2181,7 +2171,7 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
       },
     );
 
-    const { report } = parseDeliveryStructuredOutput(deployerOutputSchema, deployResponse.object, 'deployer');
+    const { report } = parseDeliveryStructuredOutput(deployerOutputSchema, deployResponse, 'deployer');
     const reportPath = '.delivery/artifacts/deployment-report.json';
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
