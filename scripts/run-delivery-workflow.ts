@@ -3,6 +3,12 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { mastra } from '../src/mastra/index';
 import { markDeliveryWorkflowRunFailed, startDeliveryWorkflowRun } from '../src/mastra/delivery-engine/runner';
+import {
+  appendDeliveryEvent,
+  readDeliveryRun,
+  removeDeliveryBoundaryProjection,
+  writeDeliveryRunProjection,
+} from '../src/mastra/delivery-engine/state';
 
 function usage() {
   return `Usage:
@@ -46,6 +52,22 @@ function markLatestReportInterrupted(repoPath: string, message: string) {
     }
   } catch {
     // Best-effort only. The durable run state is marked separately.
+  }
+}
+
+function markProjectedDeliveryInterrupted(repoPath: string, message: string) {
+  try {
+    const resolved = resolve(repoPath);
+    const run = readDeliveryRun(resolved);
+    if (run.status !== 'running') return;
+    run.status = 'failed';
+    run.stage = 'done';
+    run.finished_at = new Date().toISOString();
+    writeDeliveryRunProjection(resolved, run);
+    appendDeliveryEvent(resolved, { type: 'run_finish', status: 'failed', reason: message });
+    removeDeliveryBoundaryProjection(resolved);
+  } catch {
+    // Best-effort only. The normal failure path may not have initialized state yet.
   }
 }
 
@@ -104,10 +126,11 @@ try {
     shuttingDown = true;
     const message = `Delivery run interrupted by ${signal}.`;
     console.error(message);
+    markProjectedDeliveryInterrupted(resolvedRepoPath, message);
+    markLatestReportInterrupted(resolvedRepoPath, message);
     void markDeliveryWorkflowRunFailed(mastra, resolvedRepoPath)
       .catch(() => undefined)
       .finally(async () => {
-        markLatestReportInterrupted(resolvedRepoPath, message);
         await mastra.shutdown().catch(() => undefined);
         process.exit(signal === 'SIGINT' ? 130 : 143);
       });
