@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
@@ -657,6 +657,60 @@ export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
     .map(concreteOwnedSurfacePath)
     .filter((path): path is string => Boolean(path))
     .filter((path) => !existsSync(join(resolve(repoPath), path)));
+}
+
+function compileSafeStubForSurface(path: string) {
+  if (/\.(?:ts|mts|cts)$/.test(path)) {
+    return [
+      '// Delivery preflight stub. The implementation agent should replace this with task code.',
+      'export {};',
+      '',
+    ].join('\n');
+  }
+  if (/\.(?:js|mjs|cjs)$/.test(path)) {
+    return '// Delivery preflight stub. The implementation agent should replace this with task code.\n';
+  }
+  if (/\.json$/.test(path)) return '{}\n';
+  if (/\.(?:sql)$/.test(path)) return '-- Delivery preflight stub. The implementation agent should replace this with task SQL.\n';
+  if (/\.(?:toml|ya?ml)$/.test(path)) return '# Delivery preflight stub. The implementation agent should replace this with task config.\n';
+  if (/\.css$/.test(path)) return '/* Delivery preflight stub. The implementation agent should replace this with task styles. */\n';
+  if (/\.html?$/.test(path)) return '<!doctype html>\n';
+  return '';
+}
+
+export async function createMissingOwnedSurfaceStubs({
+  repoPath,
+  task,
+  stage,
+  mastra,
+}: {
+  repoPath: string;
+  task: Task;
+  stage: string;
+  mastra?: any;
+}) {
+  const created: string[] = [];
+  for (const path of missingOwnedSurfacePaths(repoPath, task)) {
+    const fullPath = join(resolve(repoPath), path);
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, compileSafeStubForSurface(path));
+    created.push(path);
+  }
+
+  if (created.length) {
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'preflight_stub_created',
+        stage,
+        task: task.id,
+        paths: created,
+      },
+    }).catch(() => undefined);
+  }
+
+  return created;
 }
 
 export function taskBoundarySurfaces(repoPath: string, task: Task) {
@@ -2576,6 +2630,29 @@ const executeBuildTaskAttemptStep = createStep({
     const attemptNumber = attempt + 1;
     const stage = `build:${task.id}`;
     const usableSurfaces = taskBoundarySurfaces(inputData.repoPath, task).filter((surface) => !/^unknown\b/i.test(surface));
+    await updateDeliveryTaskState({
+      repoPath: inputData.repoPath,
+      id: task.id,
+      status: 'building',
+      owner: role,
+      note: attempt > 0 ? `retry ${attemptNumber}` : undefined,
+      bumpRetries: attempt > 0,
+      mastra,
+    });
+    await startDeliveryStageState({
+      repoPath: inputData.repoPath,
+      stage,
+      role,
+      surfaces: usableSurfaces.length ? usableSurfaces : undefined,
+      mastra,
+    });
+
+    const preflightCreatedSurfaces = await createMissingOwnedSurfaceStubs({
+      repoPath: inputData.repoPath,
+      task,
+      stage,
+      mastra,
+    });
     const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
     const verificationRecovery = remediationHasVerificationFailure(inputData.remediation);
     const retryMode = implementationRetryMode({ remediation: inputData.remediation, missingSurfaces });
@@ -2602,27 +2679,12 @@ const executeBuildTaskAttemptStep = createStep({
       remediation: inputData.remediation,
       failure_class: failureClass,
       missing_owned_surfaces: missingSurfaces,
+      preflight_created_surfaces: preflightCreatedSurfaces,
       boundary_surfaces: usableSurfaces,
       package_manifest_owned: packageManifestOwned,
       existing_package_dependencies: existingPackageDependencies,
       focused_repair_file_context: focusedRepairFileContext,
     };
-    await updateDeliveryTaskState({
-      repoPath: inputData.repoPath,
-      id: task.id,
-      status: 'building',
-      owner: role,
-      note: attempt > 0 ? `retry ${attemptNumber}` : undefined,
-      bumpRetries: attempt > 0,
-      mastra,
-    });
-    await startDeliveryStageState({
-      repoPath: inputData.repoPath,
-      stage,
-      role,
-      surfaces: usableSurfaces.length ? usableSurfaces : undefined,
-      mastra,
-    });
 
     const buildPrompt = `Implement build task ${task.id}.
 
@@ -2634,7 +2696,8 @@ ${JSON.stringify(taskPacket, null, 2)}
 Execution rules:
 - Make the smallest coherent code change for this task.
 - Touch only the boundary surfaces in the task packet unless a dependency blocks the task.
-- If an owned surface is missing, create it.
+- If preflight_created_surfaces is non-empty, replace those stubs with the real implementation for this task.
+- If an owned surface is still missing, create it.
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.

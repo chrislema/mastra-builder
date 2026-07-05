@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  createMissingOwnedSurfaceStubs,
   implementationDeterministicRemediation,
   implementationFailureClass,
   implementationRetryMode,
@@ -95,6 +96,23 @@ test('owned surface presence normalizes annotated paths and ignores globs', () =
   ]).tasks;
 
   assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), ['src/ai/client.ts']);
+});
+
+test('missing owned surface preflight creates compile-safe stubs', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-preflight-stubs-'));
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/routes/runs.ts', 'src/storage/runs.ts'],
+    },
+  ]).tasks;
+
+  const created = await createMissingOwnedSurfaceStubs({ repoPath, task, stage: 'build:T1' });
+
+  assert.deepEqual(created, ['src/routes/runs.ts', 'src/storage/runs.ts']);
+  assert.equal(existsSync(join(repoPath, 'src/routes/runs.ts')), true);
+  assert.match(readFileSync(join(repoPath, 'src/routes/runs.ts'), 'utf8'), /export \{\};/);
+  assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), []);
 });
 
 test('task boundaries include existing sibling TypeScript barrel files', () => {
