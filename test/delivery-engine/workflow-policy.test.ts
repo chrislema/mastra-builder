@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
+  missingOwnedSurfacePaths,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
   verificationWithAcceptanceGaps,
@@ -43,9 +47,12 @@ test('planner questions suspend when no executable root task exists', () => {
 });
 
 test('implementation notes list acceptance criteria that workflow verification did not run', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-verification-gaps-'));
+  writeFileSync(join(repoPath, 'src-existing.ts'), 'export {};\n');
   const [task] = taskPlan([
     {
       depends_on: [],
+      owned_surfaces: ['src-existing.ts', 'src-missing.ts'],
       acceptance_criteria: [
         'TypeScript typecheck passes.',
         'wrangler dev starts the Worker locally without errors.',
@@ -55,6 +62,7 @@ test('implementation notes list acceptance criteria that workflow verification d
   ]).tasks;
 
   const verification = verificationWithAcceptanceGaps({
+    repoPath,
     task,
     verification: {
       performed: ['npm run typecheck passed'],
@@ -64,9 +72,23 @@ test('implementation notes list acceptance criteria that workflow verification d
 
   assert.deepEqual(verification.performed, ['npm run typecheck passed']);
   assert.deepEqual(verification.missing, [
+    'Owned surface missing after implementation: src-missing.ts',
     'Acceptance criterion not verified by automated checks: wrangler dev starts the Worker locally without errors.',
     'Acceptance criterion not verified by automated checks: Worker entry point returns HTTP 200 on GET /health.',
   ]);
+});
+
+test('owned surface presence normalizes annotated paths and ignores globs', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-owned-surfaces-'));
+  writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo"\n');
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['wrangler.toml (triggers section)', 'src/**', 'src/ai/client.ts'],
+    },
+  ]).tasks;
+
+  assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), ['src/ai/client.ts']);
 });
 
 const implementationNote = {
@@ -118,6 +140,25 @@ test('actionable implementation remediation still blocks the fast path', () => {
         remediation: ['DIMENSION implementation_note_quality scored 2/5. Add missing checks.'],
       },
       deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
+      note: implementationNote,
+    }),
+    false,
+  );
+});
+
+test('missing owned surfaces block the non-actionable implementation fast path', () => {
+  assert.equal(
+    shouldProceedAfterNonActionableImplementationJudgment({
+      judgment: implementationJudgment,
+      deterministicResults: [
+        { id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' },
+        {
+          id: 'owned_surfaces_present',
+          check: 'owned_surfaces_present',
+          passed: false,
+          reason: 'missing owned surfaces: src/ai/client.ts',
+        },
+      ],
       note: implementationNote,
     }),
     false,

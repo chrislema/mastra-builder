@@ -86,6 +86,15 @@ const writeToolNames = new Set<string>([
   WORKSPACE_TOOLS.FILESYSTEM.DELETE,
   WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
 ]);
+const dependencyReadToolNames = new Set<string>([
+  WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES,
+  WORKSPACE_TOOLS.FILESYSTEM.READ_FILE,
+]);
+
+function isDependencyPath(path: string) {
+  const clean = path.replace(/^\.\//, '');
+  return clean === 'node_modules' || clean.startsWith('node_modules/');
+}
 
 export const deliveryWorkspace = new Workspace({
   id: 'delivery-workspace',
@@ -129,6 +138,20 @@ export const deliveryWorkspace = new Workspace({
               output: {
                 blocked: true,
                 reason,
+              },
+            };
+          }
+        }
+
+        if (dependencyReadToolNames.has(workspaceToolName)) {
+          const boundary = readDeliveryBoundary(repoPath);
+          const dependencyPath = boundary ? relativePaths.find(isDependencyPath) : undefined;
+          if (dependencyPath) {
+            return {
+              proceed: false,
+              output: {
+                blocked: true,
+                reason: `Reading ${dependencyPath} is blocked during delivery stages; rely on project types and workflow verification instead.`,
               },
             };
           }

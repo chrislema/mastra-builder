@@ -137,7 +137,7 @@ const implementationNoteSchema = z.object({
   artifact_type: z.literal('implementation-note'),
   task: z.string(),
   changes: z.array(z.string()).min(1),
-  files_touched: z.array(z.string()).min(1),
+  files_touched: z.array(z.string()).default([]),
   assumptions: z.array(z.string()).default([]),
   verification: z.object({
     performed: z.array(z.string()).default([]),
@@ -639,8 +639,22 @@ async function writeStageTraceArtifact({
 function existingOwnedFiles(repoPath: string, task: Task) {
   return effectiveOwnedSurfaces(task).filter((surface) => {
     if (surface.includes('*')) return false;
-    return existsSync(join(resolve(repoPath), surface));
+    const path = concreteOwnedSurfacePath(surface);
+    return path ? existsSync(join(resolve(repoPath), path)) : false;
   });
+}
+
+function concreteOwnedSurfacePath(surface: string) {
+  const trimmed = surface.trim();
+  if (!trimmed || trimmed.includes('*') || /^unknown\b/i.test(trimmed)) return undefined;
+  return trimmed.split(/\s+\(/)[0]?.trim() || trimmed;
+}
+
+export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
+  return effectiveOwnedSurfaces(task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .filter((path) => !existsSync(join(resolve(repoPath), path)));
 }
 
 function effectiveOwnedSurfaces(task: Task) {
@@ -817,13 +831,20 @@ function acceptanceCriterionCovered(criterion: string, performed: string[]) {
 }
 
 export function verificationWithAcceptanceGaps({
+  repoPath,
   task,
   verification,
 }: {
+  repoPath?: string;
   task: Task;
   verification: { performed: string[]; missing: string[] };
 }) {
   const missing = new Set(verification.missing);
+  if (repoPath) {
+    for (const path of missingOwnedSurfacePaths(repoPath, task)) {
+      missing.add(`Owned surface missing after implementation: ${path}`);
+    }
+  }
   for (const criterion of task.acceptance_criteria) {
     if (!acceptanceCriterionCovered(criterion, verification.performed)) {
       missing.add(`Acceptance criterion not verified by automated checks: ${criterion}`);
@@ -912,7 +933,7 @@ function synthesizeImplementationNote({
 }): ImplementationNote {
   const filesTouched = implementationFilesTouched({ repoPath, stage, task, events });
   const summary = responseText(buildResponse);
-  const honestVerification = verificationWithAcceptanceGaps({ task, verification });
+  const honestVerification = verificationWithAcceptanceGaps({ repoPath, task, verification });
 
   return {
     artifact_type: 'implementation-note',
@@ -921,7 +942,7 @@ function synthesizeImplementationNote({
       `Implemented ${task.id}: ${task.deliverable}`,
       ...(summary ? [`Engineer response: ${compactDiagnostic(summary, 500)}`] : []),
     ],
-    files_touched: filesTouched.length ? filesTouched : task.owned_surfaces,
+    files_touched: filesTouched,
     assumptions: taskPlan.open_decisions,
     verification: honestVerification,
     risks: taskPlan.risks,
@@ -932,16 +953,19 @@ function implementationDeterministicResults({
   repoPath,
   stage,
   role,
+  task,
   note,
   events,
 }: {
   repoPath: string;
   stage: string;
   role: 'engineer' | 'designer';
+  task: Task;
   note: ImplementationNote;
   events: DeliveryEvent[];
 }): DeterministicGateResult[] {
   const files = repoFileContents(repoPath, note.files_touched);
+  const missingSurfaces = missingOwnedSurfacePaths(repoPath, task);
   const noteOwnership = runDeterministicCheck({
     name: 'file_ownership',
     role,
@@ -963,6 +987,12 @@ function implementationDeterministicResults({
 
   return [
     { id: 'file_ownership', check: 'write_paths_in_boundary', ...ownership },
+    {
+      id: 'owned_surfaces_present',
+      check: 'owned_surfaces_present',
+      passed: missingSurfaces.length === 0,
+      reason: missingSurfaces.length ? `missing owned surfaces: ${missingSurfaces.join(', ')}` : 'ok',
+    },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
     { id: 'crypto_compliance', check: 'no_bcrypt_weak_hash', ...crypto },
   ];
@@ -2306,6 +2336,7 @@ Execution rules:
       repoPath: inputData.repoPath,
       stage,
       role,
+      task,
       note,
       events: deliveryEvents,
     });

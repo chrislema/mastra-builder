@@ -15,6 +15,14 @@
       "check": { "deterministic": "file_ownership" }
     },
     {
+      "id": "owned_surfaces_present",
+      "description": "Every concrete owned surface required by the task exists after the implementation attempt. Typecheck passing is not enough when a newly planned module is never created.",
+      "severity": "critical",
+      "on_fail": "cap",
+      "cap_value": 0.0,
+      "check": { "deterministic": "owned_surfaces_present" }
+    },
+    {
       "id": "module_loads",
       "description": "The code loads in an isolate and answers one request without throwing at startup. Evidence over narration, minimum bar.",
       "severity": "critical",
