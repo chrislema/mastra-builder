@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
@@ -655,6 +655,52 @@ export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
     .map(concreteOwnedSurfacePath)
     .filter((path): path is string => Boolean(path))
     .filter((path) => !existsSync(join(resolve(repoPath), path)));
+}
+
+export function reusableImplementationArtifactForTask(repoPath: string, task: Task) {
+  if (process.env.DELIVERY_REUSE_TASK_ARTIFACTS === '0') return undefined;
+  if (missingOwnedSurfacePaths(repoPath, task).length) return undefined;
+
+  const judgmentDir = join(resolve(repoPath), '.delivery/artifacts/judgments');
+  if (!existsSync(judgmentDir)) return undefined;
+
+  const prefix = `implementation-${task.id}-a`;
+  const candidates = readdirSync(judgmentDir)
+    .map((file) => {
+      const match = file.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)\\.judgment\\.json$`));
+      return match ? { file, attempt: Number(match[1]) } : undefined;
+    })
+    .filter((candidate): candidate is { file: string; attempt: number } => Boolean(candidate))
+    .sort((a, b) => b.attempt - a.attempt);
+
+  for (const candidate of candidates) {
+    const judgmentPath = `.delivery/artifacts/judgments/${candidate.file}`;
+    const judgment = readJsonArtifact(repoPath, judgmentPath) as Partial<AggregatedJudgment> | undefined;
+    if (!judgment?.passed || typeof judgment.overall !== 'number') continue;
+
+    const notePath = `.delivery/artifacts/note-${task.id}.a${candidate.attempt}.json`;
+    const note = implementationNoteSchema.safeParse(readJsonArtifact(repoPath, notePath));
+    if (!note.success || note.data.task !== task.id) continue;
+
+    const ownership = runDeterministicCheck({
+      name: 'file_ownership',
+      role: buildRoleForTask(task),
+      paths: note.data.files_touched,
+    });
+    if (!ownership.passed) continue;
+
+    const judgeOutputPath = judgmentPath.replace(/\.judgment\.json$/, '.judge.json');
+    return {
+      note: note.data,
+      notePath,
+      judgment,
+      judgmentPath,
+      judgeOutputPath: existsSync(join(resolve(repoPath), judgeOutputPath)) ? judgeOutputPath : undefined,
+      attempt: candidate.attempt,
+    };
+  }
+
+  return undefined;
 }
 
 function effectiveOwnedSurfaces(task: Task) {
@@ -2200,6 +2246,90 @@ const prepareBuildTaskAttemptLoopStep = createStep({
         nextSteps: blockedBy.map((dependency) => `${task.id} blocked by ${dependency}`),
         taskId: task.id,
         taskStatus: 'blocked' as const,
+        attempt: 0,
+        terminal: true,
+        remediation: [],
+      };
+    }
+
+    const reusable = reusableImplementationArtifactForTask(inputData.repoPath, task);
+    if (reusable) {
+      const judgmentRef: JudgmentRef = {
+        subject: reusable.notePath,
+        rubric: reusable.judgment.rubric ?? 'implementation',
+        path: reusable.judgmentPath,
+        overall: reusable.judgment.overall ?? 0,
+        passed: true,
+      };
+      const reusedArtifacts = [
+        reusable.notePath,
+        reusable.judgmentPath,
+        ...(reusable.judgeOutputPath ? [reusable.judgeOutputPath] : []),
+      ];
+      artifacts.push(...reusedArtifacts);
+      checks.push({
+        check: `reused_implementation_artifact:${task.id}`,
+        passed: true,
+        reason: `Reused passing implementation judgment ${reusable.judgmentPath} after owned surfaces were present.`,
+      });
+      judgments.push(judgmentRef);
+
+      await recordDeliveryArtifactState({
+        repoPath: inputData.repoPath,
+        type: `note-${task.id}`,
+        path: reusable.notePath,
+        mastra,
+      });
+      await recordDeliveryJudgmentState({
+        repoPath: inputData.repoPath,
+        subject: reusable.notePath,
+        rubric: judgmentRef.rubric,
+        path: judgmentRef.path,
+        overall: judgmentRef.overall,
+        passed: judgmentRef.passed,
+        mastra,
+      });
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'implementation_artifact_reused',
+          stage: `build:${task.id}`,
+          ok: true,
+          task: task.id,
+          attempt: reusable.attempt,
+          notePath: reusable.notePath,
+          judgmentPath: reusable.judgmentPath,
+        },
+      });
+      await updateDeliveryTaskState({
+        repoPath: inputData.repoPath,
+        id: task.id,
+        status: 'complete',
+        owner: task.owner,
+        note: `reused passing judgment ${reusable.judgment.overall}`,
+        mastra,
+      });
+
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan,
+        releaseGate: inputData.releaseGate,
+        status: 'built' as const,
+        runId: inputData.runId,
+        summary: `Build task ${task.id} reused a prior passing implementation artifact.`,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: ['Continue the delivery build loop.'],
+        task,
+        taskIndex: inputData.taskIndex,
+        skipped: false,
+        taskId: task.id,
+        taskStatus: 'complete' as const,
         attempt: 0,
         terminal: true,
         remediation: [],

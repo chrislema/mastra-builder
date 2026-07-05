@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
   implementationDeterministicRemediation,
   missingOwnedSurfacePaths,
+  reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
   verificationWithAcceptanceGaps,
@@ -178,4 +179,79 @@ test('deterministic implementation blockers produce retry remediation before mod
       'DETERMINISTIC verification_passed failed: npm run typecheck failed: TS1128',
     ],
   );
+});
+
+test('reusable implementation artifacts require passing judgment and present owned surfaces', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-reuse-artifact-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, '.delivery/artifacts/judgments'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export {};\n');
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/note-T1.a1.json'),
+    JSON.stringify({
+      ...implementationNote,
+      task: 'T1',
+      files_touched: ['src/index.ts'],
+    }),
+  );
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/judgments/implementation-T1-a1.judgment.json'),
+    JSON.stringify({
+      rubric: 'implementation',
+      overall: 0.91,
+      passed: true,
+      gates_failed: [],
+      dimensions_missing: [],
+    }),
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/index.ts'] }]).tasks;
+
+  assert.deepEqual(reusableImplementationArtifactForTask(repoPath, task), {
+    note: {
+      ...implementationNote,
+      task: 'T1',
+      files_touched: ['src/index.ts'],
+    },
+    notePath: '.delivery/artifacts/note-T1.a1.json',
+    judgment: {
+      rubric: 'implementation',
+      overall: 0.91,
+      passed: true,
+      gates_failed: [],
+      dimensions_missing: [],
+    },
+    judgmentPath: '.delivery/artifacts/judgments/implementation-T1-a1.judgment.json',
+    judgeOutputPath: undefined,
+    attempt: 1,
+  });
+});
+
+test('reusable implementation artifacts reject notes outside role ownership', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-reuse-boundary-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, 'public'), { recursive: true });
+  mkdirSync(join(repoPath, '.delivery/artifacts/judgments'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export {};\n');
+  writeFileSync(join(repoPath, 'public/index.html'), '<!doctype html>\n');
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/note-T1.a1.json'),
+    JSON.stringify({
+      ...implementationNote,
+      task: 'T1',
+      files_touched: ['public/index.html'],
+    }),
+  );
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/judgments/implementation-T1-a1.judgment.json'),
+    JSON.stringify({
+      rubric: 'implementation',
+      overall: 0.91,
+      passed: true,
+      gates_failed: [],
+      dimensions_missing: [],
+    }),
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/index.ts'] }]).tasks;
+
+  assert.equal(reusableImplementationArtifactForTask(repoPath, task), undefined);
 });
