@@ -687,39 +687,6 @@ const implementationWorkspaceTools = [
   WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
 ] as string[];
 
-const toolNameFromCall = (toolCall: unknown) => {
-  if (!toolCall || typeof toolCall !== 'object') return undefined;
-  const record = toolCall as Record<string, any>;
-  return record.payload?.toolName ?? record.toolName ?? record.name;
-};
-
-const implementationIterationFeedback = ({ iteration, toolCalls }: { iteration: number; toolCalls?: unknown[] }) => {
-  const toolNames = (toolCalls ?? []).map(toolNameFromCall).filter((name): name is string => typeof name === 'string');
-  const wroteFiles = toolNames.some((name) =>
-    [
-      WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
-      WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
-      WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
-    ].includes(name),
-  );
-
-  if (iteration >= 2 && toolNames.length && !wroteFiles) {
-    return {
-      feedback:
-        'You have enough context for this scoped task. Create or edit the owned files now, then run the smallest relevant verification command.',
-    };
-  }
-
-  if (iteration >= 6) {
-    return {
-      feedback:
-        'Finish the task now: run one final verification if needed, then return the required implementation-note JSON.',
-    };
-  }
-
-  return undefined;
-};
-
 const envTimeoutMs = (name: string, fallback: number) => {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -1899,7 +1866,6 @@ Execution rules:
             activeTools: implementationWorkspaceTools,
             maxSteps: 8,
             toolCallConcurrency: 1,
-            onIterationComplete: implementationIterationFeedback,
             requestContext: createDeliveryRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: builderOutputSchema,
