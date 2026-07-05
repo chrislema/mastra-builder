@@ -612,6 +612,52 @@ function buildVerificationScript(repoPath: string) {
   return undefined;
 }
 
+async function ensureNodeDependencies({
+  repoPath,
+  mastra,
+  stage,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+}) {
+  if (!existsSync(join(resolve(repoPath), 'package.json'))) return;
+  if (existsSync(join(resolve(repoPath), 'node_modules'))) return;
+
+  const command = 'npm install';
+  try {
+    const result = await execFileAsync('npm', ['install'], {
+      cwd: resolve(repoPath),
+      timeout: 180_000,
+      maxBuffer: 1_000_000,
+      env: process.env,
+    });
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'run_code',
+        stage,
+        command,
+        ok: true,
+        output_summary: compactDiagnostic(`${result.stdout}\n${result.stderr}`, 500),
+      },
+    });
+  } catch (error) {
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'run_code',
+        stage,
+        command,
+        ok: false,
+        error: commandFailureSummary(error, 1000),
+      },
+    });
+  }
+}
+
 async function runBuildVerification({
   repoPath,
   mastra,
@@ -628,6 +674,8 @@ async function runBuildVerification({
       missing: ['No package verification script found for this build task.'],
     };
   }
+
+  await ensureNodeDependencies({ repoPath, mastra, stage });
 
   const command = `npm run ${script}`;
   try {
@@ -838,8 +886,6 @@ const implementationWorkspaceTools = [
   WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
   WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
   WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
-  WORKSPACE_TOOLS.FILESYSTEM.GREP,
-  WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
 ] as string[];
 
 const envTimeoutMs = (name: string, fallback: number) => {
@@ -2014,8 +2060,9 @@ Execution rules:
 - Touch only the owned surfaces in the task packet unless a dependency blocks the task.
 - If an owned surface is missing, create it.
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
-- Run the smallest relevant verification command before returning. For scaffolding, prefer a package/build/typecheck or wrangler dry-run command when available.
-- Return an implementation note with every changed file, verification evidence, and visible verification gaps.`,
+- Do not run shell commands; the workflow runs verification after your edits.
+- If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
+- Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`,
           {
             abortSignal,
             activeTools: implementationWorkspaceTools,
