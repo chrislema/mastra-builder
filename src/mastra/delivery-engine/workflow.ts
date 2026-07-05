@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
@@ -549,6 +549,7 @@ const implementationWriteTools = new Set<string>([
   'Write',
   'Edit',
   'MultiEdit',
+  'auto_repair',
   WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
   WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
   WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT,
@@ -662,10 +663,12 @@ async function runBuildVerification({
   repoPath,
   mastra,
   stage,
+  allowRepair = true,
 }: {
   repoPath: string;
   mastra: any;
   stage: string;
+  allowRepair?: boolean;
 }) {
   const script = buildVerificationScript(repoPath);
   if (!script) {
@@ -701,6 +704,7 @@ async function runBuildVerification({
       missing: [] as string[],
     };
   } catch (error) {
+    const failure = commandFailureSummary(error, 1000);
     await appendDeliveryEventState({
       repoPath,
       mastra,
@@ -709,14 +713,59 @@ async function runBuildVerification({
         stage,
         command,
         ok: false,
-        error: commandFailureSummary(error, 1000),
+        error: failure,
       },
     });
+
+    if (allowRepair && (await applyBuildVerificationRepair({ repoPath, mastra, stage, failure }))) {
+      return runBuildVerification({ repoPath, mastra, stage, allowRepair: false });
+    }
+
     return {
       performed: [] as string[],
       missing: [`${command} failed: ${commandFailureSummary(error, 600)}`],
     };
   }
+}
+
+async function applyBuildVerificationRepair({
+  repoPath,
+  mastra,
+  stage,
+  failure,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+  failure: string;
+}) {
+  if (!/Cannot find name 'WorkflowEvent'/.test(failure)) return false;
+
+  const path = 'src/workflows/weekly.ts';
+  const fullPath = join(resolve(repoPath), path);
+  if (!existsSync(fullPath)) return false;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const next = source.replace(
+    "import { WorkflowEntrypoint } from 'cloudflare:workers';",
+    "import { WorkflowEntrypoint, type WorkflowEvent } from 'cloudflare:workers';",
+  );
+  if (next === source) return false;
+
+  writeFileSync(fullPath, next);
+  await appendDeliveryEventState({
+    repoPath,
+    mastra,
+    event: {
+      type: 'tool_use',
+      tool: 'auto_repair',
+      ok: true,
+      stage,
+      paths: [path],
+      output_summary: 'Imported WorkflowEvent from cloudflare:workers after typecheck failure.',
+    },
+  });
+  return true;
 }
 
 function commandFailureSummary(error: unknown, limit = 1000) {
