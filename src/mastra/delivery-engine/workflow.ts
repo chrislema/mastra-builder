@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
@@ -22,6 +24,7 @@ import {
   noBcryptWeakHash,
   planSchemaComplete,
   runDeterministicCheck,
+  stageSlice,
   type DeliveryEvent,
 } from './checks';
 import { createDeliveryRequestContext } from './context';
@@ -42,6 +45,8 @@ import {
 import { safePersistDeliveryStateWithMastra } from './observability';
 import { deliveryStructuredOutputOptions, deliveryToolStructuredOutputOptions } from './models';
 import { parseDeliveryStructuredOutput } from './structured-output';
+
+const execFileAsync = promisify(execFile);
 
 const workflowInputSchema = z.object({
   repoPath: z.string().describe('Absolute path to the target repo.'),
@@ -232,33 +237,6 @@ function readCachedPlannerOutput({
   if (cache.success && cache.data.sourceFingerprint !== sourceFingerprint) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
-}
-
-const builderOutputSchema = z.object({
-  note: implementationNoteSchema,
-});
-
-function parseBuilderResponse(response: unknown, label: string) {
-  try {
-    return {
-      output: parseDeliveryStructuredOutput(builderOutputSchema, response, label),
-      repairedFromBareNote: false,
-    };
-  } catch (error) {
-    const note = parseDeliveryStructuredOutput(
-      z.union([implementationNoteSchema, z.array(implementationNoteSchema).min(1)]),
-      response,
-      `${label} note`,
-    );
-
-    return {
-      output: {
-        note: Array.isArray(note) ? note[0] : note,
-      },
-      repairedFromBareNote: true,
-      repairReason: compactDiagnostic(error),
-    };
-  }
 }
 
 const testerOutputSchema = z.object({
@@ -565,6 +543,155 @@ function repoFileContents(repoPath: string, paths: string[]) {
       };
     })
     .filter((file): file is { path: string; content: string } => Boolean(file));
+}
+
+const implementationWriteTools = new Set<string>([
+  'Write',
+  'Edit',
+  'MultiEdit',
+  WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT,
+]);
+
+function responseText(response: unknown) {
+  if (!response || typeof response !== 'object') return undefined;
+  const text = (response as { text?: unknown }).text;
+  return typeof text === 'string' && text.trim() ? text.trim() : undefined;
+}
+
+function existingOwnedFiles(repoPath: string, task: Task) {
+  return task.owned_surfaces.filter((surface) => {
+    if (surface.includes('*')) return false;
+    return existsSync(join(resolve(repoPath), surface));
+  });
+}
+
+function implementationFilesTouched({
+  repoPath,
+  stage,
+  task,
+  events,
+}: {
+  repoPath: string;
+  stage: string;
+  task: Task;
+  events: DeliveryEvent[];
+}) {
+  const written = stageSlice(events, stage)
+    .filter((event) => implementationWriteTools.has(String(event.tool)))
+    .flatMap((event) => event.paths ?? [])
+    .filter((path) => path && !path.startsWith('.delivery/'));
+
+  return Array.from(new Set([...written, ...existingOwnedFiles(repoPath, task)]));
+}
+
+function packageScripts(repoPath: string) {
+  const parsed = readJsonArtifact(repoPath, 'package.json');
+  if (!parsed || typeof parsed !== 'object') return {};
+  const scripts = (parsed as { scripts?: unknown }).scripts;
+  return scripts && typeof scripts === 'object' ? (scripts as Record<string, unknown>) : {};
+}
+
+function buildVerificationScript(repoPath: string) {
+  const scripts = packageScripts(repoPath);
+  for (const script of ['typecheck', 'test', 'build']) {
+    if (typeof scripts[script] === 'string') return script;
+  }
+  return undefined;
+}
+
+async function runBuildVerification({
+  repoPath,
+  mastra,
+  stage,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+}) {
+  const script = buildVerificationScript(repoPath);
+  if (!script) {
+    return {
+      performed: [] as string[],
+      missing: ['No package verification script found for this build task.'],
+    };
+  }
+
+  const command = `npm run ${script}`;
+  try {
+    const result = await execFileAsync('npm', ['run', script], {
+      cwd: resolve(repoPath),
+      timeout: 120_000,
+      maxBuffer: 1_000_000,
+      env: process.env,
+    });
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'run_code',
+        stage,
+        command,
+        ok: true,
+        output_summary: compactDiagnostic(`${result.stdout}\n${result.stderr}`, 500),
+      },
+    });
+    return {
+      performed: [`${command} passed`],
+      missing: [] as string[],
+    };
+  } catch (error) {
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'run_code',
+        stage,
+        command,
+        ok: false,
+        error: compactDiagnostic(error, 500),
+      },
+    });
+    return {
+      performed: [] as string[],
+      missing: [`${command} failed: ${compactDiagnostic(error, 300)}`],
+    };
+  }
+}
+
+function synthesizeImplementationNote({
+  repoPath,
+  stage,
+  task,
+  taskPlan,
+  events,
+  buildResponse,
+  verification,
+}: {
+  repoPath: string;
+  stage: string;
+  task: Task;
+  taskPlan: TaskPlan;
+  events: DeliveryEvent[];
+  buildResponse: unknown;
+  verification: { performed: string[]; missing: string[] };
+}): ImplementationNote {
+  const filesTouched = implementationFilesTouched({ repoPath, stage, task, events });
+  const summary = responseText(buildResponse);
+
+  return {
+    artifact_type: 'implementation-note',
+    task: task.id,
+    changes: [
+      `Implemented ${task.id}: ${task.deliverable}`,
+      ...(summary ? [`Engineer response: ${compactDiagnostic(summary, 500)}`] : []),
+    ],
+    files_touched: filesTouched.length ? filesTouched : task.owned_surfaces,
+    assumptions: taskPlan.open_decisions,
+    verification,
+    risks: taskPlan.risks,
+  };
 }
 
 function implementationDeterministicResults({
@@ -1867,29 +1994,21 @@ Execution rules:
             maxSteps: 8,
             toolCallConcurrency: 1,
             requestContext: createDeliveryRequestContext(inputData.repoPath),
-            structuredOutput: {
-              schema: builderOutputSchema,
-              ...deliveryToolStructuredOutputOptions,
-              instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
-            },
           },
         ),
     });
 
-    const parsedBuild = parseBuilderResponse(buildResponse, `${role} build`);
-    if (parsedBuild.repairedFromBareNote) {
-      await appendDeliveryEventState({
-        repoPath: inputData.repoPath,
-        mastra,
-        event: {
-          type: 'structured_output_repair',
-          stage,
-          repair: 'bare_implementation_note',
-          reason: parsedBuild.repairReason,
-        },
-      });
-    }
-    const { note } = parsedBuild.output;
+    const verification = await runBuildVerification({ repoPath: inputData.repoPath, mastra, stage });
+    const buildEvents = await readDeliveryEventsState({ repoPath: inputData.repoPath, mastra });
+    const note = synthesizeImplementationNote({
+      repoPath: inputData.repoPath,
+      stage,
+      task,
+      taskPlan,
+      events: buildEvents,
+      buildResponse,
+      verification,
+    });
     const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
