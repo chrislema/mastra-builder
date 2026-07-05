@@ -668,6 +668,10 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
     if (!directory) continue;
     const barrel = `${directory}/index.ts`;
     if (existsSync(join(resolve(repoPath), barrel))) surfaces.add(barrel);
+
+    if (directory === 'src/routes' && existsSync(join(resolve(repoPath), 'src/index.ts'))) {
+      surfaces.add('src/index.ts');
+    }
   }
 
   return [...surfaces];

@@ -105,6 +105,20 @@ test('task boundaries include existing sibling TypeScript barrel files', () => {
   assert.deepEqual(taskBoundarySurfaces(repoPath, task), ['src/ai/client.ts', 'src/ai/types.ts', 'src/ai/index.ts']);
 });
 
+test('route task boundaries include the existing Worker entry integration surface', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-route-boundary-surfaces-'));
+  mkdirSync(join(repoPath, 'src/routes'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default {};\n');
+  writeFileSync(join(repoPath, 'src/routes/index.ts'), 'export {};\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/routes/profiles.ts'] }]).tasks;
+
+  assert.deepEqual(taskBoundarySurfaces(repoPath, task), [
+    'src/routes/profiles.ts',
+    'src/routes/index.ts',
+    'src/index.ts',
+  ]);
+});
+
 const implementationNote = {
   artifact_type: 'implementation-note' as const,
   task: 'T1',
