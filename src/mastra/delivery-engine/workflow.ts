@@ -18,7 +18,7 @@ import {
   startDeliveryStageState,
   updateDeliveryTaskState,
 } from './state-service';
-import { writeDeliveryArtifact, type DeliveryRunStatus } from './state';
+import { readDeliveryEvents, writeDeliveryArtifact, type DeliveryRunStatus } from './state';
 import {
   dependencyGraphAcyclic,
   noBcryptWeakHash,
@@ -777,6 +777,9 @@ function remediationHasPolicyBoundaryFailure(remediation: string[]) {
 }
 
 export function implementationFailureClass(remediation: string[]) {
+  if (remediation.some((item) => /\b(no tool calls|without making a tool call|made no tool calls)\b/i.test(item))) {
+    return 'model_no_action' as const;
+  }
   if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
   if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
   if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
@@ -794,9 +797,13 @@ export function implementationRetryMode({
 }) {
   const timeoutRecovery = remediation.some((item) => /timed out/i.test(item));
   const failureClass = implementationFailureClass(remediation);
-  if ((timeoutRecovery || failureClass === 'missing_surface') && missingSurfaces.length) return 'write-first' as const;
+  const noActionRecovery = failureClass === 'model_no_action';
+  if ((timeoutRecovery || noActionRecovery || failureClass === 'missing_surface') && missingSurfaces.length) {
+    return 'write-first' as const;
+  }
   if (
     timeoutRecovery ||
+    noActionRecovery ||
     failureClass === 'policy_boundary' ||
     remediationHasVerificationFailure(remediation) ||
     remediationHasImplementationJudgmentFailure(remediation)
@@ -819,12 +826,32 @@ function buildTimeoutRemediation({
   timeoutMs,
   missingSurfaces,
   verificationRecovery,
+  noToolCall = false,
 }: {
   task: Task;
   timeoutMs: number;
   missingSurfaces: string[];
   verificationRecovery: boolean;
+  noToolCall?: boolean;
 }) {
+  if (noToolCall && missingSurfaces.length) {
+    return [
+      `${task.id} build attempt made no tool calls after ${timeoutMs}ms. Create the missing owned surfaces before any broad investigation: ${missingSurfaces.join(', ')}.`,
+    ];
+  }
+
+  if (noToolCall && verificationRecovery) {
+    return [
+      `${task.id} repair attempt made no tool calls after ${timeoutMs}ms. Make a focused write to the existing boundary surfaces before returning.`,
+    ];
+  }
+
+  if (noToolCall) {
+    return [
+      `${task.id} build attempt made no tool calls after ${timeoutMs}ms. Make a focused write to the boundary surfaces before returning.`,
+    ];
+  }
+
   if (missingSurfaces.length) {
     return [
       `${task.id} build attempt timed out after ${timeoutMs}ms. Create the missing owned surfaces before any broad investigation: ${missingSurfaces.join(', ')}.`,
@@ -1369,6 +1396,7 @@ const envTimeoutMs = (name: string, fallback: number) => {
 const deliveryAgentTimeouts = {
   standard: envTimeoutMs('DELIVERY_AGENT_CALL_TIMEOUT_MS', 300_000),
   build: envTimeoutMs('DELIVERY_BUILD_CALL_TIMEOUT_MS', 180_000),
+  buildNoTool: envTimeoutMs('DELIVERY_BUILD_NO_TOOL_TIMEOUT_MS', 60_000),
   judge: envTimeoutMs('DELIVERY_JUDGE_CALL_TIMEOUT_MS', 300_000),
 };
 
@@ -1376,10 +1404,37 @@ class DeliveryStageTimeoutError extends Error {
   constructor(
     readonly stage: string,
     readonly timeoutMs: number,
+    message?: string,
   ) {
-    super(`Delivery stage "${stage}" timed out after ${timeoutMs}ms`);
+    super(message ?? `Delivery stage "${stage}" timed out after ${timeoutMs}ms`);
     this.name = 'DeliveryStageTimeoutError';
   }
+}
+
+class DeliveryNoToolCallTimeoutError extends DeliveryStageTimeoutError {
+  constructor(stage: string, timeoutMs: number) {
+    super(stage, timeoutMs, `Delivery stage "${stage}" made no tool calls after ${timeoutMs}ms`);
+    this.name = 'DeliveryNoToolCallTimeoutError';
+  }
+}
+
+async function stageHasToolUse({
+  repoPath,
+  mastra,
+  stage,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+}) {
+  try {
+    return stageSlice(readDeliveryEvents(repoPath), stage).some((event) => event.type === 'tool_use');
+  } catch {
+    // Fall back to the Mastra-backed state reader only if the local projection cannot be read.
+  }
+
+  const events = await readDeliveryEventsState({ repoPath, mastra }).catch(() => []);
+  return stageSlice(events, stage).some((event) => event.type === 'tool_use');
 }
 
 async function runWithDeliveryStageTimeout<T>({
@@ -1387,16 +1442,21 @@ async function runWithDeliveryStageTimeout<T>({
   mastra,
   stage,
   timeoutMs,
+  firstToolTimeoutMs,
+  firstToolCheck,
   operation,
 }: {
   repoPath: string;
   mastra: any;
   stage: string;
   timeoutMs: number;
+  firstToolTimeoutMs?: number;
+  firstToolCheck?: () => Promise<boolean>;
   operation: (abortSignal: AbortSignal) => Promise<T>;
 }) {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let firstToolTimer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort(`Delivery stage "${stage}" timed out after ${timeoutMs}ms`);
@@ -1404,24 +1464,43 @@ async function runWithDeliveryStageTimeout<T>({
     }, timeoutMs);
     timer.unref?.();
   });
+  const firstToolTimeout =
+    firstToolTimeoutMs && firstToolCheck
+      ? new Promise<never>((_, reject) => {
+          firstToolTimer = setTimeout(() => {
+            firstToolCheck()
+              .then((hasToolUse) => {
+                if (hasToolUse) return;
+                controller.abort(`Delivery stage "${stage}" made no tool calls after ${firstToolTimeoutMs}ms`);
+                reject(new DeliveryNoToolCallTimeoutError(stage, firstToolTimeoutMs));
+              })
+              .catch(() => undefined);
+          }, firstToolTimeoutMs);
+          firstToolTimer.unref?.();
+        })
+      : undefined;
 
   const work = operation(controller.signal);
   work.catch(() => undefined);
 
   try {
-    return await Promise.race([work, timeout]);
+    return await Promise.race([work, timeout, ...(firstToolTimeout ? [firstToolTimeout] : [])]);
   } catch (error) {
     if (error instanceof DeliveryStageTimeoutError) {
       await appendDeliveryEventState({
         repoPath,
         mastra,
-        event: { type: 'stage_timeout', stage, timeout_ms: timeoutMs },
+        event:
+          error instanceof DeliveryNoToolCallTimeoutError
+            ? { type: 'stage_no_tool_timeout', stage, timeout_ms: error.timeoutMs }
+            : { type: 'stage_timeout', stage, timeout_ms: error.timeoutMs },
       }).catch(() => undefined);
       await endDeliveryStageState({ repoPath, stage, reason: 'max_turns', mastra }).catch(() => undefined);
     }
     throw error;
   } finally {
     if (timer) clearTimeout(timer);
+    if (firstToolTimer) clearTimeout(firstToolTimer);
   }
 }
 
@@ -2737,6 +2816,8 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
         mastra,
         stage,
         timeoutMs: deliveryAgentTimeouts.build,
+        firstToolTimeoutMs: deliveryAgentTimeouts.buildNoTool,
+        firstToolCheck: () => stageHasToolUse({ repoPath: inputData.repoPath, mastra, stage }),
         operation: (abortSignal) =>
           agent.generate(
             finalBuildPrompt,
@@ -2757,6 +2838,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
         timeoutMs: error.timeoutMs,
         missingSurfaces,
         verificationRecovery,
+        noToolCall: error instanceof DeliveryNoToolCallTimeoutError,
       });
       if (attempt >= inputData.maxRetries) {
         await updateDeliveryTaskState({

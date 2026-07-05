@@ -338,6 +338,20 @@ test('implementation retry mode focuses timeout retries when owned files already
   );
   assert.equal(
     implementationRetryMode({
+      remediation: ['T3 build attempt made no tool calls after 60000ms. Create the missing owned surfaces.'],
+      missingSurfaces: ['src/routes/profiles.ts'],
+    }),
+    'write-first',
+  );
+  assert.equal(
+    implementationRetryMode({
+      remediation: ['T3 build attempt made no tool calls after 60000ms. Make a focused write to the boundary surfaces.'],
+      missingSurfaces: [],
+    }),
+    'focused-repair',
+  );
+  assert.equal(
+    implementationRetryMode({
       remediation: ['DETERMINISTIC verification_passed failed: npm run typecheck failed: TS2307'],
       missingSurfaces: [],
     }),
@@ -373,5 +387,10 @@ test('implementation retry mode classifies deterministic failure families', () =
       missingSurfaces: [],
     }),
     'focused-repair',
+  );
+
+  assert.equal(
+    implementationFailureClass(['T2 build attempt made no tool calls after 60000ms. Make a focused write.']),
+    'model_no_action',
   );
 });
