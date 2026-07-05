@@ -1468,16 +1468,16 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
       deployMode: inputData.deployMode,
       taskPlan: revisedTaskPlan,
       releaseGate: inputData.releaseGate,
-      status: 'planned' as const,
+      status: 'reviewed' as const,
       runId: inputData.runId,
-      summary: 'Planner revised the task plan after architect review.',
+      summary: 'Planner revised the task plan after architect review; revised plan passed judgment.',
       artifacts,
       checks,
       judgments,
       questions: [],
-      nextSteps: ['Rerun architect review against the revised task plan.'],
+      nextSteps: ['Run the delivery build loop against the revised task plan.'],
       attempt: revisionNumber,
-      terminal: false,
+      terminal: true,
     };
   },
 });
@@ -1718,7 +1718,9 @@ ${task.owned_surfaces.map((surface) => `- ${surface}`).join('\n')}
 
 Context artifacts:
 - .delivery/artifacts/task-plan.json
+- latest .delivery/artifacts/task-plan.revision-*.json when present
 - .delivery/artifacts/readout.json
+- .delivery/artifacts/review-report*.json
 - prior implementation notes under .delivery/artifacts/
 
 ${inputData.remediation.length ? `This is a bounce. Fix exactly these findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
