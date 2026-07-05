@@ -1088,6 +1088,15 @@ const executeReviewAttemptStep = createStep({
 Evaluate granularity, error handling, trust boundaries, state authority, fail-fast behavior, data flow, security, and complexity.
 Approve only when build can safely begin. Block when planner changes are required before implementation.
 Every finding must be specific, evidenced, and remediable by an owning role.
+Return exactly one JSON object, not a bare findings array, with this shape:
+{
+  "artifact_type": "review-report",
+  "verdict": "approved" | "approved_with_conditions" | "blocked",
+  "findings": [{ "severity": "high" | "medium" | "low", "title": "...", "location": "...", "evidence": "...", "why_it_matters": "...", "required_remediation": "..." }],
+  "conditions": [],
+  "residual_risks": [],
+  "recommended_next_step": "..."
+}
 
 Task plan:
 ${JSON.stringify(taskPlan, null, 2)}`,
@@ -1097,7 +1106,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
         structuredOutput: {
           schema: reviewReportSchema,
           ...deliveryStructuredOutputOptions,
-          instructions: 'Return only a review-report object.',
+          instructions: 'Return only one review-report object. Do not return a bare array.',
         },
       },
     );
