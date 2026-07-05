@@ -431,6 +431,12 @@ const buildRoleForTask = (task: Task) => (task.owner === 'designer' ? 'designer'
 const taskStatusSummary = (state: Record<string, 'complete' | 'stuck' | 'blocked'>) =>
   Object.entries(state).map(([id, status]) => `${id}:${status}`);
 
+export const hasExecutableRootTask = (taskPlan: TaskPlan) =>
+  taskPlan.tasks.some((task) => task.depends_on.length === 0 && task.acceptance_criteria.length && task.owned_surfaces.length);
+
+export const shouldSuspendForPlannerQuestions = (readout: z.infer<typeof readoutSchema>, taskPlan: TaskPlan) =>
+  readout.blocking_ambiguities.length > 0 && !hasExecutableRootTask(taskPlan);
+
 const implementationFindingSteps = (taskId: string, remediation: string[]) =>
   remediation.length ? remediation : [`${taskId} did not produce a passing implementation judgment`];
 
@@ -552,6 +558,11 @@ const requiredAgent = (mastra: any, id: string) => {
   };
 };
 
+const structuredNoToolOptions = {
+  activeTools: [] as string[],
+  maxSteps: 1,
+};
+
 async function judgeDeliveryArtifact({
   mastra,
   repoPath,
@@ -586,6 +597,7 @@ async function judgeDeliveryArtifact({
       deterministicResults,
     }),
     {
+      ...structuredNoToolOptions,
       requestContext: createDeliveryRequestContext(repoPath),
       structuredOutput: {
         schema: judgeOutputSchema,
@@ -762,17 +774,26 @@ const createPlannerArtifactsStep = createStep({
           .map((answer) => `- Q: ${answer.question}\n  A: ${answer.answer}`)
           .join('\n')}${resumeData.notes ? `\nAdditional notes: ${resumeData.notes}` : ''}\n`
       : '';
+    const sourceDocuments = repoFileContents(inputData.repoPath, [inputData.visionPath, inputData.specPath]);
+    if (sourceDocuments.length !== 2) {
+      throw new Error(`planner could not load ${inputData.visionPath} and ${inputData.specPath}`);
+    }
 
     const response = await planner.generate(
-      `Read ${inputData.visionPath} and ${inputData.specPath} from the workspace. Produce:
+      `Use the source documents below. Do not call tools to read them. Produce:
 1. A readout artifact.
 2. A dependency-aware task-plan artifact.
 
 Do not write code. Ask only blocking questions. Record safe assumptions in the readout.
 Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
-Every task must have checkable acceptance criteria and owned_surfaces.${humanAnswers}`,
+Every task must have checkable acceptance criteria and owned_surfaces.
+Return only JSON matching this top-level shape: { "readout": {...}, "taskPlan": {...} }.${humanAnswers}
+
+Source documents:
+${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`).join('\n\n')}`,
       {
-          requestContext: createDeliveryRequestContext(inputData.repoPath),
+        ...structuredNoToolOptions,
+        requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: plannerOutputSchema,
           ...deliveryStructuredOutputOptions,
@@ -807,10 +828,11 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
       mastra,
     });
 
+    const suspendForQuestions = shouldSuspendForPlannerQuestions(output.readout, output.taskPlan);
     await endDeliveryStageState({
       repoPath: inputData.repoPath,
       stage: 'plan',
-      reason: output.readout.blocking_ambiguities.length ? 'escalation' : 'complete_stage',
+      reason: suspendForQuestions ? 'escalation' : 'complete_stage',
       mastra,
     });
 
@@ -819,11 +841,14 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
         repoPath: inputData.repoPath,
         mastra,
         event: {
-        type: 'human_input_required',
-        stage: 'plan',
-        questions: output.readout.blocking_ambiguities,
+          type: suspendForQuestions ? 'human_input_required' : 'planning_questions_deferred',
+          stage: 'plan',
+          questions: output.readout.blocking_ambiguities,
         },
       });
+    }
+
+    if (suspendForQuestions) {
       await syncDeliveryWorkflowState({
         state,
         setState,
@@ -869,6 +894,7 @@ Every task must have checkable acceptance criteria and owned_surfaces.${humanAns
         deployMode: plannerOutput.deployMode,
         artifacts: plannerOutput.artifacts,
         taskPlan: plannerOutput.taskPlan,
+        questions: output.readout.blocking_ambiguities,
       },
     });
 
@@ -908,7 +934,7 @@ const createPlanGateStep = createStep({
       taskPlan: inputData.taskPlan,
     };
 
-    if (inputData.readout.blocking_ambiguities.length) {
+    if (shouldSuspendForPlannerQuestions(inputData.readout, inputData.taskPlan)) {
       return {
         ...planContext,
         status: 'blocked_on_questions' as const,
@@ -958,8 +984,9 @@ const createPlanGateStep = createStep({
       artifacts,
       checks,
       judgments,
-      questions: [],
+      questions: inputData.readout.blocking_ambiguities,
       nextSteps: [
+        ...inputData.readout.blocking_ambiguities.map((question) => `Deferred question: ${question}`),
         'Run architecture review against .delivery/artifacts/task-plan.json.',
         'Continue through the native architect review, build, release-gate, and deployment stages.',
       ],
@@ -1061,6 +1088,7 @@ Every finding must be specific, evidenced, and remediable by an owning role.
 Task plan:
 ${JSON.stringify(taskPlan, null, 2)}`,
       {
+        ...structuredNoToolOptions,
         requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: reviewReportSchema,
@@ -1179,6 +1207,7 @@ ${JSON.stringify(taskPlan, null, 2)}
 Architect review:
 ${JSON.stringify(reviewReport, null, 2)}`,
       {
+        ...structuredNoToolOptions,
         requestContext: createDeliveryRequestContext(inputData.repoPath),
         structuredOutput: {
           schema: plannerRevisionOutputSchema,

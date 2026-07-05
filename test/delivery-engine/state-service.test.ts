@@ -11,7 +11,7 @@ import {
   readDeliveryRunState,
   updateDeliveryTaskState,
 } from '../../src/mastra/delivery-engine/state-service.ts';
-import { initializeDeliveryRun, readDeliveryRun, updateDeliveryTask } from '../../src/mastra/delivery-engine/state.ts';
+import { finishDeliveryRun, initializeDeliveryRun, readDeliveryRun, updateDeliveryTask } from '../../src/mastra/delivery-engine/state.ts';
 
 const createRepo = () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-state-service-'));
@@ -87,6 +87,29 @@ test('delivery state service prefers Mastra storage snapshots over stale local p
   assert.equal(readDeliveryRun(repoPath).tasks.T1.status, 'stuck');
   assert.equal(events.some((event) => event.type === 'run_init'), true);
   assert.equal(written.some((log) => log.resourceId === resolve(repoPath) && log.data?.kind === 'snapshot'), true);
+});
+
+test('delivery state initialization repairs stale running Mastra snapshots from terminal local projection', async () => {
+  const repoPath = createRepo();
+  const { store, written } = createMemoryObservabilityStore();
+  const mastra = createMastra(store);
+
+  const staleRun = await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md', mastra });
+  finishDeliveryRun({ repoPath, status: 'failed' });
+
+  const nextRun = await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md', mastra });
+
+  assert.notEqual(nextRun.run_id, staleRun.run_id);
+  assert.equal(nextRun.status, 'running');
+  assert.equal(readDeliveryRun(repoPath).run_id, nextRun.run_id);
+  assert.equal(
+    written.some((log) => log.runId === staleRun.run_id && log.data?.kind === 'snapshot' && log.data.run.status === 'failed'),
+    true,
+  );
+  assert.equal(
+    written.some((log) => log.runId === nextRun.run_id && log.data?.kind === 'snapshot' && log.data.run.status === 'running'),
+    true,
+  );
 });
 
 test('delivery state service writes Mastra storage before refreshing the local projection', async () => {

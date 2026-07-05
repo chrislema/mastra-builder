@@ -107,11 +107,24 @@ export async function initializeDeliveryRunState({
   const spec = repoRelativeExistingFile({ repoPath: repo, path: specPath, label: 'spec' });
 
   const storedStatus = await readDeliveryRunStatusWithMastra({ repoPath: repo, mastra });
-  const localRun = storedStatus ? undefined : hasDeliveryDirectory(repo) ? readDeliveryRun(repo) : undefined;
-  const existingStatus = storedStatus ?? localRun;
-  if (existingStatus?.status === 'running') {
-    const startedAt = localRun?.started_at ?? 'unknown';
-    throw new Error(`a delivery run is already active (started ${startedAt})`);
+  const localRun = hasDeliveryDirectory(repo) ? readDeliveryRun(repo) : undefined;
+  if (storedStatus?.status === 'running') {
+    const localTerminalProjection =
+      localRun?.run_id === storedStatus.run_id && localRun.status !== 'running' ? localRun : undefined;
+
+    if (localTerminalProjection) {
+      await persistDeliverySnapshot({
+        repoPath: repo,
+        mastra,
+        run: localTerminalProjection,
+        events: readDeliveryEvents(repo),
+      });
+    } else {
+      const startedAt = localRun?.run_id === storedStatus.run_id ? localRun.started_at : 'unknown';
+      throw new Error(`a delivery run is already active (started ${startedAt})`);
+    }
+  } else if (!storedStatus && localRun?.status === 'running') {
+    throw new Error(`a delivery run is already active (started ${localRun.started_at})`);
   }
 
   const run: DeliveryRun = {

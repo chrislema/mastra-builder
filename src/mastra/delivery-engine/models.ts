@@ -2,6 +2,7 @@ export const deliveryModel = 'zai-coding-plan/glm-5.2';
 export const judgeModel = deliveryModel;
 export const deliveryStructuredOutputOptions = {
   jsonPromptInjection: true,
+  errorStrategy: 'warn',
 } as const;
 
 const providerApiKeyEnvVars: Record<string, string[]> = {
