@@ -94,6 +94,11 @@ const reviewReportSchema = z.object({
   recommended_next_step: z.string(),
 });
 
+function compactDiagnostic(error: unknown, limit = 600) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.length > limit ? `${text.slice(0, limit)}... (${text.length} chars total)` : text;
+}
+
 function parseReviewReportResponse(response: unknown, label: string) {
   try {
     return {
@@ -114,7 +119,7 @@ function parseReviewReportResponse(response: unknown, label: string) {
           : 'Run the delivery build loop against the approved task plan.',
       },
       repairedFromBareFindings: true,
-      repairReason: error instanceof Error ? error.message : String(error),
+      repairReason: compactDiagnostic(error),
     };
   }
 }
@@ -207,6 +212,22 @@ const deployerOutputSchema = z.object({
 const plannerRevisionOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
+
+function parsePlannerRevisionResponse(response: unknown, label: string) {
+  try {
+    return {
+      revision: parseDeliveryStructuredOutput(plannerRevisionOutputSchema, response, label),
+      repairedFromBareTaskPlan: false,
+    };
+  } catch (error) {
+    const taskPlan = parseDeliveryStructuredOutput(taskPlanSchema, response, `${label} taskPlan`);
+    return {
+      revision: { taskPlan },
+      repairedFromBareTaskPlan: true,
+      repairReason: compactDiagnostic(error),
+    };
+  }
+}
 
 const initializedSchema = workflowInputSchema.extend({
   runId: z.string(),
@@ -1356,7 +1377,20 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
         ),
     });
 
-    const revision = parseDeliveryStructuredOutput(plannerRevisionOutputSchema, revisionResponse, 'planner revision');
+    const parsedRevision = parsePlannerRevisionResponse(revisionResponse, 'planner revision');
+    if (parsedRevision.repairedFromBareTaskPlan) {
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'structured_output_repaired',
+          stage: `plan:architect-bounce-${revisionNumber}`,
+          target: 'task-plan',
+          reason: parsedRevision.repairReason,
+        },
+      });
+    }
+    const revision = parsedRevision.revision;
     const revisedTaskPlan = revision.taskPlan;
     const revisionPath = `.delivery/artifacts/task-plan.revision-${revisionNumber}.json`;
     writeDeliveryArtifact({
