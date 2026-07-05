@@ -72,6 +72,7 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
     specPath: 'docs/spec.md',
     maxRetries: 1,
     deployMode: 'mock',
+    reviewMode: 'fast',
   });
 
   const repoPath = resolve('/tmp/delivery-target');
@@ -86,6 +87,7 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
     specPath: 'docs/spec.md',
     maxRetries: 1,
     deployMode: 'mock',
+    reviewMode: 'fast',
   });
   assert.equal(captured.startOptions?.requestContext.get('repoPath'), repoPath);
   assert.deepEqual(captured.startOptions?.outputOptions, { includeState: true });

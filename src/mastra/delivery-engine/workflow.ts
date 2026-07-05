@@ -47,6 +47,7 @@ const workflowInputSchema = z.object({
   specPath: z.string().describe('Path to spec.md inside repoPath; relative paths are resolved under repoPath.'),
   maxRetries: z.number().int().min(0).default(2),
   deployMode: z.enum(['mock', 'real']).default('mock'),
+  reviewMode: z.enum(['fast', 'thorough']).default('fast'),
 });
 
 const taskSchema = z.object({
@@ -283,6 +284,7 @@ const workflowOutputSchema = z.object({
   repoPath: z.string().optional(),
   maxRetries: z.number().int().min(0).optional(),
   deployMode: z.enum(['mock', 'real']).optional(),
+  reviewMode: z.enum(['fast', 'thorough']).optional(),
   status: workflowStatusSchema,
   runId: z.string(),
   summary: z.string(),
@@ -300,6 +302,7 @@ const deliveryWorkflowStateSchema = z.object({
   summary: z.string().optional(),
   maxRetries: z.number().int().min(0).optional(),
   deployMode: z.enum(['mock', 'real']).optional(),
+  reviewMode: z.enum(['fast', 'thorough']).optional(),
   artifacts: z.array(z.string()).default([]),
   checks: z.array(checkSummarySchema).default([]),
   judgments: z.array(judgmentRefSchema).default([]),
@@ -315,6 +318,7 @@ const deliveryStageOutputSchema = workflowOutputSchema.extend({
   repoPath: z.string(),
   maxRetries: z.number().int().min(0),
   deployMode: z.enum(['mock', 'real']),
+  reviewMode: z.enum(['fast', 'thorough']).default('fast'),
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
 });
@@ -382,6 +386,7 @@ const normalizeDeliveryWorkflowState = (state?: Partial<DeliveryWorkflowState>):
   summary: state?.summary,
   maxRetries: state?.maxRetries,
   deployMode: state?.deployMode,
+  reviewMode: state?.reviewMode,
   artifacts: state?.artifacts ?? [],
   checks: state?.checks ?? [],
   judgments: state?.judgments ?? [],
@@ -421,6 +426,7 @@ async function syncDeliveryWorkflowState({
     summary: output.summary ?? current.summary,
     maxRetries: output.maxRetries ?? current.maxRetries,
     deployMode: output.deployMode ?? current.deployMode,
+    reviewMode: output.reviewMode ?? current.reviewMode,
     artifacts: output.artifacts ?? current.artifacts,
     checks: output.checks ?? current.checks,
     judgments: output.judgments ?? current.judgments,
@@ -855,6 +861,7 @@ const initializeRunStep = createStep({
         runId: run.run_id,
         maxRetries: inputData.maxRetries,
         deployMode: inputData.deployMode,
+        reviewMode: inputData.reviewMode,
         artifacts: [],
         checks: [],
         judgments: [],
@@ -870,6 +877,7 @@ const initializeRunStep = createStep({
       visionPath: run.vision,
       specPath: run.spec,
       runId: run.run_id,
+      reviewMode: inputData.reviewMode,
     };
   },
 });
@@ -1022,6 +1030,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
         runId: plannerOutput.runId,
         maxRetries: plannerOutput.maxRetries,
         deployMode: plannerOutput.deployMode,
+        reviewMode: plannerOutput.reviewMode,
         artifacts: plannerOutput.artifacts,
         taskPlan: plannerOutput.taskPlan,
         questions: output.readout.blocking_ambiguities,
@@ -1061,6 +1070,7 @@ const createPlanGateStep = createStep({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
+      reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
     };
 
@@ -1134,6 +1144,7 @@ const prepareReviewLoopStep = createStep({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
+      reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
       status: inputData.status,
@@ -1150,11 +1161,30 @@ const prepareReviewLoopStep = createStep({
 
     if (inputData.status !== 'planned') return passThrough();
     if (!inputData.taskPlan) throw new Error('plan stage did not provide a task plan for architect review');
+    if (inputData.reviewMode === 'fast') {
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'review_skipped',
+          stage: 'review:fast',
+          reason: 'Fast review mode: task plan passed deterministic and rubric gates; architect loop is available with reviewMode=thorough.',
+        },
+      });
+
+      return {
+        ...passThrough(),
+        status: 'reviewed' as const,
+        summary: `${inputData.summary} Fast review mode accepted the scored task plan for implementation.`,
+        nextSteps: ['Run the delivery build loop against the scored task plan.'],
+      };
+    }
 
     return {
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
+      reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
       status: inputData.status,
@@ -1193,6 +1223,7 @@ const executeReviewAttemptStep = createStep({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
+      reviewMode: inputData.reviewMode,
       taskPlan,
       releaseGate: inputData.releaseGate,
     });
@@ -1466,6 +1497,7 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
+      reviewMode: inputData.reviewMode,
       taskPlan: revisedTaskPlan,
       releaseGate: inputData.releaseGate,
       status: 'reviewed' as const,
@@ -1492,6 +1524,7 @@ const finalizeReviewLoopStep = createStep({
     repoPath: inputData.repoPath,
     maxRetries: inputData.maxRetries,
     deployMode: inputData.deployMode,
+    reviewMode: inputData.reviewMode,
     taskPlan: inputData.taskPlan,
     releaseGate: inputData.releaseGate,
     status: inputData.status,

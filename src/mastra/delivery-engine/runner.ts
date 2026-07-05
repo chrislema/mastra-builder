@@ -16,6 +16,7 @@ export const deliveryWorkflowRunInputSchema = z.object({
   specPath: z.string().min(1).default('spec.md').describe('Path to spec.md inside repoPath.'),
   maxRetries: z.coerce.number().int().min(0).default(2),
   deployMode: z.enum(['mock', 'real']).default('mock'),
+  reviewMode: z.enum(['fast', 'thorough']).default('fast'),
   resourceId: z.string().min(1).optional().describe('Optional resource id for filtering persisted workflow runs.'),
   runId: z.string().min(1).optional().describe('Optional workflow run id for repeatable external orchestration.'),
   includeState: z.boolean().default(true).describe('Include native workflow state in the returned workflow result.'),
@@ -135,6 +136,7 @@ async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: Del
       specPath: parsed.specPath,
       maxRetries: parsed.maxRetries,
       deployMode: parsed.deployMode,
+      reviewMode: parsed.reviewMode,
     },
     requestContext: createDeliveryRequestContext(repoPath),
     tracingOptions: {
@@ -144,10 +146,11 @@ async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: Del
         visionPath: parsed.visionPath,
         specPath: parsed.specPath,
         deployMode: parsed.deployMode,
+        reviewMode: parsed.reviewMode,
         resourceId,
       },
       requestContextKeys: ['repoPath'],
-      tags: ['delivery-engine', `deploy:${parsed.deployMode}`],
+      tags: ['delivery-engine', `deploy:${parsed.deployMode}`, `review:${parsed.reviewMode}`],
     },
     outputOptions: {
       includeState: parsed.includeState,

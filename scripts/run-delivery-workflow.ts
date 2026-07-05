@@ -13,6 +13,7 @@ Options:
   --vision, --visionPath   Vision document path. Defaults to vision.md.
   --spec, --specPath       Spec document path. Defaults to spec.md.
   --deploy, --deployMode   mock or real. Defaults to mock.
+  --review, --reviewMode   fast or thorough. Defaults to fast.
   --maxRetries             Bounded retry count. Defaults to 2.
   --resourceId             Optional Mastra workflow resource id.
   --runId                  Optional Mastra workflow run id.
@@ -74,6 +75,8 @@ const { values } = parseArgs({
     specPath: { type: 'string' },
     deploy: { type: 'string' },
     deployMode: { type: 'string' },
+    review: { type: 'string' },
+    reviewMode: { type: 'string' },
     maxRetries: { type: 'string' },
     resourceId: { type: 'string' },
     runId: { type: 'string' },
@@ -117,6 +120,7 @@ try {
     visionPath: values.visionPath ?? values.vision,
     specPath: values.specPath ?? values.spec,
     deployMode: values.deployMode ?? values.deploy,
+    reviewMode: values.reviewMode ?? values.review,
     maxRetries: values.maxRetries === undefined ? undefined : Number(values.maxRetries),
     resourceId: values.resourceId,
     runId: values.runId,
