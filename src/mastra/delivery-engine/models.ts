@@ -1,8 +1,12 @@
-export const deliveryModel = 'openai/gpt-5-mini';
+export const deliveryModel = 'zai-coding-plan/glm-5.2';
 export const judgeModel = deliveryModel;
 
 const providerApiKeyEnvVars: Record<string, string[]> = {
   openai: ['OPENAI_API_KEY'],
+  zai: ['ZHIPU_API_KEY'],
+  'zai-coding-plan': ['ZHIPU_API_KEY'],
+  zhipuai: ['ZHIPU_API_KEY'],
+  'zhipuai-coding-plan': ['ZHIPU_API_KEY'],
 };
 
 const placeholderValues = new Set(['your-api-key', 'your_api_key', 'changeme', 'change-me']);

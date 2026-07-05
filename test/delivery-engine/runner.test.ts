@@ -13,32 +13,32 @@ import {
 } from '../../src/mastra/delivery-engine/runner.ts';
 import { initializeDeliveryRun, readDeliveryRun } from '../../src/mastra/delivery-engine/state.ts';
 
-const withOpenAIKey = async <T>(value: string | undefined, fn: () => Promise<T>) => {
-  const previous = process.env.OPENAI_API_KEY;
+const withZhipuKey = async <T>(value: string | undefined, fn: () => Promise<T>) => {
+  const previous = process.env.ZHIPU_API_KEY;
   if (value === undefined) {
-    delete process.env.OPENAI_API_KEY;
+    delete process.env.ZHIPU_API_KEY;
   } else {
-    process.env.OPENAI_API_KEY = value;
+    process.env.ZHIPU_API_KEY = value;
   }
 
   try {
     return await fn();
   } finally {
     if (previous === undefined) {
-      delete process.env.OPENAI_API_KEY;
+      delete process.env.ZHIPU_API_KEY;
     } else {
-      process.env.OPENAI_API_KEY = previous;
+      process.env.ZHIPU_API_KEY = previous;
     }
   }
 };
 
 const startDeliveryWorkflowRunWithKey = (host: Parameters<typeof startDeliveryWorkflowRun>[0], input: DeliveryWorkflowRunInput) =>
-  withOpenAIKey('test-openai-key', () => startDeliveryWorkflowRun(host, input));
+  withZhipuKey('test-zhipu-key', () => startDeliveryWorkflowRun(host, input));
 
 const startDeliveryWorkflowRunAsyncWithKey = (
   host: Parameters<typeof startDeliveryWorkflowRunAsync>[0],
   input: DeliveryWorkflowRunInput,
-) => withOpenAIKey('test-openai-key', () => startDeliveryWorkflowRunAsync(host, input));
+) => withZhipuKey('test-zhipu-key', () => startDeliveryWorkflowRunAsync(host, input));
 
 test('delivery workflow runner creates a resource-scoped workflow run', async () => {
   const captured: {
@@ -162,10 +162,10 @@ test('delivery workflow runner fails preflight before creating a run without mod
       }) as any,
   };
 
-  await withOpenAIKey(undefined, async () => {
+  await withZhipuKey(undefined, async () => {
     await assert.rejects(
       startDeliveryWorkflowRun(host, { repoPath: '/tmp/delivery-target' }),
-      /Delivery workflow requires OPENAI_API_KEY/,
+      /Delivery workflow requires ZHIPU_API_KEY/,
     );
   });
   assert.equal(createRunCalled, false);
