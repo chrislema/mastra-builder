@@ -4,6 +4,8 @@ import {
   dependencyGraphAcyclic,
   fileOwnership,
   harnessRunBeforeFindings,
+  matchesAny,
+  normalizeDeliveryPathReference,
   planSchemaComplete,
   ranCodeBeforeComplete,
   releaseBlockersZero,
@@ -141,6 +143,12 @@ test('fileOwnership follows delivery role boundaries', () => {
   assert.equal(fileOwnership({ role: 'tester', paths: ['vitest.config.ts'] }).passed, true);
   assert.equal(fileOwnership({ role: 'tester', paths: ['src/app.ts'] }).passed, false);
   assert.equal(fileOwnership({ role: 'planner', paths: ['src/app.ts'] }).passed, false);
+});
+
+test('fileOwnership normalizes annotated owned surface references', () => {
+  assert.equal(normalizeDeliveryPathReference('wrangler.toml (triggers section)'), 'wrangler.toml');
+  assert.equal(matchesAny('wrangler.toml', ['wrangler.toml (triggers section)']), true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['wrangler.toml (triggers section)'] }).passed, true);
 });
 
 test('ranCodeBeforeComplete recognizes Mastra workspace command execution', () => {

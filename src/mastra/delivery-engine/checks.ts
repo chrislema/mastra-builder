@@ -63,9 +63,14 @@ export function globToRegExp(glob: string) {
   return new RegExp(`^${re}$`);
 }
 
+export function normalizeDeliveryPathReference(path: string) {
+  const clean = path.trim().replace(/^\.\//, '');
+  return clean.split(/\s+\(/)[0]?.trim() || clean;
+}
+
 export function matchesAny(path: string, globs: readonly string[]) {
-  const clean = path.replace(/^\.\//, '');
-  return globs.some((glob) => globToRegExp(glob).test(clean));
+  const clean = normalizeDeliveryPathReference(path);
+  return globs.some((glob) => globToRegExp(normalizeDeliveryPathReference(glob)).test(clean));
 }
 
 export function stageSlice(events: DeliveryEvent[], stage?: string) {
@@ -225,7 +230,8 @@ export function fileOwnership({ role, paths }: { role: DeliveryRole; paths: stri
   const boundary = roleBoundaries[role];
   if (!boundary) return fail(`unknown role "${role}"`);
 
-  for (const path of paths) {
+  for (const originalPath of paths) {
+    const path = normalizeDeliveryPathReference(originalPath);
     if (path.startsWith('.delivery/')) continue;
     if (matchesAny(path, boundary.forbidden)) return fail(`${role} may not write ${path} (forbidden glob)`);
     if (boundary.owned.length === 0) return fail(`${role} owns no files but wrote ${path}`);
@@ -243,7 +249,7 @@ const isWrite = (event: DeliveryEvent) =>
   ['Write', 'Edit', 'MultiEdit', 'mastra_workspace_write_file', 'mastra_workspace_edit_file', 'mastra_workspace_ast_edit'].includes(
     String(event.tool),
   );
-const deliveryPath = (path: string) => path.startsWith('.delivery/');
+const deliveryPath = (path: string) => normalizeDeliveryPathReference(path).startsWith('.delivery/');
 
 export function writePathsInBoundary(events: DeliveryEvent[], { stage, role }: { stage?: string; role: DeliveryRole }) {
   const written = stageSlice(events, stage)

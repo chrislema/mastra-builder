@@ -22,6 +22,7 @@ import { writeDeliveryArtifact, type DeliveryRunStatus } from './state';
 import {
   dependencyGraphAcyclic,
   noBcryptWeakHash,
+  normalizeDeliveryPathReference,
   planSchemaComplete,
   runDeterministicCheck,
   stageSlice,
@@ -553,10 +554,11 @@ export function shouldProceedAfterNonActionableImplementationJudgment({
 function repoFileContents(repoPath: string, paths: string[]) {
   return paths
     .map((path) => {
-      const fullPath = isAbsolute(path) ? path : join(resolve(repoPath), path);
+      const normalizedPath = normalizeDeliveryPathReference(path);
+      const fullPath = isAbsolute(normalizedPath) ? normalizedPath : join(resolve(repoPath), normalizedPath);
       if (!existsSync(fullPath)) return undefined;
       return {
-        path,
+        path: normalizedPath,
         content: readFileSync(fullPath, 'utf8'),
       };
     })
@@ -645,9 +647,9 @@ function existingOwnedFiles(repoPath: string, task: Task) {
 }
 
 function concreteOwnedSurfacePath(surface: string) {
-  const trimmed = surface.trim();
+  const trimmed = normalizeDeliveryPathReference(surface);
   if (!trimmed || trimmed.includes('*') || /^unknown\b/i.test(trimmed)) return undefined;
-  return trimmed.split(/\s+\(/)[0]?.trim() || trimmed;
+  return trimmed;
 }
 
 export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
@@ -708,6 +710,27 @@ function remediationHasImplementationJudgmentFailure(remediation: string[]) {
   return remediation.some((item) => /\b(GATE|DIMENSION|JUDGE|implementation judgment)\b/i.test(item));
 }
 
+function remediationHasMissingSurfaceFailure(remediation: string[]) {
+  return remediation.some((item) => /\bowned_surfaces_present\b.*\bmissing owned surfaces\b/i.test(item));
+}
+
+function remediationHasPolicyBoundaryFailure(remediation: string[]) {
+  return remediation.some((item) =>
+    /\b(file_ownership|write_paths_in_boundary|owned globs|owned surfaces|forbidden glob|outside this task)\b/i.test(
+      item,
+    ),
+  );
+}
+
+export function implementationFailureClass(remediation: string[]) {
+  if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
+  if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
+  if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
+  if (remediationHasPolicyBoundaryFailure(remediation)) return 'policy_boundary' as const;
+  if (remediationHasImplementationJudgmentFailure(remediation)) return 'judge_quality' as const;
+  return 'unknown' as const;
+}
+
 export function implementationRetryMode({
   remediation,
   missingSurfaces,
@@ -716,9 +739,11 @@ export function implementationRetryMode({
   missingSurfaces: string[];
 }) {
   const timeoutRecovery = remediation.some((item) => /timed out/i.test(item));
-  if (timeoutRecovery && missingSurfaces.length) return 'write-first' as const;
+  const failureClass = implementationFailureClass(remediation);
+  if ((timeoutRecovery || failureClass === 'missing_surface') && missingSurfaces.length) return 'write-first' as const;
   if (
     timeoutRecovery ||
+    failureClass === 'policy_boundary' ||
     remediationHasVerificationFailure(remediation) ||
     remediationHasImplementationJudgmentFailure(remediation)
   ) {
@@ -2554,6 +2579,7 @@ const executeBuildTaskAttemptStep = createStep({
     const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
     const verificationRecovery = remediationHasVerificationFailure(inputData.remediation);
     const retryMode = implementationRetryMode({ remediation: inputData.remediation, missingSurfaces });
+    const failureClass = implementationFailureClass(inputData.remediation);
     const writeFirstRecovery = retryMode === 'write-first';
     const focusedRepairRecovery = retryMode === 'focused-repair';
     const activeTools = writeFirstRecovery
@@ -2574,6 +2600,7 @@ const executeBuildTaskAttemptStep = createStep({
       open_decisions: taskPlan.open_decisions,
       risks: taskPlan.risks,
       remediation: inputData.remediation,
+      failure_class: failureClass,
       missing_owned_surfaces: missingSurfaces,
       boundary_surfaces: usableSurfaces,
       package_manifest_owned: packageManifestOwned,
@@ -2611,6 +2638,8 @@ Execution rules:
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
+- If failure_class is missing_surface, create every missing_owned_surface before editing any other file.
+- If failure_class is policy_boundary, do not repeat blocked writes; use only normalized boundary_surfaces paths.
 - Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Do not inspect node_modules; rely on project types and workflow verification.

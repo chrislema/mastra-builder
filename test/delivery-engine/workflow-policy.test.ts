@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   implementationDeterministicRemediation,
+  implementationFailureClass,
   implementationRetryMode,
   missingOwnedSurfacePaths,
   priorStoppedBuildTaskIds,
@@ -327,6 +328,30 @@ test('implementation retry mode focuses timeout retries when owned files already
   assert.equal(
     implementationRetryMode({
       remediation: ['GATE no_silent_degradation failed: record or surface the non-fatal AI summary failure.'],
+      missingSurfaces: [],
+    }),
+    'focused-repair',
+  );
+});
+
+test('implementation retry mode classifies deterministic failure families', () => {
+  const missingSurfaceRemediation = ['DETERMINISTIC owned_surfaces_present failed: missing owned surfaces: src/routes/runs.ts'];
+  assert.equal(implementationFailureClass(missingSurfaceRemediation), 'missing_surface');
+  assert.equal(
+    implementationRetryMode({
+      remediation: missingSurfaceRemediation,
+      missingSurfaces: ['src/routes/runs.ts'],
+    }),
+    'write-first',
+  );
+
+  const policyBoundaryRemediation = [
+    'DETERMINISTIC file_ownership failed: wrangler.toml is outside engineer owned globs',
+  ];
+  assert.equal(implementationFailureClass(policyBoundaryRemediation), 'policy_boundary');
+  assert.equal(
+    implementationRetryMode({
+      remediation: policyBoundaryRemediation,
       missingSurfaces: [],
     }),
     'focused-repair',
