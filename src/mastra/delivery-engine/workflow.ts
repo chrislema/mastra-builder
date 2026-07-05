@@ -94,6 +94,31 @@ const reviewReportSchema = z.object({
   recommended_next_step: z.string(),
 });
 
+function parseReviewReportResponse(response: unknown, label: string) {
+  try {
+    return {
+      report: parseDeliveryStructuredOutput(reviewReportSchema, response, label),
+      repairedFromBareFindings: false,
+    };
+  } catch (error) {
+    const findings = parseDeliveryStructuredOutput(z.array(reviewFindingSchema), response, `${label} findings`);
+    return {
+      report: {
+        artifact_type: 'review-report' as const,
+        verdict: findings.length ? ('blocked' as const) : ('approved' as const),
+        findings,
+        conditions: [],
+        residual_risks: [],
+        recommended_next_step: findings.length
+          ? 'Revise the task plan to resolve the listed findings before implementation begins.'
+          : 'Run the delivery build loop against the approved task plan.',
+      },
+      repairedFromBareFindings: true,
+      repairReason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 const implementationNoteSchema = z.object({
   artifact_type: z.literal('implementation-note'),
   task: z.string(),
@@ -1200,7 +1225,20 @@ ${JSON.stringify(taskPlan, null, 2)}`,
         ),
     });
 
-    const reviewReport = parseDeliveryStructuredOutput(reviewReportSchema, reviewResponse, 'architect review');
+    const parsedReview = parseReviewReportResponse(reviewResponse, 'architect review');
+    const reviewReport = parsedReview.report;
+    if (parsedReview.repairedFromBareFindings) {
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'structured_output_repaired',
+          stage: `review:${suffix}`,
+          target: 'review-report',
+          reason: parsedReview.repairReason,
+        },
+      });
+    }
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
       artifactPath: reviewPath,
