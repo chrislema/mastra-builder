@@ -162,6 +162,18 @@ test('ranCodeBeforeComplete recognizes Mastra workspace command execution', () =
   );
 });
 
+test('ranCodeBeforeComplete evaluates the latest attempt for repeated stage names', () => {
+  const events = [
+    { type: 'stage_start', stage: 'build:T1', role: 'engineer' },
+    { type: 'stage_end', stage: 'build:T1', reason: 'max_turns' },
+    { type: 'stage_start', stage: 'build:T1', role: 'engineer' },
+    { type: 'run_code', stage: 'build:T1', command: 'npm run typecheck', ok: false },
+    { type: 'stage_end', stage: 'build:T1', reason: 'complete_stage' },
+  ];
+
+  assert.equal(ranCodeBeforeComplete(events, { stage: 'build:T1' }).passed, true);
+});
+
 test('harnessRunBeforeFindings fails when release evidence is written before running code', () => {
   assert.equal(
     harnessRunBeforeFindings(

@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   implementationDeterministicRemediation,
   missingOwnedSurfacePaths,
+  priorStoppedBuildTaskIds,
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
@@ -264,4 +265,24 @@ test('reusable implementation artifacts reject notes outside role ownership', ()
   const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/index.ts'] }]).tasks;
 
   assert.equal(reusableImplementationArtifactForTask(repoPath, task), undefined);
+});
+
+test('build task preparation pauses after earlier stopped tasks', () => {
+  const plan = taskPlan([
+    { depends_on: [], owned_surfaces: ['src/setup.ts'] },
+    { depends_on: [], owned_surfaces: ['src/profile.ts'] },
+    { depends_on: [], owned_surfaces: ['src/weekly.ts'] },
+  ]);
+
+  assert.deepEqual(
+    priorStoppedBuildTaskIds({
+      taskPlan: plan,
+      taskIndex: 2,
+      taskStatuses: {
+        T1: { status: 'complete' },
+        T2: { status: 'stuck' },
+      },
+    }),
+    ['T2'],
+  );
 });

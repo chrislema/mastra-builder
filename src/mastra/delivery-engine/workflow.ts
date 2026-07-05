@@ -673,6 +673,76 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
   return [...surfaces];
 }
 
+function taskOwnsPackageManifest(task: Task) {
+  return effectiveOwnedSurfaces(task).some((surface) => {
+    const path = concreteOwnedSurfacePath(surface);
+    return path === 'package.json' || path === 'package-lock.json';
+  });
+}
+
+function packageDependencyNames(repoPath: string) {
+  const parsed = readJsonArtifact(repoPath, 'package.json');
+  if (!parsed || typeof parsed !== 'object') return [];
+
+  const names = new Set<string>();
+  for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    const bucket = (parsed as Record<string, unknown>)[key];
+    if (!bucket || typeof bucket !== 'object') continue;
+    for (const name of Object.keys(bucket)) names.add(name);
+  }
+
+  return [...names].sort();
+}
+
+function remediationHasVerificationFailure(remediation: string[]) {
+  return remediation.some((item) =>
+    /\b(verification_passed|build_verification_passed|npm run|typecheck|tsc|TS\d+|Cannot find module)\b/i.test(item),
+  );
+}
+
+function buildTimeoutRemediation({
+  task,
+  timeoutMs,
+  missingSurfaces,
+  verificationRecovery,
+}: {
+  task: Task;
+  timeoutMs: number;
+  missingSurfaces: string[];
+  verificationRecovery: boolean;
+}) {
+  if (missingSurfaces.length) {
+    return [
+      `${task.id} build attempt timed out after ${timeoutMs}ms. Create the missing owned surfaces before any broad investigation: ${missingSurfaces.join(', ')}.`,
+    ];
+  }
+
+  if (verificationRecovery) {
+    return [
+      `${task.id} repair attempt timed out after ${timeoutMs}ms. Fix the reported verification errors in the existing boundary surfaces before any broad investigation.`,
+    ];
+  }
+
+  return [
+    `${task.id} build attempt timed out after ${timeoutMs}ms. Edit the boundary surfaces before any broad investigation.`,
+  ];
+}
+
+export function priorStoppedBuildTaskIds({
+  taskPlan,
+  taskIndex,
+  taskStatuses,
+}: {
+  taskPlan: TaskPlan;
+  taskIndex: number;
+  taskStatuses: Record<string, { status?: string } | undefined>;
+}) {
+  return topoOrderTasks(taskPlan.tasks)
+    .slice(0, taskIndex)
+    .filter((task) => ['stuck', 'blocked'].includes(String(taskStatuses[task.id]?.status)))
+    .map((task) => task.id);
+}
+
 export function reusableImplementationArtifactForTask(repoPath: string, task: Task) {
   if (process.env.DELIVERY_REUSE_TASK_ARTIFACTS === '0') return undefined;
   if (missingOwnedSurfacePaths(repoPath, task).length) return undefined;
@@ -1170,6 +1240,12 @@ const implementationWorkspaceTools = [
 const implementationWriteOnlyWorkspaceTools = [
   WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
   WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
+] as string[];
+
+const implementationRepairWorkspaceTools = [
+  WORKSPACE_TOOLS.FILESYSTEM.READ_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
 ] as string[];
 
 const envTimeoutMs = (name: string, fallback: number) => {
@@ -2240,6 +2316,43 @@ const prepareBuildTaskAttemptLoopStep = createStep({
     const judgments = [...inputData.judgments];
 
     const run = await readDeliveryRunState({ repoPath: inputData.repoPath, mastra });
+    const priorStopped = priorStoppedBuildTaskIds({
+      taskPlan,
+      taskIndex: inputData.taskIndex,
+      taskStatuses: run.tasks,
+    });
+    if (priorStopped.length) {
+      await updateDeliveryTaskState({
+        repoPath: inputData.repoPath,
+        id: task.id,
+        status: 'blocked',
+        owner: task.owner,
+        note: `paused by earlier stopped task ${priorStopped.join(', ')}`,
+        mastra,
+      });
+
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan,
+        releaseGate: inputData.releaseGate,
+        status: 'stuck' as const,
+        runId: inputData.runId,
+        summary: `Build task ${task.id} paused because earlier build tasks stopped.`,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: priorStopped.map((dependency) => `${task.id} paused by earlier stopped task ${dependency}`),
+        taskId: task.id,
+        taskStatus: 'blocked' as const,
+        attempt: 0,
+        terminal: true,
+        remediation: [],
+      };
+    }
+
     const blockedBy = task.depends_on.filter((dependency) => run.tasks[dependency]?.status !== 'complete');
     if (blockedBy.length) {
       await updateDeliveryTaskState({
@@ -2406,9 +2519,17 @@ const executeBuildTaskAttemptStep = createStep({
     const usableSurfaces = taskBoundarySurfaces(inputData.repoPath, task).filter((surface) => !/^unknown\b/i.test(surface));
     const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
     const timeoutRecovery = inputData.remediation.some((item) => /timed out/i.test(item));
+    const verificationRecovery = remediationHasVerificationFailure(inputData.remediation);
     const writeFirstRecovery = timeoutRecovery && missingSurfaces.length > 0;
-    const activeTools = writeFirstRecovery ? implementationWriteOnlyWorkspaceTools : implementationWorkspaceTools;
-    const maxSteps = writeFirstRecovery ? 3 : 8;
+    const compileRepairRecovery = verificationRecovery && !writeFirstRecovery;
+    const activeTools = writeFirstRecovery
+      ? implementationWriteOnlyWorkspaceTools
+      : compileRepairRecovery
+        ? implementationRepairWorkspaceTools
+        : implementationWorkspaceTools;
+    const maxSteps = writeFirstRecovery ? 3 : compileRepairRecovery ? 4 : 8;
+    const packageManifestOwned = taskOwnsPackageManifest(task);
+    const existingPackageDependencies = packageDependencyNames(inputData.repoPath);
     const taskPacket = {
       scope: taskPlan.scope,
       task,
@@ -2418,6 +2539,8 @@ const executeBuildTaskAttemptStep = createStep({
       remediation: inputData.remediation,
       missing_owned_surfaces: missingSurfaces,
       boundary_surfaces: usableSurfaces,
+      package_manifest_owned: packageManifestOwned,
+      existing_package_dependencies: existingPackageDependencies,
     };
     await updateDeliveryTaskState({
       repoPath: inputData.repoPath,
@@ -2450,6 +2573,8 @@ Execution rules:
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
+- Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
+- If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Do not inspect node_modules; rely on project types and workflow verification.
 - If timeout recovery is active, do not investigate. Create the missing owned surfaces immediately.
 - Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`;
@@ -2462,7 +2587,19 @@ Timeout recovery is active.
 - Do not read or list files in this attempt.
 - Create compile-safe placeholders that satisfy the task packet and allow workflow verification to run.`
       : '';
-    const finalBuildPrompt = `${buildPrompt}${recoveryPrompt}`;
+    const repairPrompt = compileRepairRecovery
+      ? `
+
+Compile repair mode is active.
+- Fix exactly the remediation diagnostics below before doing anything else:
+${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
+- Do not list files in this attempt.
+- Read only boundary surfaces that are needed to fix these diagnostics.
+- Prefer editing existing generated files over adding new files.
+- Do not read spec.md, wrangler.toml, package.json, or package-lock.json unless that exact file is listed in boundary_surfaces.
+- Do not add or import a package that is not already listed in existing_package_dependencies unless package_manifest_owned is true.`
+      : '';
+    const finalBuildPrompt = `${buildPrompt}${recoveryPrompt}${repairPrompt}`;
     let buildResponse: unknown;
     try {
       buildResponse = await runWithDeliveryStageTimeout({
@@ -2485,9 +2622,12 @@ Timeout recovery is active.
     } catch (error) {
       if (!(error instanceof DeliveryStageTimeoutError)) throw error;
 
-      const remediation = [
-        `${task.id} build attempt timed out after ${error.timeoutMs}ms. Create or edit the owned surfaces before any broad investigation.`,
-      ];
+      const remediation = buildTimeoutRemediation({
+        task,
+        timeoutMs: error.timeoutMs,
+        missingSurfaces,
+        verificationRecovery,
+      });
       if (attempt >= inputData.maxRetries) {
         await updateDeliveryTaskState({
           repoPath: inputData.repoPath,
@@ -2570,6 +2710,7 @@ Timeout recovery is active.
         prompt: finalBuildPrompt,
         response: serializeAgentResponse(buildResponse),
         activeTools,
+        retryMode: writeFirstRecovery ? 'write-first' : compileRepairRecovery ? 'compile-repair' : 'normal',
       },
     });
     artifacts.push(buildTracePath);

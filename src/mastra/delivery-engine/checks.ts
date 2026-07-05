@@ -70,7 +70,14 @@ export function matchesAny(path: string, globs: readonly string[]) {
 
 export function stageSlice(events: DeliveryEvent[], stage?: string) {
   if (!stage) return events;
-  const start = events.findIndex((event) => event.type === 'stage_start' && event.stage === stage);
+  let start = -1;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type === 'stage_start' && event.stage === stage) {
+      start = index;
+      break;
+    }
+  }
   if (start === -1) return [];
   const end = events.findIndex(
     (event, index) => index > start && event.type === 'stage_end' && event.stage === stage,
