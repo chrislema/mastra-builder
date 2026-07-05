@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
@@ -197,6 +198,40 @@ const plannerOutputSchema = z.object({
   readout: readoutSchema,
   taskPlan: taskPlanSchema,
 });
+
+const plannerCacheSchema = z.object({
+  sourceFingerprint: z.string(),
+  createdAt: z.string(),
+});
+
+function plannerSourceFingerprint(sourceDocuments: Array<{ path: string; content: string }>) {
+  return createHash('sha256').update(JSON.stringify(sourceDocuments)).digest('hex');
+}
+
+function readJsonArtifact(repoPath: string, artifactPath: string) {
+  const fullPath = resolve(repoPath, artifactPath);
+  if (!existsSync(fullPath)) return undefined;
+  return JSON.parse(readFileSync(fullPath, 'utf8')) as unknown;
+}
+
+function readCachedPlannerOutput({
+  repoPath,
+  sourceFingerprint,
+}: {
+  repoPath: string;
+  sourceFingerprint: string;
+}) {
+  if (process.env.DELIVERY_REUSE_PLAN_CACHE === '0') return undefined;
+
+  const readout = readoutSchema.safeParse(readJsonArtifact(repoPath, '.delivery/artifacts/readout.json'));
+  const taskPlan = taskPlanSchema.safeParse(readJsonArtifact(repoPath, '.delivery/artifacts/task-plan.json'));
+  if (!readout.success || !taskPlan.success) return undefined;
+
+  const cache = plannerCacheSchema.safeParse(readJsonArtifact(repoPath, '.delivery/artifacts/plan-cache.json'));
+  if (cache.success && cache.data.sourceFingerprint !== sourceFingerprint) return undefined;
+
+  return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
+}
 
 const builderOutputSchema = z.object({
   note: implementationNoteSchema,
@@ -908,15 +943,24 @@ const createPlannerArtifactsStep = createStep({
     if (sourceDocuments.length !== 2) {
       throw new Error(`planner could not load ${inputData.visionPath} and ${inputData.specPath}`);
     }
-
-    const response = await runWithDeliveryStageTimeout({
+    const sourceFingerprint = plannerSourceFingerprint(sourceDocuments);
+    const cachedOutput = readCachedPlannerOutput({
       repoPath: inputData.repoPath,
-      mastra,
-      stage: 'plan',
-      timeoutMs: deliveryAgentTimeouts.standard,
-      operation: (abortSignal) =>
-        planner.generate(
-          `Use the source documents below. Do not call tools to read them. Produce:
+      sourceFingerprint,
+    });
+
+    const output = cachedOutput
+      ? { readout: cachedOutput.readout, taskPlan: cachedOutput.taskPlan }
+      : parseDeliveryStructuredOutput(
+          plannerOutputSchema,
+          await runWithDeliveryStageTimeout({
+            repoPath: inputData.repoPath,
+            mastra,
+            stage: 'plan',
+            timeoutMs: deliveryAgentTimeouts.standard,
+            operation: (abortSignal) =>
+              planner.generate(
+                `Use the source documents below. Do not call tools to read them. Produce:
 1. A readout artifact.
 2. A dependency-aware task-plan artifact.
 
@@ -927,37 +971,57 @@ Return only JSON matching this top-level shape: { "readout": {...}, "taskPlan": 
 
 Source documents:
 ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`).join('\n\n')}`,
-          {
-            ...structuredNoToolOptions,
-            abortSignal,
-            requestContext: createDeliveryRequestContext(inputData.repoPath),
-            structuredOutput: {
-              schema: plannerOutputSchema,
-              ...deliveryStructuredOutputOptions,
-              instructions: 'Return only the structured readout and taskPlan objects.',
-            },
-          },
-        ),
-    });
+                {
+                  ...structuredNoToolOptions,
+                  abortSignal,
+                  requestContext: createDeliveryRequestContext(inputData.repoPath),
+                  structuredOutput: {
+                    schema: plannerOutputSchema,
+                    ...deliveryStructuredOutputOptions,
+                    instructions: 'Return only the structured readout and taskPlan objects.',
+                  },
+                },
+              ),
+          }),
+          'planner',
+        );
 
-    const output = parseDeliveryStructuredOutput(plannerOutputSchema, response, 'planner');
+    if (cachedOutput) {
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'planner_cache_reused',
+          stage: 'plan',
+          cache_validated: cachedOutput.cacheValidated,
+        },
+      });
+    } else {
+      writeDeliveryArtifact({
+        repoPath: inputData.repoPath,
+        artifactPath: '.delivery/artifacts/readout.json',
+        artifact: output.readout,
+      });
+      writeDeliveryArtifact({
+        repoPath: inputData.repoPath,
+        artifactPath: '.delivery/artifacts/task-plan.json',
+        artifact: output.taskPlan,
+      });
+      writeDeliveryArtifact({
+        repoPath: inputData.repoPath,
+        artifactPath: '.delivery/artifacts/plan-cache.json',
+        artifact: {
+          sourceFingerprint,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    }
 
-    writeDeliveryArtifact({
-      repoPath: inputData.repoPath,
-      artifactPath: '.delivery/artifacts/readout.json',
-      artifact: output.readout,
-    });
     await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
       type: 'readout',
       path: '.delivery/artifacts/readout.json',
       mastra,
-    });
-
-    writeDeliveryArtifact({
-      repoPath: inputData.repoPath,
-      artifactPath: '.delivery/artifacts/task-plan.json',
-      artifact: output.taskPlan,
     });
     await recordDeliveryArtifactState({
       repoPath: inputData.repoPath,
