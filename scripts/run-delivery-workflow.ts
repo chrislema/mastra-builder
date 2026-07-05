@@ -1,6 +1,8 @@
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { mastra } from '../src/mastra/index';
-import { startDeliveryWorkflowRun } from '../src/mastra/delivery-engine/runner';
+import { markDeliveryWorkflowRunFailed, startDeliveryWorkflowRun } from '../src/mastra/delivery-engine/runner';
 
 function usage() {
   return `Usage:
@@ -16,6 +18,50 @@ Options:
   --runId                  Optional Mastra workflow run id.
   --no-includeState        Omit native workflow state from the result.
 `;
+}
+
+type WorkflowResponse = Awaited<ReturnType<typeof startDeliveryWorkflowRun>>;
+
+function readProjectedDeliveryStatus(repoPath: string) {
+  try {
+    const runPath = join(resolve(repoPath), '.delivery', 'run.json');
+    return JSON.parse(readFileSync(runPath, 'utf8')) as { status?: string; summary?: string; stage?: string };
+  } catch {
+    return undefined;
+  }
+}
+
+function markLatestReportInterrupted(repoPath: string, message: string) {
+  try {
+    const latestPath = join(resolve(repoPath), '.delivery', 'runs', 'latest.json');
+    if (!existsSync(latestPath)) return;
+    const latest = JSON.parse(readFileSync(latestPath, 'utf8')) as Record<string, unknown>;
+    latest.generatedAt = new Date().toISOString();
+    latest.status = 'interrupted';
+    latest.error = { name: 'Error', message };
+    writeFileSync(latestPath, JSON.stringify(latest, null, 2));
+    if (typeof latest.runId === 'string') {
+      writeFileSync(join(resolve(repoPath), '.delivery', 'runs', `${latest.runId}.json`), JSON.stringify(latest, null, 2));
+    }
+  } catch {
+    // Best-effort only. The durable run state is marked separately.
+  }
+}
+
+function compactResponse(response: WorkflowResponse, repoPath: string) {
+  const result = response.result as { status?: unknown; state?: { status?: unknown; summary?: unknown; nextSteps?: unknown } };
+  const projection = readProjectedDeliveryStatus(repoPath);
+  return {
+    workflowId: response.workflowId,
+    runId: response.runId,
+    resourceId: response.resourceId,
+    reportPath: response.reportPath,
+    workflowStatus: result.status,
+    deliveryStatus: result.state?.status ?? projection?.status,
+    stage: projection?.stage,
+    summary: result.state?.summary ?? projection?.summary,
+    nextSteps: result.state?.nextSteps,
+  };
 }
 
 const { values } = parseArgs({
@@ -48,9 +94,26 @@ try {
     console.error(usage());
     process.exit(1);
   }
+  const resolvedRepoPath = resolve(repoPath);
+  let shuttingDown = false;
+  const handleStop = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const message = `Delivery run interrupted by ${signal}.`;
+    console.error(message);
+    void markDeliveryWorkflowRunFailed(mastra, resolvedRepoPath)
+      .catch(() => undefined)
+      .finally(async () => {
+        markLatestReportInterrupted(resolvedRepoPath, message);
+        await mastra.shutdown().catch(() => undefined);
+        process.exit(signal === 'SIGINT' ? 130 : 143);
+      });
+  };
+  process.once('SIGINT', handleStop);
+  process.once('SIGTERM', handleStop);
 
   const response = await startDeliveryWorkflowRun(mastra, {
-    repoPath,
+    repoPath: resolvedRepoPath,
     visionPath: values.visionPath ?? values.vision,
     specPath: values.specPath ?? values.spec,
     deployMode: values.deployMode ?? values.deploy,
@@ -60,9 +123,9 @@ try {
     includeState: values.includeState,
   });
 
-  console.log(JSON.stringify(response, null, 2));
+  console.log(JSON.stringify(compactResponse(response, resolvedRepoPath), null, 2));
   const result = response.result as { status?: unknown; state?: { status?: unknown } };
-  const deliveryStatus = result.state?.status;
+  const deliveryStatus = result.state?.status ?? readProjectedDeliveryStatus(resolvedRepoPath)?.status;
   const didNotComplete =
     result.status === 'failed' ||
     deliveryStatus === 'failed' ||

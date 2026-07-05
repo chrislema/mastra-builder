@@ -165,6 +165,18 @@ async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: Del
 export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
   assertDeliveryModelEnvironment();
   const { run, repoPath, resourceId, startOptions } = await prepareDeliveryWorkflowRun(host, input);
+  tryWriteDeliveryWorkflowRunReport({
+    repoPath,
+    runId: run.runId,
+    resourceId,
+    result: {
+      status: 'running',
+      state: {
+        status: 'running',
+        repoPath,
+      },
+    },
+  }, host);
 
   try {
     const result = await run.start(startOptions);
@@ -190,7 +202,7 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
   }
 }
 
-async function closeFailedDeliveryRun({ host, repoPath }: { host: DeliveryWorkflowHost; repoPath: string }) {
+async function closeFailedDeliveryRun({ host, repoPath }: { host: MastraLike; repoPath: string }) {
   try {
     await finishDeliveryRunState({ repoPath, status: 'failed', mastra: host });
   } catch (error) {
@@ -199,6 +211,10 @@ async function closeFailedDeliveryRun({ host, repoPath }: { host: DeliveryWorkfl
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+export async function markDeliveryWorkflowRunFailed(host: MastraLike, repoPath: string) {
+  await closeFailedDeliveryRun({ host, repoPath: resolve(repoPath) });
 }
 
 export async function startDeliveryWorkflowRunAsync(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {

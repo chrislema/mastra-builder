@@ -566,6 +566,70 @@ const structuredNoToolOptions = {
   maxSteps: 1,
 };
 
+const envTimeoutMs = (name: string, fallback: number) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+
+const deliveryAgentTimeouts = {
+  standard: envTimeoutMs('DELIVERY_AGENT_CALL_TIMEOUT_MS', 300_000),
+  build: envTimeoutMs('DELIVERY_BUILD_CALL_TIMEOUT_MS', 600_000),
+  judge: envTimeoutMs('DELIVERY_JUDGE_CALL_TIMEOUT_MS', 300_000),
+};
+
+class DeliveryStageTimeoutError extends Error {
+  constructor(
+    readonly stage: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`Delivery stage "${stage}" timed out after ${timeoutMs}ms`);
+    this.name = 'DeliveryStageTimeoutError';
+  }
+}
+
+async function runWithDeliveryStageTimeout<T>({
+  repoPath,
+  mastra,
+  stage,
+  timeoutMs,
+  operation,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+  timeoutMs: number;
+  operation: (abortSignal: AbortSignal) => Promise<T>;
+}) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort(`Delivery stage "${stage}" timed out after ${timeoutMs}ms`);
+      reject(new DeliveryStageTimeoutError(stage, timeoutMs));
+    }, timeoutMs);
+    timer.unref?.();
+  });
+
+  const work = operation(controller.signal);
+  work.catch(() => undefined);
+
+  try {
+    return await Promise.race([work, timeout]);
+  } catch (error) {
+    if (error instanceof DeliveryStageTimeoutError) {
+      await appendDeliveryEventState({
+        repoPath,
+        mastra,
+        event: { type: 'stage_timeout', stage, timeout_ms: timeoutMs },
+      }).catch(() => undefined);
+      await endDeliveryStageState({ repoPath, stage, reason: 'max_turns', mastra }).catch(() => undefined);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function judgeDeliveryArtifact({
   mastra,
   repoPath,
@@ -593,23 +657,31 @@ async function judgeDeliveryArtifact({
   const judge = requiredAgent(mastra, 'judge');
   const rubric = loadDeliveryEngineRubric(rubricName);
   const rubricJudgeOutputSchema = judgeOutputSchemaForRubric(rubric);
-  const response = await judge.generate(
-    buildJudgeArtifactPrompt({
-      rubric,
-      subjectName,
-      subject,
-      deterministicResults,
-    }),
-    {
-      ...structuredNoToolOptions,
-      requestContext: createDeliveryRequestContext(repoPath),
-      structuredOutput: {
-        schema: rubricJudgeOutputSchema,
-        ...deliveryStructuredOutputOptions,
-        instructions: 'Return only the judge gates and dimensions. Do not compute aggregate scores.',
-      },
-    },
-  );
+  const response = await runWithDeliveryStageTimeout({
+    repoPath,
+    mastra,
+    stage: `judge:${slug}`,
+    timeoutMs: deliveryAgentTimeouts.judge,
+    operation: (abortSignal) =>
+      judge.generate(
+        buildJudgeArtifactPrompt({
+          rubric,
+          subjectName,
+          subject,
+          deterministicResults,
+        }),
+        {
+          ...structuredNoToolOptions,
+          abortSignal,
+          requestContext: createDeliveryRequestContext(repoPath),
+          structuredOutput: {
+            schema: rubricJudgeOutputSchema,
+            ...deliveryStructuredOutputOptions,
+            instructions: 'Return only the judge gates and dimensions. Do not compute aggregate scores.',
+          },
+        },
+      ),
+  });
 
   const judgeOutput = parseDeliveryStructuredOutput(rubricJudgeOutputSchema, response, `${subjectName} judge`);
   const judgeOutputPath = `.delivery/artifacts/judgments/${slug}.judge.json`;
@@ -783,8 +855,14 @@ const createPlannerArtifactsStep = createStep({
       throw new Error(`planner could not load ${inputData.visionPath} and ${inputData.specPath}`);
     }
 
-    const response = await planner.generate(
-      `Use the source documents below. Do not call tools to read them. Produce:
+    const response = await runWithDeliveryStageTimeout({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage: 'plan',
+      timeoutMs: deliveryAgentTimeouts.standard,
+      operation: (abortSignal) =>
+        planner.generate(
+          `Use the source documents below. Do not call tools to read them. Produce:
 1. A readout artifact.
 2. A dependency-aware task-plan artifact.
 
@@ -795,16 +873,18 @@ Return only JSON matching this top-level shape: { "readout": {...}, "taskPlan": 
 
 Source documents:
 ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`).join('\n\n')}`,
-      {
-        ...structuredNoToolOptions,
-        requestContext: createDeliveryRequestContext(inputData.repoPath),
-        structuredOutput: {
-          schema: plannerOutputSchema,
-          ...deliveryStructuredOutputOptions,
-          instructions: 'Return only the structured readout and taskPlan objects.',
-        },
-      },
-    );
+          {
+            ...structuredNoToolOptions,
+            abortSignal,
+            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            structuredOutput: {
+              schema: plannerOutputSchema,
+              ...deliveryStructuredOutputOptions,
+              instructions: 'Return only the structured readout and taskPlan objects.',
+            },
+          },
+        ),
+    });
 
     const output = parseDeliveryStructuredOutput(plannerOutputSchema, response, 'planner');
 
@@ -1082,8 +1162,14 @@ const executeReviewAttemptStep = createStep({
       mastra,
     });
 
-    const reviewResponse = await architect.generate(
-      `Review the task plan below for structural readiness before implementation.
+    const reviewResponse = await runWithDeliveryStageTimeout({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage: `review:${suffix}`,
+      timeoutMs: deliveryAgentTimeouts.standard,
+      operation: (abortSignal) =>
+        architect.generate(
+          `Review the task plan below for structural readiness before implementation.
 
 Evaluate granularity, error handling, trust boundaries, state authority, fail-fast behavior, data flow, security, and complexity.
 Approve only when build can safely begin. Block when planner changes are required before implementation.
@@ -1101,16 +1187,18 @@ Return exactly one JSON object, not a bare findings array, with this shape:
 
 Task plan:
 ${JSON.stringify(taskPlan, null, 2)}`,
-      {
-        ...structuredNoToolOptions,
-        requestContext: createDeliveryRequestContext(inputData.repoPath),
-        structuredOutput: {
-          schema: reviewReportSchema,
-          ...deliveryStructuredOutputOptions,
-          instructions: 'Return only one review-report object. Do not return a bare array.',
-        },
-      },
-    );
+          {
+            ...structuredNoToolOptions,
+            abortSignal,
+            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            structuredOutput: {
+              schema: reviewReportSchema,
+              ...deliveryStructuredOutputOptions,
+              instructions: 'Return only one review-report object. Do not return a bare array.',
+            },
+          },
+        ),
+    });
 
     const reviewReport = parseDeliveryStructuredOutput(reviewReportSchema, reviewResponse, 'architect review');
     writeDeliveryArtifact({
@@ -1197,8 +1285,14 @@ ${JSON.stringify(taskPlan, null, 2)}`,
       mastra,
     });
 
-    const revisionResponse = await planner.generate(
-      `The architect blocked the task plan. Revise the task plan to address the review findings.
+    const revisionResponse = await runWithDeliveryStageTimeout({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage: `plan:architect-bounce-${revisionNumber}`,
+      timeoutMs: deliveryAgentTimeouts.standard,
+      operation: (abortSignal) =>
+        planner.generate(
+          `The architect blocked the task plan. Revise the task plan to address the review findings.
 
 Return a full replacement taskPlan object. Preserve concrete deliverables, checkable acceptance criteria, dependencies, and owned surfaces.
 Do not write implementation code.
@@ -1211,16 +1305,18 @@ ${JSON.stringify(reviewReport, null, 2)}
 
 Rubric remediation from the review judge:
 ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
-      {
-        ...structuredNoToolOptions,
-        requestContext: createDeliveryRequestContext(inputData.repoPath),
-        structuredOutput: {
-          schema: plannerRevisionOutputSchema,
-          ...deliveryStructuredOutputOptions,
-          instructions: 'Return only the revised taskPlan object wrapped as { "taskPlan": ... }.',
-        },
-      },
-    );
+          {
+            ...structuredNoToolOptions,
+            abortSignal,
+            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            structuredOutput: {
+              schema: plannerRevisionOutputSchema,
+              ...deliveryStructuredOutputOptions,
+              instructions: 'Return only the revised taskPlan object wrapped as { "taskPlan": ... }.',
+            },
+          },
+        ),
+    });
 
     const revision = parseDeliveryStructuredOutput(plannerRevisionOutputSchema, revisionResponse, 'planner revision');
     const revisedTaskPlan = revision.taskPlan;
@@ -1533,8 +1629,14 @@ const executeBuildTaskAttemptStep = createStep({
       mastra,
     });
 
-    const buildResponse = await agent.generate(
-      `Implement task ${task.id}: ${task.deliverable}
+    const buildResponse = await runWithDeliveryStageTimeout({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage,
+      timeoutMs: deliveryAgentTimeouts.build,
+      operation: (abortSignal) =>
+        agent.generate(
+          `Implement task ${task.id}: ${task.deliverable}
 
 Acceptance criteria:
 ${task.acceptance_criteria.map((criterion) => `- ${criterion}`).join('\n')}
@@ -1549,15 +1651,17 @@ Context artifacts:
 
 ${inputData.remediation.length ? `This is a bounce. Fix exactly these findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
 Use the workspace to make the smallest coherent code change. Stay inside the active boundary. Run code or tests that verify the acceptance criteria before returning. Return an implementation note with every changed file and visible verification gaps.`,
-      {
-        requestContext: createDeliveryRequestContext(inputData.repoPath),
-        structuredOutput: {
-          schema: builderOutputSchema,
-          ...deliveryStructuredOutputOptions,
-          instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
-        },
-      },
-    );
+          {
+            abortSignal,
+            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            structuredOutput: {
+              schema: builderOutputSchema,
+              ...deliveryStructuredOutputOptions,
+              instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
+            },
+          },
+        ),
+    });
 
     const { note } = parseDeliveryStructuredOutput(builderOutputSchema, buildResponse, `${role} build`);
     const notePath = `.delivery/artifacts/note-${task.id}.a${attemptNumber}.json`;
@@ -1914,8 +2018,14 @@ const executeReleaseGateAttemptStep = createStep({
       mastra,
     });
 
-    const gateResponse = await tester.generate(
-      `Verify the built work and produce a release gate for pre-deployment.
+    const gateResponse = await runWithDeliveryStageTimeout({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage,
+      timeoutMs: deliveryAgentTimeouts.build,
+      operation: (abortSignal) =>
+        tester.generate(
+          `Verify the built work and produce a release gate for pre-deployment.
 
 Read the task plan and implementation notes under .delivery/artifacts/. Write or update tests under tests/ when useful. Run the relevant smoke, API, and E2E checks that can be executed in this repo. Log test/probe runs through workspace command execution before returning.
 
@@ -1924,15 +2034,17 @@ ${JSON.stringify(inputData.taskPlan, null, 2)}
 
 ${inputData.remediation.length ? `This is a bounce. Fix exactly these release-gate findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
 Return a release-gate object with event_type "pre_deployment". Every critical area must be verified with evidence, missing and therefore blocking, or not_applicable with a reason. Fail closed on unproven critical behavior.`,
-      {
-        requestContext: createDeliveryRequestContext(inputData.repoPath),
-        structuredOutput: {
-          schema: testerOutputSchema,
-          ...deliveryStructuredOutputOptions,
-          instructions: 'Return only { "gate": <release-gate> }.',
-        },
-      },
-    );
+          {
+            abortSignal,
+            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            structuredOutput: {
+              schema: testerOutputSchema,
+              ...deliveryStructuredOutputOptions,
+              instructions: 'Return only { "gate": <release-gate> }.',
+            },
+          },
+        ),
+    });
 
     const { gate } = parseDeliveryStructuredOutput(testerOutputSchema, gateResponse, 'tester release gate');
     writeDeliveryArtifact({
@@ -2179,8 +2291,14 @@ const createDeploymentReportStep = createStep({
       },
     });
 
-    const deployResponse = await deployer.generate(
-      `Deploy the approved build.
+    const deployResponse = await runWithDeliveryStageTimeout({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage,
+      timeoutMs: deliveryAgentTimeouts.build,
+      operation: (abortSignal) =>
+        deployer.generate(
+          `Deploy the approved build.
 
 Release gate path: ${releaseGatePath}
 Deploy mode: ${inputData.deployMode}
@@ -2195,15 +2313,17 @@ Rules:
 
 Release gate:
 ${JSON.stringify(inputData.releaseGate, null, 2)}`,
-      {
-        requestContext: createDeliveryRequestContext(inputData.repoPath),
-        structuredOutput: {
-          schema: deployerOutputSchema,
-          ...deliveryStructuredOutputOptions,
-          instructions: 'Return only { "report": <deployment-report> } after deployment and live verification.',
-        },
-      },
-    );
+          {
+            abortSignal,
+            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            structuredOutput: {
+              schema: deployerOutputSchema,
+              ...deliveryStructuredOutputOptions,
+              instructions: 'Return only { "report": <deployment-report> } after deployment and live verification.',
+            },
+          },
+        ),
+    });
 
     const { report } = parseDeliveryStructuredOutput(deployerOutputSchema, deployResponse, 'deployer');
     const reportPath = '.delivery/artifacts/deployment-report.json';
