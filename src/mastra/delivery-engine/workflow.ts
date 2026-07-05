@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
+import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import {
@@ -39,7 +40,7 @@ import {
   deliveryReviewStepScorers,
 } from './scorers';
 import { safePersistDeliveryStateWithMastra } from './observability';
-import { deliveryStructuredOutputOptions } from './models';
+import { deliveryStructuredOutputOptions, deliveryToolStructuredOutputOptions } from './models';
 import { parseDeliveryStructuredOutput } from './structured-output';
 
 const workflowInputSchema = z.object({
@@ -651,6 +652,49 @@ const requiredAgent = (mastra: any, id: string) => {
 const structuredNoToolOptions = {
   activeTools: [] as string[],
   maxSteps: 1,
+};
+
+const implementationWorkspaceTools = [
+  WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES,
+  WORKSPACE_TOOLS.FILESYSTEM.READ_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
+  WORKSPACE_TOOLS.FILESYSTEM.GREP,
+  WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
+] as string[];
+
+const toolNameFromCall = (toolCall: unknown) => {
+  if (!toolCall || typeof toolCall !== 'object') return undefined;
+  const record = toolCall as Record<string, any>;
+  return record.payload?.toolName ?? record.toolName ?? record.name;
+};
+
+const implementationIterationFeedback = ({ iteration, toolCalls }: { iteration: number; toolCalls?: unknown[] }) => {
+  const toolNames = (toolCalls ?? []).map(toolNameFromCall).filter((name): name is string => typeof name === 'string');
+  const wroteFiles = toolNames.some((name) =>
+    [
+      WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
+      WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
+      WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
+    ].includes(name),
+  );
+
+  if (iteration >= 2 && toolNames.length && !wroteFiles) {
+    return {
+      feedback:
+        'You have enough context for this scoped task. Create or edit the owned files now, then run the smallest relevant verification command.',
+    };
+  }
+
+  if (iteration >= 6) {
+    return {
+      feedback:
+        'Finish the task now: run one final verification if needed, then return the required implementation-note JSON.',
+    };
+  }
+
+  return undefined;
 };
 
 const envTimeoutMs = (name: string, fallback: number) => {
@@ -1781,6 +1825,14 @@ const executeBuildTaskAttemptStep = createStep({
     const attemptNumber = attempt + 1;
     const stage = `build:${task.id}`;
     const usableSurfaces = task.owned_surfaces.filter((surface) => !/^unknown\b/i.test(surface));
+    const taskPacket = {
+      scope: taskPlan.scope,
+      task,
+      technology_decisions: taskPlan.technology_decisions,
+      open_decisions: taskPlan.open_decisions,
+      risks: taskPlan.risks,
+      remediation: inputData.remediation,
+    };
     await updateDeliveryTaskState({
       repoPath: inputData.repoPath,
       id: task.id,
@@ -1805,29 +1857,30 @@ const executeBuildTaskAttemptStep = createStep({
       timeoutMs: deliveryAgentTimeouts.build,
       operation: (abortSignal) =>
         agent.generate(
-          `Implement task ${task.id}: ${task.deliverable}
+          `Implement build task ${task.id}.
 
-Acceptance criteria:
-${task.acceptance_criteria.map((criterion) => `- ${criterion}`).join('\n')}
+Use this task packet as the source of truth. Do not reread .delivery planning or review artifacts unless a specific required field is missing from the packet.
 
-Owned surfaces:
-${task.owned_surfaces.map((surface) => `- ${surface}`).join('\n')}
+Task packet:
+${JSON.stringify(taskPacket, null, 2)}
 
-Context artifacts:
-- .delivery/artifacts/task-plan.json
-- latest .delivery/artifacts/task-plan.revision-*.json when present
-- .delivery/artifacts/readout.json
-- .delivery/artifacts/review-report*.json
-- prior implementation notes under .delivery/artifacts/
-
-${inputData.remediation.length ? `This is a bounce. Fix exactly these findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
-Use the workspace to make the smallest coherent code change. Stay inside the active boundary. Run code or tests that verify the acceptance criteria before returning. Return an implementation note with every changed file and visible verification gaps.`,
+Execution rules:
+- Make the smallest coherent code change for this task.
+- Touch only the owned surfaces in the task packet unless a dependency blocks the task.
+- If an owned surface is missing, create it.
+- Spend at most one quick list/read pass on the existing repo shape before writing files.
+- Run the smallest relevant verification command before returning. For scaffolding, prefer a package/build/typecheck or wrangler dry-run command when available.
+- Return an implementation note with every changed file, verification evidence, and visible verification gaps.`,
           {
             abortSignal,
+            activeTools: implementationWorkspaceTools,
+            maxSteps: 8,
+            toolCallConcurrency: 1,
+            onIterationComplete: implementationIterationFeedback,
             requestContext: createDeliveryRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: builderOutputSchema,
-              ...deliveryStructuredOutputOptions,
+              ...deliveryToolStructuredOutputOptions,
               instructions: 'Return only { "note": <implementation-note> } after implementation and verification.',
             },
           },
@@ -2210,7 +2263,7 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
             requestContext: createDeliveryRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: testerOutputSchema,
-              ...deliveryStructuredOutputOptions,
+              ...deliveryToolStructuredOutputOptions,
               instructions: 'Return only { "gate": <release-gate> }.',
             },
           },
@@ -2489,7 +2542,7 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
             requestContext: createDeliveryRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: deployerOutputSchema,
-              ...deliveryStructuredOutputOptions,
+              ...deliveryToolStructuredOutputOptions,
               instructions: 'Return only { "report": <deployment-report> } after deployment and live verification.',
             },
           },

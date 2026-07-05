@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   deliveryModel,
   deliveryStructuredOutputOptions,
+  deliveryToolStructuredOutputOptions,
   missingEnvVarsForDeliveryModels,
 } from '../../src/mastra/delivery-engine/models.ts';
 
@@ -11,6 +12,10 @@ test('delivery model uses ZAI coding plan with prompt-injected structured output
   assert.deepEqual(deliveryStructuredOutputOptions, {
     jsonPromptInjection: true,
     errorStrategy: 'warn',
+  });
+  assert.deepEqual(deliveryToolStructuredOutputOptions, {
+    ...deliveryStructuredOutputOptions,
+    model: deliveryModel,
   });
   assert.deepEqual(missingEnvVarsForDeliveryModels({}), ['ZHIPU_API_KEY']);
 });

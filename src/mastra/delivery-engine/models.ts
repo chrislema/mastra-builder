@@ -5,6 +5,11 @@ export const deliveryStructuredOutputOptions = {
   errorStrategy: 'warn',
 } as const;
 
+export const deliveryToolStructuredOutputOptions = {
+  ...deliveryStructuredOutputOptions,
+  model: deliveryModel,
+} as const;
+
 const providerApiKeyEnvVars: Record<string, string[]> = {
   openai: ['OPENAI_API_KEY'],
   zai: ['ZHIPU_API_KEY'],
