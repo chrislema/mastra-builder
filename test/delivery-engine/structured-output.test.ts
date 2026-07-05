@@ -57,6 +57,53 @@ test('parseDeliveryStructuredOutput extracts balanced JSON from surrounding text
   });
 });
 
+test('parseDeliveryStructuredOutput accepts nested output objects', () => {
+  const output = parseDeliveryStructuredOutput(
+    sampleSchema,
+    {
+      text: '',
+      steps: [
+        {
+          output: {
+            object: {
+              artifact_type: 'sample',
+              items: ['nested'],
+            },
+          },
+        },
+      ],
+    },
+    'sample',
+  );
+
+  assert.deepEqual(output, {
+    artifact_type: 'sample',
+    items: ['nested'],
+  });
+});
+
+test('parseDeliveryStructuredOutput extracts JSON from nested step text', () => {
+  const output = parseDeliveryStructuredOutput(
+    sampleSchema,
+    {
+      text: '',
+      steps: [
+        {
+          output: {
+            text: 'Result: {"artifact_type":"sample","items":["step-text"]}',
+          },
+        },
+      ],
+    },
+    'sample',
+  );
+
+  assert.deepEqual(output, {
+    artifact_type: 'sample',
+    items: ['step-text'],
+  });
+});
+
 test('parseDeliveryStructuredOutput reports the delivery stage when no object or JSON is usable', () => {
   assert.throws(
     () =>
@@ -67,6 +114,6 @@ test('parseDeliveryStructuredOutput reports the delivery stage when no object or
         },
         'planner',
       ),
-    /planner returned invalid structured output: response\.object was undefined/,
+    /planner returned invalid structured output: response\.object was undefined.*top-level keys/,
   );
 });
