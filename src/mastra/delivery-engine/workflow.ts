@@ -1087,6 +1087,7 @@ const executeReviewAttemptStep = createStep({
 
 Evaluate granularity, error handling, trust boundaries, state authority, fail-fast behavior, data flow, security, and complexity.
 Approve only when build can safely begin. Block when planner changes are required before implementation.
+Use verdict "blocked" when any high-severity finding, auth/state-integrity finding, missing owner, or dependency defect must be fixed before implementation begins.
 Every finding must be specific, evidenced, and remediable by an owning role.
 Return exactly one JSON object, not a bare findings array, with this shape:
 {
@@ -1143,7 +1144,14 @@ ${JSON.stringify(taskPlan, null, 2)}`,
     artifacts.push(reviewJudge.judgeOutputPath, reviewJudge.judgmentPath);
     judgments.push(reviewJudge.ref);
 
-    if (reviewReport.verdict !== 'blocked' && reviewJudge.judgment.passed) {
+    const reviewNeedsRevision = reviewReport.verdict === 'blocked' || !reviewJudge.judgment.passed;
+    const revisionRemediation = reviewJudge.judgment.passed
+      ? reviewReport.findings.map(
+          (finding) => `${finding.severity.toUpperCase()}: ${finding.title} - ${finding.required_remediation}`,
+        )
+      : reviewJudge.judgment.remediation;
+
+    if (!reviewNeedsRevision) {
       return {
         ...stageContext(),
         status: 'reviewed' as const,
@@ -1163,38 +1171,19 @@ ${JSON.stringify(taskPlan, null, 2)}`,
       };
     }
 
-    if (!reviewJudge.judgment.passed) {
-      return {
-        ...stageContext(),
-        status: 'stuck' as const,
-        runId: inputData.runId,
-        summary: 'Architect review report failed rubric judgment.',
-        artifacts,
-        checks,
-        judgments,
-        questions: [],
-        nextSteps: reviewJudge.judgment.remediation,
-        attempt,
-        terminal: true,
-      };
-    }
-
     if (attempt >= inputData.maxRetries) {
       return {
         ...stageContext(),
         status: 'stuck' as const,
         runId: inputData.runId,
-        summary: 'Architect review blocked the plan after bounded planner retries.',
+        summary: !reviewJudge.judgment.passed
+          ? 'Architect review report failed rubric judgment after bounded planner retries.'
+          : 'Architect review blocked the plan after bounded planner retries.',
         artifacts,
         checks,
         judgments,
         questions: [],
-        nextSteps: [
-          reviewReport.recommended_next_step,
-          ...reviewReport.findings.map(
-            (finding) => `${finding.severity.toUpperCase()}: ${finding.title} - ${finding.required_remediation}`,
-          ),
-        ],
+        nextSteps: [reviewReport.recommended_next_step, ...revisionRemediation],
         attempt,
         terminal: true,
       };
@@ -1218,7 +1207,10 @@ Current task plan:
 ${JSON.stringify(taskPlan, null, 2)}
 
 Architect review:
-${JSON.stringify(reviewReport, null, 2)}`,
+${JSON.stringify(reviewReport, null, 2)}
+
+Rubric remediation from the review judge:
+${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
       {
         ...structuredNoToolOptions,
         requestContext: createDeliveryRequestContext(inputData.repoPath),
