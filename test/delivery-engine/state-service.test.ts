@@ -11,7 +11,13 @@ import {
   readDeliveryRunState,
   updateDeliveryTaskState,
 } from '../../src/mastra/delivery-engine/state-service.ts';
-import { finishDeliveryRun, initializeDeliveryRun, readDeliveryRun, updateDeliveryTask } from '../../src/mastra/delivery-engine/state.ts';
+import {
+  finishDeliveryRun,
+  initializeDeliveryRun,
+  readDeliveryRun,
+  recordDeliveryArtifact,
+  updateDeliveryTask,
+} from '../../src/mastra/delivery-engine/state.ts';
 
 const createRepo = () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-state-service-'));
@@ -110,6 +116,21 @@ test('delivery state initialization repairs stale running Mastra snapshots from 
     written.some((log) => log.runId === nextRun.run_id && log.data?.kind === 'snapshot' && log.data.run.status === 'running'),
     true,
   );
+});
+
+test('delivery state service keeps richer local projection when Mastra snapshot is stale', async () => {
+  const repoPath = createRepo();
+  const { store } = createMemoryObservabilityStore();
+  const mastra = createMastra(store);
+
+  await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md', mastra });
+  recordDeliveryArtifact({ repoPath, type: 'readout', path: '.delivery/artifacts/readout.json' });
+
+  const run = await readDeliveryRunState({ repoPath, mastra });
+  const events = await readDeliveryEventsState({ repoPath, mastra });
+
+  assert.equal(run.artifacts.readout, '.delivery/artifacts/readout.json');
+  assert.equal(events.some((event) => event.type === 'artifact_write'), true);
 });
 
 test('delivery state service writes Mastra storage before refreshing the local projection', async () => {

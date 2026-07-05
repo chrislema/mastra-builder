@@ -61,7 +61,16 @@ try {
   });
 
   console.log(JSON.stringify(response, null, 2));
-  if ((response.result as { status?: unknown }).status === 'failed') {
+  const result = response.result as { status?: unknown; state?: { status?: unknown } };
+  const deliveryStatus = result.state?.status;
+  const didNotComplete =
+    result.status === 'failed' ||
+    deliveryStatus === 'failed' ||
+    deliveryStatus === 'stuck' ||
+    deliveryStatus === 'gate_failed' ||
+    deliveryStatus === 'blocked_on_questions';
+
+  if (didNotComplete) {
     if (response.reportPath) console.error(`Delivery run report: ${response.reportPath}`);
     process.exitCode = 1;
   }

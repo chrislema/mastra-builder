@@ -26,7 +26,7 @@ import { createDeliveryRequestContext } from './context';
 import {
   aggregateJudgment,
   buildJudgeArtifactPrompt,
-  judgeOutputSchema,
+  judgeOutputSchemaForRubric,
   loadDeliveryEngineRubric,
   type DeterministicGateResult,
 } from './judgment';
@@ -234,6 +234,9 @@ const workflowStatusSchema = z.enum([
 const checkSummarySchema = z.object({ check: z.string(), passed: z.boolean(), reason: z.string() });
 
 const workflowOutputSchema = z.object({
+  repoPath: z.string().optional(),
+  maxRetries: z.number().int().min(0).optional(),
+  deployMode: z.enum(['mock', 'real']).optional(),
   status: workflowStatusSchema,
   runId: z.string(),
   summary: z.string(),
@@ -589,6 +592,7 @@ async function judgeDeliveryArtifact({
 
   const judge = requiredAgent(mastra, 'judge');
   const rubric = loadDeliveryEngineRubric(rubricName);
+  const rubricJudgeOutputSchema = judgeOutputSchemaForRubric(rubric);
   const response = await judge.generate(
     buildJudgeArtifactPrompt({
       rubric,
@@ -600,14 +604,14 @@ async function judgeDeliveryArtifact({
       ...structuredNoToolOptions,
       requestContext: createDeliveryRequestContext(repoPath),
       structuredOutput: {
-        schema: judgeOutputSchema,
+        schema: rubricJudgeOutputSchema,
         ...deliveryStructuredOutputOptions,
         instructions: 'Return only the judge gates and dimensions. Do not compute aggregate scores.',
       },
     },
   );
 
-  const judgeOutput = parseDeliveryStructuredOutput(judgeOutputSchema, response, `${subjectName} judge`);
+  const judgeOutput = parseDeliveryStructuredOutput(rubricJudgeOutputSchema, response, `${subjectName} judge`);
   const judgeOutputPath = `.delivery/artifacts/judgments/${slug}.judge.json`;
   writeDeliveryArtifact({
     repoPath,
@@ -2244,6 +2248,9 @@ const createDeploymentJudgmentStep = createStep({
     };
 
     const baseOutput = () => ({
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -2311,6 +2318,9 @@ const createDeploymentJudgmentStep = createStep({
     await finishRun(complete ? 'complete' : 'failed');
 
     return {
+      repoPath: inputData.repoPath,
+      maxRetries: inputData.maxRetries,
+      deployMode: inputData.deployMode,
       status: complete ? ('complete' as const) : ('failed' as const),
       runId: inputData.runId,
       summary: complete

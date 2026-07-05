@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aggregateJudgment, type JudgeOutput, type Rubric } from '../../src/mastra/delivery-engine/judgment.ts';
+import {
+  aggregateJudgment,
+  judgeOutputSchemaForRubric,
+  type JudgeOutput,
+  type Rubric,
+} from '../../src/mastra/delivery-engine/judgment.ts';
 
 const rubric: Rubric = {
   target: { name: 'test-rubric' },
@@ -91,6 +96,16 @@ test('aggregateJudgment fails closed on missing gates and dimensions', () => {
   const missingDimension = run({ ...allPass, dimensions: allPass.dimensions.slice(0, 2) });
   assert.deepEqual(missingDimension.dimensions_missing, ['c']);
   assert.equal(missingDimension.passed, false);
+});
+
+test('judgeOutputSchemaForRubric rejects missing rubric ids before aggregation', () => {
+  const schema = judgeOutputSchemaForRubric(rubric);
+  const parsed = schema.safeParse({ gates: [], dimensions: [] });
+
+  assert.equal(parsed.success, false);
+  const messages = parsed.error?.issues.map((issue) => issue.message) ?? [];
+  assert.equal(messages.includes('missing required LLM gate "g_critical"'), true);
+  assert.equal(messages.includes('missing required dimension "a"'), true);
 });
 
 test('aggregateJudgment includes gate and weak-dimension remediation', () => {

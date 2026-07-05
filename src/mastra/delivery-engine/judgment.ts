@@ -116,6 +116,38 @@ export function deterministicCheckNameForGate(gate: RubricGate) {
   return typeof gate.check === 'object' ? gate.check.deterministic : undefined;
 }
 
+export function judgeOutputSchemaForRubric(rubric: Rubric) {
+  const requiredGateIds = (rubric.gates ?? [])
+    .filter((gate) => !deterministicCheckNameForGate(gate))
+    .map((gate) => gate.id);
+  const requiredDimensionIds = (rubric.dimensions ?? []).map((dimension) => dimension.id);
+
+  return judgeOutputSchema.superRefine((value, context) => {
+    const gateIds = new Set(value.gates.map((gate) => gate.id));
+    const dimensionIds = new Set(value.dimensions.map((dimension) => dimension.id));
+
+    for (const id of requiredGateIds) {
+      if (!gateIds.has(id)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['gates'],
+          message: `missing required LLM gate "${id}"`,
+        });
+      }
+    }
+
+    for (const id of requiredDimensionIds) {
+      if (!dimensionIds.has(id)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['dimensions'],
+          message: `missing required dimension "${id}"`,
+        });
+      }
+    }
+  });
+}
+
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 
 export function aggregateJudgment({
@@ -257,6 +289,8 @@ export function buildJudgeArtifactPrompt({
   deterministicResults?: DeterministicGateResult[];
 }) {
   const llmGates = (rubric.gates ?? []).filter((gate) => !deterministicCheckNameForGate(gate));
+  const llmGateIds = llmGates.map((gate) => gate.id);
+  const dimensionIds = (rubric.dimensions ?? []).map((dimension) => dimension.id);
   const deterministicSummary = deterministicResults.map((result) => ({
     id: result.id ?? result.check,
     passed: result.passed,
@@ -266,6 +300,10 @@ export function buildJudgeArtifactPrompt({
   return `Judge the artifact "${subjectName}" against the supplied rubric.
 
 Return structured judge output only. Score every rubric dimension from ${rubric.scale.min} to ${rubric.scale.max}, or use null with a reason when evidence is genuinely unavailable. Evaluate only the listed LLM gates. Deterministic gates have already run and must not be rescored.
+
+Required LLM gate ids, exactly once each: ${llmGateIds.length ? llmGateIds.join(', ') : '(none)'}
+Required dimension ids, exactly once each: ${dimensionIds.length ? dimensionIds.join(', ') : '(none)'}
+Empty gates or dimensions arrays are invalid when required ids are listed.
 
 LLM gates:
 ${JSON.stringify(llmGates, null, 2)}

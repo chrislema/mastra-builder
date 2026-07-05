@@ -34,10 +34,31 @@ async function readDeliverySnapshot({
   mastra?: MastraLike;
 }): Promise<DeliveryStateSnapshot> {
   const store = await getDeliveryObservabilityStore(mastra);
+  const local = readLocalDeliverySnapshot(repoPath);
   const stored = store ? await readDeliverySnapshotFromMastraStorage({ store, repoPath }) : undefined;
+  if (stored && local && shouldPreferLocalDeliverySnapshot(local, stored)) return local;
   if (stored) return stored;
-  if (hasDeliveryDirectory(repoPath)) return { run: readDeliveryRun(repoPath), events: readDeliveryEvents(repoPath) };
+  if (local) return local;
   throw new Error('no active delivery run found');
+}
+
+function readLocalDeliverySnapshot(repoPath: string): DeliveryStateSnapshot | undefined {
+  if (!hasDeliveryDirectory(repoPath)) return undefined;
+  return { run: readDeliveryRun(repoPath), events: readDeliveryEvents(repoPath) };
+}
+
+function deliverySnapshotCompleteness(snapshot: DeliveryStateSnapshot) {
+  return (
+    Object.keys(snapshot.run.artifacts).length * 4 +
+    snapshot.run.judgments.length * 4 +
+    (snapshot.run.finished_at ? 1 : 0)
+  );
+}
+
+function shouldPreferLocalDeliverySnapshot(local: DeliveryStateSnapshot, stored: DeliveryStateSnapshot) {
+  if (local.run.run_id !== stored.run.run_id) return false;
+  if (local.run.status !== 'running' && stored.run.status === 'running') return true;
+  return deliverySnapshotCompleteness(local) > deliverySnapshotCompleteness(stored);
 }
 
 async function persistDeliverySnapshot({
