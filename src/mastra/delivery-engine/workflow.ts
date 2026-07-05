@@ -704,6 +704,10 @@ function remediationHasVerificationFailure(remediation: string[]) {
   );
 }
 
+function remediationHasImplementationJudgmentFailure(remediation: string[]) {
+  return remediation.some((item) => /\b(GATE|DIMENSION|JUDGE|implementation judgment)\b/i.test(item));
+}
+
 export function implementationRetryMode({
   remediation,
   missingSurfaces,
@@ -713,8 +717,22 @@ export function implementationRetryMode({
 }) {
   const timeoutRecovery = remediation.some((item) => /timed out/i.test(item));
   if (timeoutRecovery && missingSurfaces.length) return 'write-first' as const;
-  if (timeoutRecovery || remediationHasVerificationFailure(remediation)) return 'focused-repair' as const;
+  if (
+    timeoutRecovery ||
+    remediationHasVerificationFailure(remediation) ||
+    remediationHasImplementationJudgmentFailure(remediation)
+  ) {
+    return 'focused-repair' as const;
+  }
   return 'normal' as const;
+}
+
+function judgeRepairAlreadyAttempted(remediation: string[]) {
+  return remediation.some((item) => /^JUDGE repair attempt:/i.test(item));
+}
+
+function implementationJudgeRepairRemediation(judgmentPath: string, remediation: string[]) {
+  return [`JUDGE repair attempt: fix failed implementation judgment ${judgmentPath}`, ...remediation];
 }
 
 function buildTimeoutRemediation({
@@ -2943,6 +2961,36 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
 
     const remediation = implementationFindingSteps(task.id, implementationJudge.judgment.remediation);
     if (attempt >= inputData.maxRetries) {
+      if (!judgeRepairAlreadyAttempted(inputData.remediation)) {
+        const judgeRepairRemediation = implementationJudgeRepairRemediation(
+          implementationJudge.judgmentPath,
+          remediation,
+        );
+        return {
+          repoPath: inputData.repoPath,
+          maxRetries: inputData.maxRetries,
+          deployMode: inputData.deployMode,
+          taskPlan,
+          releaseGate: inputData.releaseGate,
+          status: 'reviewed' as const,
+          runId: inputData.runId,
+          summary: `Build task ${task.id} passed deterministic checks and needs one focused judge repair attempt.`,
+          artifacts,
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: judgeRepairRemediation,
+          task,
+          taskIndex: inputData.taskIndex,
+          skipped: false,
+          taskId: task.id,
+          taskStatus: undefined,
+          attempt: attempt + 1,
+          terminal: false,
+          remediation: judgeRepairRemediation,
+        };
+      }
+
       await updateDeliveryTaskState({
         repoPath: inputData.repoPath,
         id: task.id,

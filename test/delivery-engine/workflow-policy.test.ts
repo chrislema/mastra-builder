@@ -324,4 +324,11 @@ test('implementation retry mode focuses timeout retries when owned files already
     }),
     'focused-repair',
   );
+  assert.equal(
+    implementationRetryMode({
+      remediation: ['GATE no_silent_degradation failed: record or surface the non-fatal AI summary failure.'],
+      missingSurfaces: [],
+    }),
+    'focused-repair',
+  );
 });
