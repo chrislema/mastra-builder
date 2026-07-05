@@ -1151,6 +1151,11 @@ const implementationWorkspaceTools = [
   WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
 ] as string[];
 
+const implementationWriteOnlyWorkspaceTools = [
+  WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
+] as string[];
+
 const envTimeoutMs = (name: string, fallback: number) => {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -2383,6 +2388,11 @@ const executeBuildTaskAttemptStep = createStep({
     const attemptNumber = attempt + 1;
     const stage = `build:${task.id}`;
     const usableSurfaces = effectiveOwnedSurfaces(task).filter((surface) => !/^unknown\b/i.test(surface));
+    const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
+    const timeoutRecovery = inputData.remediation.some((item) => /timed out/i.test(item));
+    const writeFirstRecovery = timeoutRecovery && missingSurfaces.length > 0;
+    const activeTools = writeFirstRecovery ? implementationWriteOnlyWorkspaceTools : implementationWorkspaceTools;
+    const maxSteps = writeFirstRecovery ? 3 : 8;
     const taskPacket = {
       scope: taskPlan.scope,
       task,
@@ -2390,6 +2400,7 @@ const executeBuildTaskAttemptStep = createStep({
       open_decisions: taskPlan.open_decisions,
       risks: taskPlan.risks,
       remediation: inputData.remediation,
+      missing_owned_surfaces: missingSurfaces,
     };
     await updateDeliveryTaskState({
       repoPath: inputData.repoPath,
@@ -2423,7 +2434,18 @@ Execution rules:
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
 - Do not inspect node_modules; rely on project types and workflow verification.
+- If timeout recovery is active, do not investigate. Create the missing owned surfaces immediately.
 - Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`;
+    const recoveryPrompt = writeFirstRecovery
+      ? `
+
+Timeout recovery is active.
+- Missing owned surfaces: ${missingSurfaces.join(', ')}
+- Use only write/mkdir tools.
+- Do not read or list files in this attempt.
+- Create compile-safe placeholders that satisfy the task packet and allow workflow verification to run.`
+      : '';
+    const finalBuildPrompt = `${buildPrompt}${recoveryPrompt}`;
     let buildResponse: unknown;
     try {
       buildResponse = await runWithDeliveryStageTimeout({
@@ -2433,11 +2455,11 @@ Execution rules:
         timeoutMs: deliveryAgentTimeouts.build,
         operation: (abortSignal) =>
           agent.generate(
-            buildPrompt,
+            finalBuildPrompt,
             {
               abortSignal,
-              activeTools: implementationWorkspaceTools,
-              maxSteps: 8,
+              activeTools,
+              maxSteps,
               toolCallConcurrency: 1,
               requestContext: createDeliveryRequestContext(inputData.repoPath),
             },
@@ -2528,9 +2550,9 @@ Execution rules:
         role,
         task: task.id,
         attempt: attemptNumber,
-        prompt: buildPrompt,
+        prompt: finalBuildPrompt,
         response: serializeAgentResponse(buildResponse),
-        activeTools: implementationWorkspaceTools,
+        activeTools,
       },
     });
     artifacts.push(buildTracePath);
