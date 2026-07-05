@@ -1607,7 +1607,7 @@ const prepareBuildTasksStep = createStep({
   description: 'Expand the reviewed task plan into workflow-native build work items.',
   inputSchema: deliveryStageOutputSchema,
   outputSchema: buildTaskWorkItemsSchema,
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, mastra }) => {
     const passThrough = () => ({
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
