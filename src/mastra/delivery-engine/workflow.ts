@@ -637,7 +637,7 @@ async function writeStageTraceArtifact({
 }
 
 function existingOwnedFiles(repoPath: string, task: Task) {
-  return effectiveOwnedSurfaces(task).filter((surface) => {
+  return taskBoundarySurfaces(repoPath, task).filter((surface) => {
     if (surface.includes('*')) return false;
     const path = concreteOwnedSurfacePath(surface);
     return path ? existsSync(join(resolve(repoPath), path)) : false;
@@ -655,6 +655,22 @@ export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
     .map(concreteOwnedSurfacePath)
     .filter((path): path is string => Boolean(path))
     .filter((path) => !existsSync(join(resolve(repoPath), path)));
+}
+
+export function taskBoundarySurfaces(repoPath: string, task: Task) {
+  const surfaces = new Set(effectiveOwnedSurfaces(task));
+  for (const surface of effectiveOwnedSurfaces(task)) {
+    const path = concreteOwnedSurfacePath(surface);
+    if (!path || !path.includes('/')) continue;
+    const parts = path.split('/');
+    parts.pop();
+    const directory = parts.join('/');
+    if (!directory) continue;
+    const barrel = `${directory}/index.ts`;
+    if (existsSync(join(resolve(repoPath), barrel))) surfaces.add(barrel);
+  }
+
+  return [...surfaces];
 }
 
 export function reusableImplementationArtifactForTask(repoPath: string, task: Task) {
@@ -2387,7 +2403,7 @@ const executeBuildTaskAttemptStep = createStep({
     const attempt = inputData.attempt;
     const attemptNumber = attempt + 1;
     const stage = `build:${task.id}`;
-    const usableSurfaces = effectiveOwnedSurfaces(task).filter((surface) => !/^unknown\b/i.test(surface));
+    const usableSurfaces = taskBoundarySurfaces(inputData.repoPath, task).filter((surface) => !/^unknown\b/i.test(surface));
     const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
     const timeoutRecovery = inputData.remediation.some((item) => /timed out/i.test(item));
     const writeFirstRecovery = timeoutRecovery && missingSurfaces.length > 0;
@@ -2401,6 +2417,7 @@ const executeBuildTaskAttemptStep = createStep({
       risks: taskPlan.risks,
       remediation: inputData.remediation,
       missing_owned_surfaces: missingSurfaces,
+      boundary_surfaces: usableSurfaces,
     };
     await updateDeliveryTaskState({
       repoPath: inputData.repoPath,
@@ -2428,7 +2445,7 @@ ${JSON.stringify(taskPacket, null, 2)}
 
 Execution rules:
 - Make the smallest coherent code change for this task.
-- Touch only the owned surfaces in the task packet unless a dependency blocks the task.
+- Touch only the boundary surfaces in the task packet unless a dependency blocks the task.
 - If an owned surface is missing, create it.
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
 - Do not run shell commands; the workflow runs verification after your edits.

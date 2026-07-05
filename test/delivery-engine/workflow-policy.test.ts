@@ -9,6 +9,7 @@ import {
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
+  taskBoundarySurfaces,
   verificationWithAcceptanceGaps,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 
@@ -91,6 +92,15 @@ test('owned surface presence normalizes annotated paths and ignores globs', () =
   ]).tasks;
 
   assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), ['src/ai/client.ts']);
+});
+
+test('task boundaries include existing sibling TypeScript barrel files', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-boundary-surfaces-'));
+  mkdirSync(join(repoPath, 'src/ai'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/ai/index.ts'), 'export {};\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/ai/client.ts', 'src/ai/types.ts'] }]).tasks;
+
+  assert.deepEqual(taskBoundarySurfaces(repoPath, task), ['src/ai/client.ts', 'src/ai/types.ts', 'src/ai/index.ts']);
 });
 
 const implementationNote = {
