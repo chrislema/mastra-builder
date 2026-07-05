@@ -96,6 +96,34 @@ function isDependencyPath(path: string) {
   return clean === 'node_modules' || clean.startsWith('node_modules/');
 }
 
+function recordBlockedToolCall({
+  repoPath,
+  workspaceToolName,
+  input,
+  reason,
+  context,
+}: {
+  repoPath: string;
+  workspaceToolName: string;
+  input: unknown;
+  reason: string;
+  context: unknown;
+}) {
+  if (!hasDeliveryDirectory(repoPath)) return;
+  void appendDeliveryEventState({
+    repoPath,
+    mastra: mastraFromToolContext(context),
+    event: {
+      type: 'tool_use',
+      tool: workspaceToolName,
+      ok: false,
+      paths: extractPaths(input).map((path) => repoRelativePath(repoPath, path)),
+      command: extractCommand(input)?.slice(0, 500),
+      error: reason,
+    },
+  }).catch(() => undefined);
+}
+
 export const deliveryWorkspace = new Workspace({
   id: 'delivery-workspace',
   name: 'Delivery Workspace',
@@ -133,6 +161,7 @@ export const deliveryWorkspace = new Workspace({
           const command = extractCommand(input);
           const reason = command ? blockedCommandReason(command) : undefined;
           if (reason) {
+            recordBlockedToolCall({ repoPath, workspaceToolName, input, reason, context });
             return {
               proceed: false,
               output: {
@@ -147,11 +176,13 @@ export const deliveryWorkspace = new Workspace({
           const boundary = readDeliveryBoundary(repoPath);
           const dependencyPath = boundary ? relativePaths.find(isDependencyPath) : undefined;
           if (dependencyPath) {
+            const reason = `Reading ${dependencyPath} is blocked during delivery stages; rely on project types and workflow verification instead.`;
+            recordBlockedToolCall({ repoPath, workspaceToolName, input, reason, context });
             return {
               proceed: false,
               output: {
                 blocked: true,
-                reason: `Reading ${dependencyPath} is blocked during delivery stages; rely on project types and workflow verification instead.`,
+                reason,
               },
             };
           }
@@ -162,6 +193,7 @@ export const deliveryWorkspace = new Workspace({
           if (boundary && relativePaths.length) {
             const ownership = fileOwnership({ role: boundary.role, paths: relativePaths });
             if (!ownership.passed) {
+              recordBlockedToolCall({ repoPath, workspaceToolName, input, reason: ownership.reason, context });
               return {
                 proceed: false,
                 output: {
@@ -176,11 +208,13 @@ export const deliveryWorkspace = new Workspace({
                 (path) => !path.startsWith('.delivery/') && !matchesAny(path, boundary.task_surfaces ?? []),
               );
               if (outsideTask) {
+                const reason = `${outsideTask} is outside this task's owned surfaces [${boundary.task_surfaces.join(', ')}]`;
+                recordBlockedToolCall({ repoPath, workspaceToolName, input, reason, context });
                 return {
                   proceed: false,
                   output: {
                     blocked: true,
-                    reason: `${outsideTask} is outside this task's owned surfaces [${boundary.task_surfaces.join(', ')}]`,
+                    reason,
                   },
                 };
               }
@@ -197,11 +231,13 @@ export const deliveryWorkspace = new Workspace({
               })),
             );
             if (!crypto.passed) {
+              const reason = `Crypto policy violation: ${crypto.reason}`;
+              recordBlockedToolCall({ repoPath, workspaceToolName, input, reason, context });
               return {
                 proceed: false,
                 output: {
                   blocked: true,
-                  reason: `Crypto policy violation: ${crypto.reason}`,
+                  reason,
                 },
               };
             }

@@ -998,6 +998,20 @@ function implementationDeterministicResults({
   ];
 }
 
+export function implementationDeterministicRemediation(results: DeterministicGateResult[]) {
+  return results
+    .filter((result) => !result.passed)
+    .filter((result) =>
+      ['file_ownership', 'write_paths_in_boundary', 'owned_surfaces_present', 'module_loads', 'ran_code_before_complete'].includes(
+        String(result.id ?? result.check),
+      ),
+    )
+    .map((result) => {
+      const id = String(result.id ?? result.check ?? 'deterministic_check');
+      return `DETERMINISTIC ${id} failed: ${result.reason ?? 'no reason recorded'}`;
+    });
+}
+
 function releaseGateDeterministicResults({
   stage,
   gate,
@@ -1083,7 +1097,7 @@ const envTimeoutMs = (name: string, fallback: number) => {
 
 const deliveryAgentTimeouts = {
   standard: envTimeoutMs('DELIVERY_AGENT_CALL_TIMEOUT_MS', 300_000),
-  build: envTimeoutMs('DELIVERY_BUILD_CALL_TIMEOUT_MS', 600_000),
+  build: envTimeoutMs('DELIVERY_BUILD_CALL_TIMEOUT_MS', 180_000),
   judge: envTimeoutMs('DELIVERY_JUDGE_CALL_TIMEOUT_MS', 300_000),
 };
 
@@ -2263,24 +2277,101 @@ Execution rules:
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
+- Do not inspect node_modules; rely on project types and workflow verification.
 - Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`;
-    const buildResponse = await runWithDeliveryStageTimeout({
-      repoPath: inputData.repoPath,
-      mastra,
-      stage,
-      timeoutMs: deliveryAgentTimeouts.build,
-      operation: (abortSignal) =>
-        agent.generate(
-          buildPrompt,
-          {
-            abortSignal,
-            activeTools: implementationWorkspaceTools,
-            maxSteps: 8,
-            toolCallConcurrency: 1,
-            requestContext: createDeliveryRequestContext(inputData.repoPath),
-          },
-        ),
-    });
+    let buildResponse: unknown;
+    try {
+      buildResponse = await runWithDeliveryStageTimeout({
+        repoPath: inputData.repoPath,
+        mastra,
+        stage,
+        timeoutMs: deliveryAgentTimeouts.build,
+        operation: (abortSignal) =>
+          agent.generate(
+            buildPrompt,
+            {
+              abortSignal,
+              activeTools: implementationWorkspaceTools,
+              maxSteps: 8,
+              toolCallConcurrency: 1,
+              requestContext: createDeliveryRequestContext(inputData.repoPath),
+            },
+          ),
+      });
+    } catch (error) {
+      if (!(error instanceof DeliveryStageTimeoutError)) throw error;
+
+      const remediation = [
+        `${task.id} build attempt timed out after ${error.timeoutMs}ms. Create or edit the owned surfaces before any broad investigation.`,
+      ];
+      if (attempt >= inputData.maxRetries) {
+        await updateDeliveryTaskState({
+          repoPath: inputData.repoPath,
+          id: task.id,
+          status: 'stuck',
+          owner: role,
+          note: remediation.join(' | ').slice(0, 300),
+          mastra,
+        });
+
+        return {
+          repoPath: inputData.repoPath,
+          maxRetries: inputData.maxRetries,
+          deployMode: inputData.deployMode,
+          taskPlan,
+          releaseGate: inputData.releaseGate,
+          status: 'stuck' as const,
+          runId: inputData.runId,
+          summary: `Build task ${task.id} timed out.`,
+          artifacts,
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: remediation,
+          taskId: task.id,
+          taskStatus: 'stuck' as const,
+          task,
+          taskIndex: inputData.taskIndex,
+          skipped: false,
+          attempt,
+          terminal: true,
+          remediation,
+        };
+      }
+
+      await updateDeliveryTaskState({
+        repoPath: inputData.repoPath,
+        id: task.id,
+        status: 'building',
+        owner: role,
+        note: `retry after timeout ${attemptNumber}`,
+        mastra,
+      });
+
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan,
+        releaseGate: inputData.releaseGate,
+        status: 'reviewed' as const,
+        runId: inputData.runId,
+        summary: `Build task ${task.id} timed out and needs another implementation attempt.`,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: remediation,
+        task,
+        taskIndex: inputData.taskIndex,
+        skipped: false,
+        taskId: task.id,
+        taskStatus: undefined,
+        attempt: attempt + 1,
+        terminal: false,
+        remediation,
+      };
+    }
     const buildTracePath = await writeStageTraceArtifact({
       repoPath: inputData.repoPath,
       mastra,
@@ -2341,6 +2432,81 @@ Execution rules:
       events: deliveryEvents,
     });
     checks.push(...checkSummaries(deterministicResults, `${task.id}.a${attemptNumber}`));
+
+    const deterministicRemediation = implementationDeterministicRemediation(deterministicResults);
+    if (deterministicRemediation.length) {
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'implementation_deterministic_blocker',
+          stage,
+          ok: false,
+          task: task.id,
+          attempt: attemptNumber,
+          remediation: deterministicRemediation,
+        },
+      });
+
+      if (attempt >= inputData.maxRetries) {
+        await updateDeliveryTaskState({
+          repoPath: inputData.repoPath,
+          id: task.id,
+          status: 'stuck',
+          owner: role,
+          note: deterministicRemediation.join(' | ').slice(0, 300),
+          mastra,
+        });
+
+        return {
+          repoPath: inputData.repoPath,
+          maxRetries: inputData.maxRetries,
+          deployMode: inputData.deployMode,
+          taskPlan,
+          releaseGate: inputData.releaseGate,
+          status: 'stuck' as const,
+          runId: inputData.runId,
+          summary: `Build task ${task.id} failed deterministic implementation gates.`,
+          artifacts,
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: deterministicRemediation,
+          taskId: task.id,
+          taskStatus: 'stuck' as const,
+          task,
+          taskIndex: inputData.taskIndex,
+          skipped: false,
+          attempt,
+          terminal: true,
+          remediation: deterministicRemediation,
+        };
+      }
+
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan,
+        releaseGate: inputData.releaseGate,
+        status: 'reviewed' as const,
+        runId: inputData.runId,
+        summary: `Build task ${task.id} needs another attempt after deterministic implementation gates.`,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: deterministicRemediation,
+        task,
+        taskIndex: inputData.taskIndex,
+        skipped: false,
+        taskId: task.id,
+        taskStatus: undefined,
+        attempt: attempt + 1,
+        terminal: false,
+        remediation: deterministicRemediation,
+      };
+    }
 
     const implementationJudge = await judgeDeliveryArtifact({
       mastra,

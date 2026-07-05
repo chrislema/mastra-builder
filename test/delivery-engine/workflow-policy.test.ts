@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  implementationDeterministicRemediation,
   missingOwnedSurfacePaths,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
@@ -162,5 +163,15 @@ test('missing owned surfaces block the non-actionable implementation fast path',
       note: implementationNote,
     }),
     false,
+  );
+});
+
+test('deterministic implementation blockers produce retry remediation before model judging', () => {
+  assert.deepEqual(
+    implementationDeterministicRemediation([
+      { id: 'owned_surfaces_present', check: 'owned_surfaces_present', passed: false, reason: 'missing owned surfaces: src/ai/client.ts' },
+      { id: 'crypto_compliance', check: 'no_bcrypt_weak_hash', passed: false, reason: 'bcrypt found' },
+    ]),
+    ['DETERMINISTIC owned_surfaces_present failed: missing owned surfaces: src/ai/client.ts'],
   );
 });
