@@ -242,7 +242,7 @@ Cloudflare architecture defaults:
 - Keep the deployment model consistent: do not split a cohesive feature set between standalone Workers and Pages Functions.
 - Worker API surfaces and proxy handlers stay thin: extract request, route/forward, log usage, return responses with enriched context on errors.
 - Worker entry/router creates request context; auth guards handle identity; API guards handle subscription/usage/limits when those concepts exist.
-- Route modules must integrate through the existing Worker router/barrel/middleware path. If routeRequest already exists, do not create a parallel dispatcher in src/index.ts that imports route handlers and runs before routeRequest.
+- Route modules must integrate through the existing Worker router/barrel/middleware path. If routeRequest already exists, do not create a parallel dispatcher in the Worker entrypoint that imports route handlers and runs before routeRequest.
 - Keep shared domain values identical across validation, D1 schema, storage repositories, and route adapters. Do not use storage artifact categories as user-facing profile kinds.
 - Workers that do background or durable work check status, claim work atomically, process with try/catch, and mark complete or stuck.
 - Password security: PBKDF2 with 100,000 iterations via Web Crypto. Never bcrypt.

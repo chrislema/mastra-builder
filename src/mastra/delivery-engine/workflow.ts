@@ -1648,9 +1648,13 @@ export function workflowStepIntegrationGaps(repoPath: string, task: Task) {
   const steps = workflowStepOwnedSurfaces(task);
   if (!steps.length) return [];
 
-  const weeklyPath = join(resolve(repoPath), 'src/workflows/weekly.ts');
-  if (!existsSync(weeklyPath)) return [];
+  const weeklySurface = firstExistingRepoPath(
+    repoPath,
+    moduleSourceExtensions.map((extension) => `src/workflows/weekly.${extension}`),
+  );
+  if (!weeklySurface) return [];
 
+  const weeklyPath = join(resolve(repoPath), weeklySurface);
   const weeklySource = readFileSync(weeklyPath, 'utf8');
   const weeklyImplementationSource = withoutImportStatements(weeklySource);
   return steps
@@ -1663,7 +1667,7 @@ export function workflowStepIntegrationGaps(repoPath: string, task: Task) {
       );
       if (slug && weeklySource.includes(`./steps/${slug}`) && callsExportedStep) return [];
       return [
-        `Workflow step ${step} is not called from src/workflows/weekly.ts; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.`,
+        `Workflow step ${step} is not called from ${weeklySurface}; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.`,
       ];
     });
 }
@@ -2549,8 +2553,12 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
       surfaces.add(workerEntry);
     }
 
-    if (directory === 'src/workflows/steps' && existsSync(join(resolve(repoPath), 'src/workflows/weekly.ts'))) {
-      surfaces.add('src/workflows/weekly.ts');
+    const workflowEntry = firstExistingRepoPath(
+      repoPath,
+      moduleSourceExtensions.map((extension) => `src/workflows/weekly.${extension}`),
+    );
+    if (directory === 'src/workflows/steps' && workflowEntry) {
+      surfaces.add(workflowEntry);
     }
   }
 
@@ -7749,7 +7757,7 @@ Execution rules:
 - For placeholder Worker route/error responses, include actionable next steps such as available route expectations, pending setup, or the next implementation surface instead of only returning "not found".
 - When profile_kind_policy is not null, use it exactly: PROFILE_KINDS must include audience_segments and voice_profile as the persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
-- For route tasks, integrate new endpoints through the existing Worker router/barrel/middleware path. Do not import route handlers into src/index.ts and dispatch them before routeRequest when routeRequest already exists.
+- For route tasks, integrate new endpoints through the existing Worker router/barrel/middleware path. Do not import route handlers into the Worker entrypoint and dispatch them before routeRequest when routeRequest already exists.
 - If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.
 - Do not inspect node_modules; rely on project types and workflow verification.
 - If timeout recovery is active, do not investigate. Create the missing owned surfaces immediately.

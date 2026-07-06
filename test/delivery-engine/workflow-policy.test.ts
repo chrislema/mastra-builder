@@ -2559,6 +2559,18 @@ test('workflow step task boundaries include the Workflow entrypoint integration 
   ]);
 });
 
+test('JavaScript workflow step task boundaries include the Workflow entrypoint integration surface', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-js-workflow-boundary-surfaces-'));
+  mkdirSync(join(repoPath, 'src/workflows/steps'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/workflows/weekly.js'), 'export class WeeklyWorkflow {}\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/workflows/steps/fetch-bookmarks.js'] }]).tasks;
+
+  assert.deepEqual(taskBoundarySurfaces(repoPath, task), [
+    'src/workflows/steps/fetch-bookmarks.js',
+    'src/workflows/weekly.js',
+  ]);
+});
+
 test('workflow step implementation must be integrated into WeeklyWorkflow before reuse', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workflow-integration-gap-'));
   mkdirSync(join(repoPath, 'src/workflows/steps'), { recursive: true });
@@ -2585,6 +2597,28 @@ test('workflow step implementation must be integrated into WeeklyWorkflow before
   writeFileSync(
     join(repoPath, 'src/workflows/weekly.ts'),
     "import { fetchBookmarksStep } from './steps/fetch-bookmarks';\nexport class WeeklyWorkflow { step = fetchBookmarksStep; }\n",
+  );
+
+  assert.deepEqual(workflowStepIntegrationGaps(repoPath, task), []);
+});
+
+test('JavaScript workflow step implementation must be integrated into WeeklyWorkflow before reuse', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-js-workflow-integration-gap-'));
+  mkdirSync(join(repoPath, 'src/workflows/steps'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/workflows/steps/fetch-bookmarks.js'), 'export const fetchBookmarksStep = () => true;\n');
+  writeFileSync(
+    join(repoPath, 'src/workflows/weekly.js'),
+    'export class WeeklyWorkflow { async fetchBookmarks(context) { return context; } }\n',
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/workflows/steps/fetch-bookmarks.js'] }]).tasks;
+
+  assert.deepEqual(workflowStepIntegrationGaps(repoPath, task), [
+    'Workflow step src/workflows/steps/fetch-bookmarks.js is not called from src/workflows/weekly.js; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.',
+  ]);
+
+  writeFileSync(
+    join(repoPath, 'src/workflows/weekly.js'),
+    "import { fetchBookmarksStep } from './steps/fetch-bookmarks.js';\nexport class WeeklyWorkflow { step = fetchBookmarksStep; }\n",
   );
 
   assert.deepEqual(workflowStepIntegrationGaps(repoPath, task), []);
