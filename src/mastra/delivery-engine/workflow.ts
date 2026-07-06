@@ -1266,6 +1266,170 @@ async function runBuildVerification({
   }
 }
 
+type ReleaseGateEvidenceCommand = {
+  tier: 'smoke' | 'api' | 'e2e' | 'full_matrix';
+  command: string;
+  executable: string;
+  args: string[];
+  required: boolean;
+  reason: string;
+};
+
+type ReleaseGateEvidenceResult = {
+  tier: ReleaseGateEvidenceCommand['tier'];
+  command: string;
+  ok: boolean;
+  required: boolean;
+  reason: string;
+  output_summary?: string;
+  error?: string;
+};
+
+type ReleaseGateEvidence = {
+  artifact_type: 'test-evidence';
+  stage: string;
+  commands: ReleaseGateEvidenceResult[];
+  notes: string[];
+};
+
+function firstTomlStringValue(text: string, key: string) {
+  const match = new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, 'm').exec(text);
+  return match?.[1];
+}
+
+export function releaseGateLocalD1DatabaseName(repoPath: string) {
+  const wranglerPath = join(resolve(repoPath), 'wrangler.toml');
+  if (!existsSync(wranglerPath)) return undefined;
+
+  const text = readFileSync(wranglerPath, 'utf8');
+  return firstTomlStringValue(text, 'database_name') ?? firstTomlStringValue(text, 'name');
+}
+
+export function releaseGateEvidenceCommandPlan(repoPath: string): ReleaseGateEvidenceCommand[] {
+  const commands: ReleaseGateEvidenceCommand[] = [];
+  const script = buildVerificationScript(repoPath);
+  if (script) {
+    commands.push({
+      tier: 'smoke',
+      command: `npm run ${script}`,
+      executable: 'npm',
+      args: ['run', script],
+      required: true,
+      reason: `Project verification script "${script}" was available.`,
+    });
+  }
+
+  const databaseName = releaseGateLocalD1DatabaseName(repoPath);
+  if (databaseName && existsSync(join(resolve(repoPath), 'migrations'))) {
+    commands.push({
+      tier: 'api',
+      command: `npx wrangler d1 migrations apply ${databaseName} --local`,
+      executable: 'npx',
+      args: ['wrangler', 'd1', 'migrations', 'apply', databaseName, '--local'],
+      required: false,
+      reason: 'wrangler.toml and migrations/ were present, so local D1 migration validation was available.',
+    });
+  }
+
+  return commands;
+}
+
+async function runReleaseGateEvidenceCommand({
+  repoPath,
+  mastra,
+  stage,
+  command,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+  command: ReleaseGateEvidenceCommand;
+}): Promise<ReleaseGateEvidenceResult> {
+  try {
+    const result = await execFileAsync(command.executable, command.args, {
+      cwd: resolve(repoPath),
+      timeout: command.tier === 'smoke' ? 120_000 : 180_000,
+      maxBuffer: 1_000_000,
+      env: process.env,
+    });
+    const output = compactDiagnostic(`${result.stdout}\n${result.stderr}`, 700);
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'run_code',
+        stage,
+        command: command.command,
+        ok: true,
+        output_summary: output,
+      },
+    });
+    return {
+      tier: command.tier,
+      command: command.command,
+      ok: true,
+      required: command.required,
+      reason: command.reason,
+      output_summary: output,
+    };
+  } catch (error) {
+    const failure = commandFailureSummary(error, 1000);
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'run_code',
+        stage,
+        command: command.command,
+        ok: false,
+        error: failure,
+      },
+    });
+    return {
+      tier: command.tier,
+      command: command.command,
+      ok: false,
+      required: command.required,
+      reason: command.reason,
+      error: failure,
+    };
+  }
+}
+
+async function collectReleaseGateEvidence({
+  repoPath,
+  mastra,
+  stage,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+}): Promise<ReleaseGateEvidence> {
+  await ensureNodeDependencies({ repoPath, mastra, stage });
+
+  const plan = releaseGateEvidenceCommandPlan(repoPath);
+  const notes: string[] = [];
+  if (!plan.some((command) => command.tier === 'smoke')) {
+    notes.push('No package verification script was available; smoke tier must be marked not_required or blocked with a reason.');
+  }
+  if (!plan.some((command) => command.tier === 'api')) {
+    notes.push('No local D1 migration command was planned; API tier should be not_required unless other API evidence exists.');
+  }
+  notes.push('No browser harness is started by this workflow; E2E and full_matrix tiers should be not_required unless cited evidence exists.');
+
+  const commands: ReleaseGateEvidenceResult[] = [];
+  for (const command of plan) {
+    commands.push(await runReleaseGateEvidenceCommand({ repoPath, mastra, stage, command }));
+  }
+
+  return {
+    artifact_type: 'test-evidence',
+    stage,
+    commands,
+    notes,
+  };
+}
+
 function acceptanceCriterionCovered(criterion: string, performed: string[]) {
   const text = criterion.toLowerCase();
   const evidence = performed.join('\n').toLowerCase();
@@ -1624,7 +1788,6 @@ const structuredNoToolOptions = {
   maxSteps: 1,
 };
 
-const releaseGateAgentMaxSteps = 8;
 const deployerAgentMaxSteps = 8;
 
 const implementationWorkspaceTools = [
@@ -3758,6 +3921,7 @@ const executeReleaseGateAttemptStep = createStep({
     const stage = `test:a${attemptNumber}`;
     const gatePath =
       attempt === 0 ? '.delivery/artifacts/release-gate.json' : `.delivery/artifacts/release-gate.a${attemptNumber}.json`;
+    const evidencePath = `.delivery/artifacts/test-evidence.a${attemptNumber}.json`;
 
     await startDeliveryStageState({
       repoPath: inputData.repoPath,
@@ -3766,6 +3930,25 @@ const executeReleaseGateAttemptStep = createStep({
       mastra,
     });
 
+    const evidence = await collectReleaseGateEvidence({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage,
+    });
+    writeDeliveryArtifact({
+      repoPath: inputData.repoPath,
+      artifactPath: evidencePath,
+      artifact: evidence,
+    });
+    await recordDeliveryArtifactState({
+      repoPath: inputData.repoPath,
+      type: `test-evidence:a${attemptNumber}`,
+      path: evidencePath,
+      mastra,
+    });
+    artifacts.push(evidencePath);
+
+    const evidenceEvents = await readDeliveryEventsState({ repoPath: inputData.repoPath, mastra });
     const gateResponse = await runWithDeliveryStageTimeout({
       repoPath: inputData.repoPath,
       mastra,
@@ -3773,23 +3956,38 @@ const executeReleaseGateAttemptStep = createStep({
       timeoutMs: deliveryAgentTimeouts.build,
       operation: (abortSignal) =>
         tester.generate(
-          `Verify the built work and produce a release gate for pre-deployment.
+          `Synthesize a release gate for pre-deployment from the evidence below.
 
-Read the task plan and implementation notes under .delivery/artifacts/. Write or update tests under tests/ when useful. Run the relevant smoke, API, and E2E checks that can be executed in this repo. Log test/probe runs through workspace command execution before returning.
+Do not call tools. Do not claim evidence that is not listed here.
+Use decision "pass" only when all critical areas are verified or not_applicable and blockers is empty.
+Use decision "fail" when any critical area is missing, any required evidence command failed, or any acceptance-critical behavior is unproven.
+For event_type "pre_deployment", tiers must be "passed" when supported by evidence or "not_required" with a reason when no tier-specific harness exists. Use "failed" only for an evidence command that actually failed.
 
 Known task plan:
 ${JSON.stringify(inputData.taskPlan, null, 2)}
 
+Known implementation judgment refs:
+${JSON.stringify(judgments.slice(-12), null, 2)}
+
+Delivery artifacts:
+${JSON.stringify(artifacts.slice(-24), null, 2)}
+
+Evidence artifact path: ${evidencePath}
+Evidence:
+${JSON.stringify(evidence, null, 2)}
+
+Stage events:
+${JSON.stringify(evidenceEvents.filter((event) => event.stage === stage).slice(-30), null, 2)}
+
 ${inputData.remediation.length ? `This is a bounce. Fix exactly these release-gate findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
-Return a release-gate object with event_type "pre_deployment". Every critical area must be verified with evidence, missing and therefore blocking, or not_applicable with a reason. Fail closed on unproven critical behavior.`,
+Return a release-gate object with event_type "pre_deployment". Every critical area must be verified with cited evidence, missing and therefore blocking, or not_applicable with a reason. Fail closed on unproven critical behavior.`,
           {
+            ...structuredNoToolOptions,
             abortSignal,
             requestContext: createDeliveryRequestContext(inputData.repoPath),
-            maxSteps: releaseGateAgentMaxSteps,
-            toolCallConcurrency: 1,
             structuredOutput: {
               schema: testerOutputSchema,
-              ...deliveryToolStructuredOutputOptions,
+              ...deliveryStructuredOutputOptions,
               instructions: 'Return only { "gate": <release-gate> }.',
             },
           },

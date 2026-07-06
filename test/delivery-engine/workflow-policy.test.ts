@@ -14,6 +14,8 @@ import {
   priorStoppedBuildTaskIds,
   repairStaleDownstreamVerificationSurfaces,
   releaseGateForInvalidTesterOutput,
+  releaseGateEvidenceCommandPlan,
+  releaseGateLocalD1DatabaseName,
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
@@ -145,6 +147,32 @@ test('invalid tester structured output becomes a fail-closed release gate', () =
   assert.equal(gate.tiers.some((tier) => tier.status === 'failed'), true);
   assert.equal(gate.critical_areas.every((area) => area.status === 'missing'), true);
   assert.match(gate.blockers.join('\n'), /invalid structured output/);
+});
+
+test('release gate evidence planner uses bounded local commands', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-evidence-'));
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }, null, 2),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.toml'),
+    ['name = "demo-worker"', '[[d1_databases]]', 'binding = "DB"', 'database_name = "demo-db"'].join('\n'),
+  );
+
+  assert.equal(releaseGateLocalD1DatabaseName(repoPath), 'demo-db');
+  assert.deepEqual(
+    releaseGateEvidenceCommandPlan(repoPath).map((command) => ({
+      tier: command.tier,
+      command: command.command,
+      required: command.required,
+    })),
+    [
+      { tier: 'smoke', command: 'npm run typecheck', required: true },
+      { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: false },
+    ],
+  );
 });
 
 test('stale downstream verification repair resets only future failed task surfaces', async () => {
