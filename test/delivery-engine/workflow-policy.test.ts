@@ -53,6 +53,7 @@ import {
   repairUnknownNumberIntegerNarrowing,
   releaseGateForInvalidTesterOutput,
   releaseGateEvidenceCommandPlan,
+  releaseGateLocalAdminSecretPath,
   releaseGateLocalD1DatabaseName,
   releaseGateRuntimeProbePlan,
   releaseGateRequiredEvidencePassed,
@@ -1772,6 +1773,50 @@ test('release gate Wrangler commands prefer the installed local binary', () => {
   );
 });
 
+test('release gate local admin secret path follows Wrangler environment file precedence', () => {
+  const baseRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-secret-base-'));
+  writeFileSync(
+    join(baseRepoPath, 'wrangler.jsonc'),
+    JSON.stringify({ name: 'demo-worker', main: 'src/index.ts' }, null, 2),
+  );
+  assert.equal(releaseGateLocalAdminSecretPath(baseRepoPath), join(baseRepoPath, '.dev.vars'));
+
+  const stagingRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-secret-staging-'));
+  writeFileSync(
+    join(stagingRepoPath, 'wrangler.jsonc'),
+    JSON.stringify(withWorkerDeploymentEnvironments({ name: 'demo-worker', main: 'src/index.ts' }), null, 2),
+  );
+  assert.equal(releaseGateLocalAdminSecretPath(stagingRepoPath), join(stagingRepoPath, '.dev.vars.staging'));
+
+  const genericDevVarsRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-secret-generic-dev-vars-'));
+  writeFileSync(
+    join(genericDevVarsRepoPath, 'wrangler.jsonc'),
+    JSON.stringify(withWorkerDeploymentEnvironments({ name: 'demo-worker', main: 'src/index.ts' }), null, 2),
+  );
+  writeFileSync(join(genericDevVarsRepoPath, '.dev.vars'), 'API_HOST="localhost:3000"\n');
+  assert.equal(releaseGateLocalAdminSecretPath(genericDevVarsRepoPath), join(genericDevVarsRepoPath, '.dev.vars'));
+
+  const stagingDevVarsRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-secret-staging-dev-vars-'));
+  writeFileSync(
+    join(stagingDevVarsRepoPath, 'wrangler.jsonc'),
+    JSON.stringify(withWorkerDeploymentEnvironments({ name: 'demo-worker', main: 'src/index.ts' }), null, 2),
+  );
+  writeFileSync(join(stagingDevVarsRepoPath, '.dev.vars'), 'API_HOST="localhost:3000"\n');
+  writeFileSync(join(stagingDevVarsRepoPath, '.dev.vars.staging'), 'API_HOST="staging.localhost:3000"\n');
+  assert.equal(
+    releaseGateLocalAdminSecretPath(stagingDevVarsRepoPath),
+    join(stagingDevVarsRepoPath, '.dev.vars.staging'),
+  );
+
+  const stagingEnvRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-secret-staging-env-'));
+  writeFileSync(
+    join(stagingEnvRepoPath, 'wrangler.jsonc'),
+    JSON.stringify(withWorkerDeploymentEnvironments({ name: 'demo-worker', main: 'src/index.ts' }), null, 2),
+  );
+  writeFileSync(join(stagingEnvRepoPath, '.env.staging'), 'API_HOST="staging.localhost:3000"\n');
+  assert.equal(releaseGateLocalAdminSecretPath(stagingEnvRepoPath), join(stagingEnvRepoPath, '.env.staging'));
+});
+
 test('release gate deterministic checks fail closed on failed required local evidence', () => {
   assert.deepEqual(
     releaseGateRequiredEvidencePassed({
@@ -2515,7 +2560,7 @@ test('Worker release gate fails closed when Wrangler config is missing', () => {
   );
   writeFileSync(
     join(repoPath, '.gitignore'),
-    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile', ''].join('\n'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile', ''].join('\n'),
   );
 
   const staticResult = releaseGateStaticEvidenceResults(repoPath).find(
@@ -2570,7 +2615,7 @@ test('Worker release gate fails closed on package scaffold drift', () => {
   );
   writeFileSync(
     join(repoPath, '.gitignore'),
-    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile', ''].join('\n'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile', ''].join('\n'),
   );
 
   const badResult = releaseGateStaticEvidenceResults(repoPath).find(
@@ -2605,6 +2650,57 @@ test('Worker release gate fails closed on package scaffold drift', () => {
   assert.equal(goodResult?.required, true);
   assert.equal(goodResult?.ok, true);
   assert.match(goodResult?.output_summary ?? '', /Worker package scripts/);
+});
+
+test('Worker package scaffold hygiene requires wildcard local secret ignores', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-package-gitignore-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default { fetch: () => new Response("ok") };\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      withWorkerDeploymentEnvironments({
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      }),
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+        },
+        devDependencies: {
+          wrangler: '^4.0.0',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile', ''].join('\n'),
+  );
+
+  const gaps = workerPackageScaffoldGaps(repoPath).join('\n');
+  assert.match(gaps, /\.dev\.vars\*/);
+  assert.match(gaps, /\.env\*/);
+
+  writeFileSync(
+    join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile', ''].join('\n'),
+  );
+  assert.deepEqual(workerPackageScaffoldGaps(repoPath), []);
 });
 
 test('Worker package scaffold release gate catches missing package manifests', () => {
@@ -2965,7 +3061,7 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
   );
   writeFileSync(
     join(repoPath, '.gitignore'),
-    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile', ''].join('\n'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile', ''].join('\n'),
   );
 
   const genericEnvironmentGaps = workerPackageScaffoldGaps(repoPath, jsTask);

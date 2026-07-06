@@ -679,7 +679,7 @@ function normalizeScaffoldRootTask(task: Task) {
     acceptance_criteria: Array.from(
       new Set([
         ...task.acceptance_criteria,
-        '.gitignore excludes node_modules/, .wrangler/, .delivery/, .dev.vars, .env, and *.cpuprofile so local delivery artifacts, Wrangler state, startup profiles, dependencies, and local secrets stay out of git.',
+        '.gitignore excludes node_modules/, .wrangler/, .delivery/, .dev.vars*, .env*, and *.cpuprofile so local delivery artifacts, Wrangler state, startup profiles, dependencies, and local secrets stay out of git.',
       ]),
     ),
   };
@@ -3241,7 +3241,7 @@ function repoUsesTypeScriptWorkerSource(repoPath: string, task?: Task) {
   );
 }
 
-const workerScaffoldRequiredGitignorePatterns = ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile'];
+const workerScaffoldRequiredGitignorePatterns = ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile'];
 
 function gitignorePatternPresent(text: string, pattern: string) {
   const directoryPattern = pattern.endsWith('/') ? pattern.slice(0, -1) : pattern;
@@ -3249,7 +3249,7 @@ function gitignorePatternPresent(text: string, pattern: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('#'))
-    .some((line) => line === pattern || line === directoryPattern || (pattern === '.env' && line === '.env*'));
+    .some((line) => line === pattern || line === directoryPattern);
 }
 
 function workerScaffoldGitignoreGaps(repoPath: string) {
@@ -4016,8 +4016,30 @@ function parseDevVarsValue(text: string, key: string) {
   return quoted ? quoted[1] : raw;
 }
 
+function releaseGateLocalWorkerEnvironment(repoPath: string) {
+  return workerConfigHasEnvironment(repoPath, 'staging') ? 'staging' : undefined;
+}
+
+export function releaseGateLocalAdminSecretPath(repoPath: string) {
+  const root = resolve(repoPath);
+  const environmentName = releaseGateLocalWorkerEnvironment(repoPath);
+  const candidates = environmentName
+    ? [
+        `.dev.vars.${environmentName}`,
+        '.dev.vars',
+        `.env.${environmentName}.local`,
+        '.env.local',
+        `.env.${environmentName}`,
+        '.env',
+      ]
+    : ['.dev.vars', '.env.local', '.env'];
+  const existing = candidates.find((file) => existsSync(join(root, file)));
+
+  return join(root, existing ?? (environmentName ? `.dev.vars.${environmentName}` : '.dev.vars'));
+}
+
 function prepareReleaseGateLocalAdminSecret(repoPath: string) {
-  const devVarsPath = join(resolve(repoPath), '.dev.vars');
+  const devVarsPath = releaseGateLocalAdminSecretPath(repoPath);
   if (existsSync(devVarsPath)) {
     const original = readFileSync(devVarsPath, 'utf8');
     const existingToken = parseDevVarsValue(original, 'ADMIN_TOKEN');
@@ -4119,7 +4141,7 @@ function workerTomlD1DatabaseName(text: string, environmentName?: string) {
 }
 
 function releaseGateLocalD1Environment(repoPath: string) {
-  return workerConfigHasEnvironment(repoPath, 'staging') ? 'staging' : undefined;
+  return releaseGateLocalWorkerEnvironment(repoPath);
 }
 
 function sourceTreeContainsText(rootPath: string, needle: string, scanned = { count: 0 }): boolean {
@@ -8217,7 +8239,7 @@ Execution rules:
 - For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, scripts.dev as "wrangler dev --env staging", and scripts.deploy as "wrangler deploy --env production". For TypeScript Worker source, add scripts.generate-types as "wrangler types", scripts.typecheck as "npm run generate-types && tsc --noEmit", @types/node, and tsconfig.json. Do not add @cloudflare/workers-types; Wrangler generates Worker binding/runtime types from config.
 - Do not add React, Vite, Next, Vue, Svelte, or frontend build dependencies/scripts. Chris's Worker frontends are vanilla HTML/CSS/JS served as static assets.
 - When TypeScript is used, configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes ./worker-configuration.d.ts and node, and strict is true.
-- .gitignore must exclude node_modules/, .wrangler/, .delivery/, .dev.vars, .env, and *.cpuprofile.
+- .gitignore must exclude node_modules/, .wrangler/, .delivery/, .dev.vars*, .env*, and *.cpuprofile.
 - For placeholder Worker route/error responses, include actionable next steps such as available route expectations, pending setup, or the next implementation surface instead of only returning "not found".
 - When profile_kind_policy is not null, use it exactly: PROFILE_KINDS must include audience_segments and voice_profile as the persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
