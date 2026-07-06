@@ -303,6 +303,37 @@ test('implementation touched files prefer successful write events over context s
   );
 });
 
+test('implementation touched files accumulate successful writes across retries', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-files-touched-retries-'));
+  mkdirSync(join(repoPath, 'migrations'));
+  mkdirSync(join(repoPath, 'src/storage'), { recursive: true });
+  writeFileSync(join(repoPath, 'migrations/0001_schema.sql'), '-- schema\n');
+  writeFileSync(join(repoPath, 'src/storage/db.ts'), 'export {};\n');
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql', 'src/storage/db.ts'],
+    },
+  ]).tasks;
+
+  assert.deepEqual(
+    implementationFilesTouched({
+      repoPath,
+      stage: 'build:T1',
+      task,
+      events: [
+        { type: 'stage_start', stage: 'build:T1' },
+        { type: 'tool_use', stage: 'build:T1', tool: 'mastra_workspace_write_file', ok: true, paths: ['migrations/0001_schema.sql'] },
+        { type: 'stage_end', stage: 'build:T1' },
+        { type: 'stage_start', stage: 'build:T1' },
+        { type: 'tool_use', stage: 'build:T1', tool: 'mastra_workspace_write_file', ok: true, paths: ['src/storage/db.ts'] },
+        { type: 'stage_end', stage: 'build:T1' },
+      ],
+    }),
+    ['migrations/0001_schema.sql', 'src/storage/db.ts'],
+  );
+});
+
 test('owned surface presence normalizes annotated paths and ignores globs', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-owned-surfaces-'));
   writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo"\n');

@@ -1553,7 +1553,8 @@ export function implementationFilesTouched({
   task: Task;
   events: DeliveryEvent[];
 }) {
-  const written = stageSlice(events, stage)
+  const written = events
+    .filter((event) => event.stage === stage)
     .filter((event) => event.ok !== false && implementationWriteTools.has(String(event.tool)))
     .flatMap((event) => event.paths ?? [])
     .filter((path) => path && !path.startsWith('.delivery/'));
