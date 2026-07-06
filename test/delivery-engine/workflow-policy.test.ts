@@ -41,6 +41,7 @@ import {
   ownedSurfaceHygiene,
   profileContractDependencyHygiene,
   profileKindContractGaps,
+  profileKindTaskPacketPolicy,
   outOfPlanVerificationFailurePaths,
   priorStoppedBuildTaskIds,
   projectScaffoldHygiene,
@@ -431,6 +432,37 @@ test('profile kind producer contract requires audience and voice profile kinds',
   );
 
   assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
+});
+
+test('profile kind contract treats profileKinds module as the producer surface', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-profile-kinds-contract-'));
+  mkdirSync(join(repoPath, 'src', 'domain'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src', 'domain', 'profileKinds.ts'),
+    'export const PROFILE_KINDS = ["voice", "audience", "topic"] as const;\n',
+  );
+
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/domain/profileKinds.ts'],
+    },
+  ]);
+
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /audience_segments, voice_profile/);
+
+  writeFileSync(
+    join(repoPath, 'src', 'domain', 'profileKinds.ts'),
+    'export const PROFILE_KINDS = ["audience_segments", "voice_profile"] as const;\n',
+  );
+
+  assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
+});
+
+test('profile kind task packet policy names required persistent kinds', () => {
+  assert.deepEqual(profileKindTaskPacketPolicy().required_persistent_kinds, ['audience_segments', 'voice_profile']);
+  assert.equal(profileKindTaskPacketPolicy().producer_surfaces.includes('src/domain/profileKinds.ts'), true);
+  assert.match(profileKindTaskPacketPolicy().guidance, /Do not substitute generic creator/);
 });
 
 test('profile kind contract drift can use domain profile contract source', () => {
