@@ -57,12 +57,12 @@ test('task-plan rubric tells the judge safe adapter risks are not blockers', () 
       artifact_type: 'task-plan',
       open_decisions: [],
       risks: [
-        'The exact BOOKMARKS service endpoint is unspecified; src/bookmarkClient.ts isolates the adapter default.',
+        'The exact PAYMENTS service endpoint is unspecified; src/serviceClient.ts isolates the adapter default.',
       ],
     },
   });
 
   assert.match(prompt, /unspecified external service contract is not a blocker/);
   assert.match(prompt, /safe_assumptions or risks/);
-  assert.match(prompt, /src\/bookmarkClient\.ts/);
+  assert.match(prompt, /src\/serviceClient\.ts/);
 });
