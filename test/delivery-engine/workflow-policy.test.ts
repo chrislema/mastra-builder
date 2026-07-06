@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   buildTimeoutRemediation,
+  buildVerificationCommandPlan,
   canSalvageTimedOutBuildAttempt,
   createMissingOwnedSurfaceStubs,
   deliveryBuildResumePlan,
@@ -1544,6 +1545,64 @@ test('release gate evidence planner runs the available package verification matr
       { tier: 'smoke', command: 'npm run build', required: true },
     ],
   );
+});
+
+test('build verification falls back to Wrangler dry run for vanilla JS Workers', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-build-verification-worker-dry-run-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default { fetch: () => new Response("ok") };\n');
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+        },
+        devDependencies: {
+          wrangler: '^4.0.0',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(withWorkerDeploymentEnvironments({ name: 'demo-worker', main: 'src/index.js' }), null, 2),
+  );
+
+  assert.deepEqual(buildVerificationCommandPlan(repoPath), {
+    command: 'npx wrangler deploy --dry-run --env production',
+    executable: 'npx',
+    args: ['wrangler', 'deploy', '--dry-run', '--env', 'production'],
+    timeoutMs: 180_000,
+  });
+
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          check: 'node --check src/index.js',
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+        },
+        devDependencies: {
+          wrangler: '^4.0.0',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(buildVerificationCommandPlan(repoPath), {
+    command: 'npm run check',
+    executable: 'npm',
+    args: ['run', 'check'],
+    timeoutMs: 120_000,
+  });
 });
 
 test('release gate evidence planner checks generated Wrangler types for TypeScript Workers', () => {

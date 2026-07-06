@@ -116,6 +116,9 @@ generated types instead of hand-written Worker runtime types: `scripts.generate-
 `tsconfig.json` includes `./worker-configuration.d.ts` plus `node`. The release gate also
 requires `wrangler types --check` before package checks, dry-run deploy, startup profiling,
 staging-aware local D1 migrations, and local `wrangler dev --env staging` probes.
+During implementation, vanilla JavaScript Worker slices fall back to Wrangler deploy dry-run
+verification when the target project has no explicit `typecheck`, `check`, `test`, or `build`
+script, so the build loop can keep validating Worker bundles without forcing TypeScript.
 
 Use local `git` for source-control checkpoints. Use the `gh` CLI only when an explicit
 human instruction calls for pushes, pull requests, or other remote GitHub actions. Do not

@@ -3732,7 +3732,27 @@ function buildVerificationScript(repoPath: string) {
 
 function packageVerificationScripts(repoPath: string) {
   const scripts = packageScripts(repoPath);
-  return ['typecheck', 'test', 'build'].filter((script) => typeof scripts[script] === 'string');
+  return ['typecheck', 'check', 'test', 'build'].filter((script) => typeof scripts[script] === 'string');
+}
+
+export function buildVerificationCommandPlan(repoPath: string) {
+  const script = buildVerificationScript(repoPath);
+  if (script) {
+    return {
+      command: `npm run ${script}`,
+      executable: 'npm',
+      args: ['run', script],
+      timeoutMs: 120_000,
+    };
+  }
+
+  const dryRunCommand = releaseGateWorkerDeployDryRunCommand(repoPath);
+  if (!dryRunCommand) return undefined;
+
+  return {
+    ...dryRunCommand,
+    timeoutMs: 180_000,
+  };
 }
 
 async function ensureNodeDependencies({
@@ -3847,22 +3867,22 @@ async function runBuildVerification({
   taskIndex?: number;
   allowRepair?: boolean;
 }) {
-  const script = buildVerificationScript(repoPath);
-  if (!script) {
+  const verificationCommand = buildVerificationCommandPlan(repoPath);
+  if (!verificationCommand) {
     return {
       performed: [] as string[],
-      missing: ['No package verification script found for this build task.'],
+      missing: ['No package verification script or Wrangler config found for this build task.'],
     };
   }
 
   await ensureNodeDependencies({ repoPath, mastra, stage });
 
-  const command = `npm run ${script}`;
-  await recordRunCodeStart({ repoPath, mastra, stage, command, timeoutMs: 120_000 });
+  const command = verificationCommand.command;
+  await recordRunCodeStart({ repoPath, mastra, stage, command, timeoutMs: verificationCommand.timeoutMs });
   try {
-    const result = await execFileAsync('npm', ['run', script], {
+    const result = await execFileAsync(verificationCommand.executable, verificationCommand.args, {
       cwd: resolve(repoPath),
-      timeout: 120_000,
+      timeout: verificationCommand.timeoutMs,
       maxBuffer: 1_000_000,
       env: process.env,
     });
