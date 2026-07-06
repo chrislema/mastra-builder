@@ -6132,6 +6132,16 @@ export function productionDeploymentReportFromWranglerResult({
   };
 }
 
+export function deploymentReportSuccessNextSteps(report: DeploymentReport, repoPath: string) {
+  if (report.environment === 'local') {
+    return [
+      `Local Wrangler validation passed. Review the deployment report and run npm run delivery:run -- --repo ${resolve(repoPath)} --deploy production when ready to request human approval before Wrangler production deploy.`,
+    ];
+  }
+
+  return [report.next_action];
+}
+
 async function runProductionWranglerDeployment({
   repoPath,
   mastra,
@@ -9726,7 +9736,9 @@ const createDeploymentJudgmentStep = createStep({
       checks,
       judgments,
       questions: [],
-      nextSteps: complete ? [inputData.deploymentReport.next_action] : deploymentJudge.judgment.remediation,
+      nextSteps: complete
+        ? deploymentReportSuccessNextSteps(inputData.deploymentReport, inputData.repoPath)
+        : deploymentJudge.judgment.remediation,
     };
   },
 });

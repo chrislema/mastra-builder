@@ -9,6 +9,7 @@ import {
   canSalvageTimedOutBuildAttempt,
   createMissingOwnedSurfaceStubs,
   deliveryBuildResumePlan,
+  deploymentReportSuccessNextSteps,
   directDependencySurfacePaths,
   implementationActionableJudgmentRemediation,
   implementationDeterministicRemediation,
@@ -1339,6 +1340,9 @@ test('local deployment report reuses release-gate evidence without production de
   assert.equal(report.verification.some((row) => row.check === 'npm run typecheck' && row.passed), true);
   assert.equal(report.verification.some((row) => row.check === 'GET /health' && row.passed), true);
   assert.match(report.rollback.steps, /No production rollback/);
+  assert.deepEqual(deploymentReportSuccessNextSteps(report, '/tmp/demo-worker'), [
+    'Local Wrangler validation passed. Review the deployment report and run npm run delivery:run -- --repo /tmp/demo-worker --deploy production when ready to request human approval before Wrangler production deploy.',
+  ]);
 });
 
 test('local deployment report blocks next action when required local evidence failed', () => {
@@ -1484,6 +1488,7 @@ test('production deployment report records native Wrangler deploy evidence', () 
   assert.equal(report.environment, 'production');
   assert.equal(report.result, 'success');
   assert.equal(report.next_action, 'monitor');
+  assert.deepEqual(deploymentReportSuccessNextSteps(report, '/tmp/demo-worker'), ['monitor']);
   assert.equal(report.revision, 'wrangler:abcdefgh');
   assert.equal(report.config_changes.some((change) => /GitHub Actions not used/.test(change)), true);
   assert.equal(report.verification.some((row) => row.check === './node_modules/.bin/wrangler deploy' && row.passed), true);
