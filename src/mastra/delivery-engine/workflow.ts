@@ -1528,6 +1528,57 @@ function releaseGateDeterministicResults({
   ];
 }
 
+export function releaseGateForInvalidTesterOutput(error: unknown): ReleaseGate {
+  const diagnostic = compactDiagnostic(error, 900);
+  const reason = `Tester did not return a structured release-gate object: ${diagnostic}`;
+
+  return {
+    artifact_type: 'release-gate',
+    decision: 'fail',
+    event_type: 'pre_deployment',
+    tiers: [
+      {
+        tier: 'smoke',
+        status: 'failed',
+        reason,
+      },
+      {
+        tier: 'api',
+        status: 'skipped',
+        reason: 'Structured release-gate output was unavailable after tester execution.',
+      },
+      {
+        tier: 'e2e',
+        status: 'skipped',
+        reason: 'Structured release-gate output was unavailable after tester execution.',
+      },
+      {
+        tier: 'full_matrix',
+        status: 'skipped',
+        reason: 'Structured release-gate output was unavailable after tester execution.',
+      },
+    ],
+    critical_areas: [
+      'auth',
+      'billing',
+      'state_integrity',
+      'data_safety',
+      'deployment_correctness',
+      'error_responses',
+    ].map((area) => ({
+      area: area as ReleaseGate['critical_areas'][number]['area'],
+      status: 'missing' as const,
+      reason,
+    })),
+    blockers: [
+      reason,
+      'Rerun the release gate and return only { "gate": <release-gate> } after executing evidence commands.',
+    ],
+    cosmetic_issues: [],
+    summary: 'Release gate failed closed because the tester returned malformed structured output.',
+  };
+}
+
 function deploymentDeterministicResults({
   stage,
   releaseGate,
@@ -1572,6 +1623,9 @@ const structuredNoToolOptions = {
   activeTools: [] as string[],
   maxSteps: 1,
 };
+
+const releaseGateAgentMaxSteps = 8;
+const deployerAgentMaxSteps = 8;
 
 const implementationWorkspaceTools = [
   WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES,
@@ -3731,6 +3785,8 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
           {
             abortSignal,
             requestContext: createDeliveryRequestContext(inputData.repoPath),
+            maxSteps: releaseGateAgentMaxSteps,
+            toolCallConcurrency: 1,
             structuredOutput: {
               schema: testerOutputSchema,
               ...deliveryToolStructuredOutputOptions,
@@ -3740,7 +3796,26 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
         ),
     });
 
-    const { gate } = parseDeliveryStructuredOutput(testerOutputSchema, gateResponse, 'tester release gate');
+    let gate: ReleaseGate;
+    try {
+      gate = parseDeliveryStructuredOutput(testerOutputSchema, gateResponse, 'tester release gate').gate;
+    } catch (error) {
+      gate = releaseGateForInvalidTesterOutput(error);
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'structured_output_invalid',
+          stage,
+          role: 'tester',
+          ok: false,
+          artifact_type: 'release-gate',
+          path: gatePath,
+          error: compactDiagnostic(error, 900),
+        },
+      });
+    }
+
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
       artifactPath: gatePath,
@@ -4010,6 +4085,8 @@ ${JSON.stringify(inputData.releaseGate, null, 2)}`,
           {
             abortSignal,
             requestContext: createDeliveryRequestContext(inputData.repoPath),
+            maxSteps: deployerAgentMaxSteps,
+            toolCallConcurrency: 1,
             structuredOutput: {
               schema: deployerOutputSchema,
               ...deliveryToolStructuredOutputOptions,

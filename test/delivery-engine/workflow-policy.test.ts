@@ -13,6 +13,7 @@ import {
   missingOwnedSurfacePaths,
   priorStoppedBuildTaskIds,
   repairStaleDownstreamVerificationSurfaces,
+  releaseGateForInvalidTesterOutput,
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
@@ -131,6 +132,19 @@ test('preflight stub detector fails until generated stubs are replaced', async (
   writeFileSync(join(repoPath, 'src/routes/runs.ts'), 'export function routes() { return true; }\n');
 
   assert.deepEqual(unreplacedPreflightStubPaths(repoPath, task), []);
+});
+
+test('invalid tester structured output becomes a fail-closed release gate', () => {
+  const gate = releaseGateForInvalidTesterOutput(
+    new Error('tester release gate returned invalid structured output: response.object was undefined'),
+  );
+
+  assert.equal(gate.artifact_type, 'release-gate');
+  assert.equal(gate.decision, 'fail');
+  assert.equal(gate.event_type, 'pre_deployment');
+  assert.equal(gate.tiers.some((tier) => tier.status === 'failed'), true);
+  assert.equal(gate.critical_areas.every((area) => area.status === 'missing'), true);
+  assert.match(gate.blockers.join('\n'), /invalid structured output/);
 });
 
 test('stale downstream verification repair resets only future failed task surfaces', async () => {
