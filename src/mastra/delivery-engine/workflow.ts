@@ -1049,6 +1049,10 @@ function remediationHasImplementationJudgmentFailure(remediation: string[]) {
   return remediation.some((item) => /\b(GATE|DIMENSION|JUDGE|implementation judgment)\b/i.test(item));
 }
 
+function remediationHasJudgeTimeout(remediation: string[]) {
+  return remediation.some((item) => /\bJUDGE_TIMEOUT\b|judge.+timed out/i.test(item));
+}
+
 function remediationHasMissingSurfaceFailure(remediation: string[]) {
   return remediation.some((item) => /\bowned_surfaces_present\b.*\bmissing owned surfaces\b/i.test(item));
 }
@@ -1069,6 +1073,7 @@ export function implementationFailureClass(remediation: string[]) {
   if (remediation.some((item) => /\b(no tool calls|without making a tool call|made no tool calls)\b/i.test(item))) {
     return 'model_no_action' as const;
   }
+  if (remediationHasJudgeTimeout(remediation)) return 'judge_timeout' as const;
   if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
   if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
   if (remediationHasUnreplacedPreflightStubFailure(remediation)) return 'preflight_stub' as const;
@@ -1096,6 +1101,7 @@ export function implementationRetryMode({
     noActionRecovery ||
     failureClass === 'preflight_stub' ||
     failureClass === 'policy_boundary' ||
+    failureClass === 'judge_timeout' ||
     remediationHasVerificationFailure(remediation) ||
     remediationHasImplementationJudgmentFailure(remediation)
   ) {
@@ -1110,6 +1116,12 @@ function judgeRepairAlreadyAttempted(remediation: string[]) {
 
 function implementationJudgeRepairRemediation(judgmentPath: string, remediation: string[]) {
   return [`JUDGE repair attempt: fix failed implementation judgment ${judgmentPath}`, ...remediation];
+}
+
+function implementationJudgeTimeoutRemediation(taskId: string, attemptNumber: number, timeoutMs: number) {
+  return [
+    `JUDGE_TIMEOUT ${taskId}.a${attemptNumber}: implementation judgment timed out after ${timeoutMs}ms. Preserve working code, improve direct evidence or the implementation note if needed, and retry with bounded judgment.`,
+  ];
 }
 
 function buildTimeoutRemediation({
@@ -4142,6 +4154,7 @@ Execution rules:
 - Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
+- If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.
 - Do not inspect node_modules; rely on project types and workflow verification.
 - If timeout recovery is active, do not investigate. Create the missing owned surfaces immediately.
 - Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`;
@@ -4454,20 +4467,94 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
       };
     }
 
-    const implementationJudge = await judgeDeliveryArtifact({
-      mastra,
-      repoPath: inputData.repoPath,
-      rubricName: 'implementation',
-      subjectName: notePath,
-      subject: {
+    let implementationJudge: Awaited<ReturnType<typeof judgeDeliveryArtifact>>;
+    try {
+      implementationJudge = await judgeDeliveryArtifact({
+        mastra,
+        repoPath: inputData.repoPath,
+        rubricName: 'implementation',
+        subjectName: notePath,
+        subject: {
+          task,
+          note,
+          files: repoFileContents(inputData.repoPath, note.files_touched),
+          task_plan: taskPlan,
+        },
+        deterministicResults,
+        slug: `implementation-${task.id}-a${attemptNumber}`,
+      });
+    } catch (error) {
+      if (!(error instanceof DeliveryStageTimeoutError)) throw error;
+
+      const remediation = implementationJudgeTimeoutRemediation(task.id, attemptNumber, error.timeoutMs);
+      if (attempt >= inputData.maxRetries) {
+        await updateDeliveryTaskState({
+          repoPath: inputData.repoPath,
+          id: task.id,
+          status: 'stuck',
+          owner: role,
+          note: remediation.join(' | ').slice(0, 300),
+          mastra,
+        });
+
+        return {
+          repoPath: inputData.repoPath,
+          maxRetries: inputData.maxRetries,
+          deployMode: inputData.deployMode,
+          taskPlan,
+          releaseGate: inputData.releaseGate,
+          status: 'stuck' as const,
+          runId: inputData.runId,
+          summary: `Build task ${task.id} judgment timed out.`,
+          artifacts,
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: remediation,
+          taskId: task.id,
+          taskStatus: 'stuck' as const,
+          task,
+          taskIndex: inputData.taskIndex,
+          skipped: false,
+          attempt,
+          terminal: true,
+          remediation,
+        };
+      }
+
+      await updateDeliveryTaskState({
+        repoPath: inputData.repoPath,
+        id: task.id,
+        status: 'building',
+        owner: role,
+        note: `retry after judge timeout ${attemptNumber}`,
+        mastra,
+      });
+
+      return {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        taskPlan,
+        releaseGate: inputData.releaseGate,
+        status: 'reviewed' as const,
+        runId: inputData.runId,
+        summary: `Build task ${task.id} judgment timed out and needs another bounded attempt.`,
+        artifacts,
+        checks,
+        judgments,
+        questions: [],
+        nextSteps: remediation,
         task,
-        note,
-        files: repoFileContents(inputData.repoPath, note.files_touched),
-        task_plan: taskPlan,
-      },
-      deterministicResults,
-      slug: `implementation-${task.id}-a${attemptNumber}`,
-    });
+        taskIndex: inputData.taskIndex,
+        skipped: false,
+        taskId: task.id,
+        taskStatus: undefined,
+        attempt: attempt + 1,
+        terminal: false,
+        remediation,
+      };
+    }
     artifacts.push(implementationJudge.judgeOutputPath, implementationJudge.judgmentPath, implementationJudge.tracePath);
     judgments.push(implementationJudge.ref);
 

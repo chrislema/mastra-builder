@@ -901,4 +901,16 @@ test('implementation retry mode classifies deterministic failure families', () =
     implementationFailureClass(['T2 build attempt made no tool calls after 60000ms. Make a focused write.']),
     'model_no_action',
   );
+
+  const judgeTimeoutRemediation = [
+    'JUDGE_TIMEOUT T7.a2: implementation judgment timed out after 300000ms. Preserve working code and retry.',
+  ];
+  assert.equal(implementationFailureClass(judgeTimeoutRemediation), 'judge_timeout');
+  assert.equal(
+    implementationRetryMode({
+      remediation: judgeTimeoutRemediation,
+      missingSurfaces: [],
+    }),
+    'focused-repair',
+  );
 });
