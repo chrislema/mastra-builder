@@ -8697,7 +8697,7 @@ const finalizeReleaseGateLoopStep = createStep({
 
 const createDeploymentReportStep = createStep({
   id: 'create-deployment-report',
-  description: 'Run deployer from a passing release gate and write the deployment report artifact.',
+  description: 'Run the native deployment stage from a passing release gate and write the deployment report artifact.',
   inputSchema: deliveryStageOutputSchema,
   outputSchema: deploymentReportStageSchema,
   resumeSchema: deploymentApprovalResumeSchema,
@@ -8725,7 +8725,7 @@ const createDeploymentReportStep = createStep({
 
       return await suspend(
         {
-          reason: 'Production deployment requires human approval before the deployer runs.',
+          reason: 'Production deployment requires human approval before the native Wrangler deploy command runs.',
           deployMode: 'production' as const,
           releaseGatePath,
           releaseGateSummary: inputData.releaseGate.summary,

@@ -11,7 +11,7 @@ working memory, and custom API routes.
 `src/mastra/index.ts` registers:
 
 - `deliveryWorkflow`
-- role agents: planner, architect, engineer, designer, tester, deployer, judge
+- role agents: planner, architect, engineer, designer, tester, deployment advisor, judge
 - delivery state tools for `.delivery/`, including observability persistence/list tools
 - delivery scorers for handoff readiness, workflow completion, rubric floor, judgment
   pass rate, and deterministic check pass rate
@@ -143,7 +143,7 @@ The workflow currently runs:
 4. Architect reviews the plan and can bounce to planner within `maxRetries`.
 5. Engineer/designer build loop executes tasks in dependency order.
 6. Tester produces and judges a release gate.
-7. Deployer writes a local validation report or, after approval, runs production deploy and writes a deployment report.
+7. Native deployment stage writes a local validation report or, after approval, runs Wrangler production deploy and writes a deployment report.
 8. Deployment gate runs deterministic checks, judges the deployment report, and finalizes the run.
 9. The run finishes as `complete`, `failed`, or `stuck`.
 10. Final `.delivery` run state is persisted into Mastra observability storage.
@@ -174,7 +174,7 @@ The current scorer set covers:
 - planner -> architect handoff readiness
 - architect -> build handoff readiness
 - build -> tester handoff readiness
-- tester -> deployer handoff readiness
+- tester -> native deployment handoff readiness
 - workflow completion
 - lowest rubric judgment score
 - rubric judgment pass rate
