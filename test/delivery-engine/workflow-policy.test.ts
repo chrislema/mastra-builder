@@ -57,6 +57,7 @@ import {
   workflowStepIntegrationGaps,
   workersAiBindingGaps,
   workerConfigHygieneGaps,
+  workerPackageScaffoldGaps,
   wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
@@ -1193,6 +1194,68 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
       ?.ok,
     true,
   );
+});
+
+test('Worker package scaffold hygiene requires current Wrangler tooling and config-based scripts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-package-hygiene-'));
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'] }]).tasks;
+
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev src/index.ts',
+          deploy: 'wrangler deploy src/index.ts',
+          typecheck: 'tsc --noEmit',
+        },
+        devDependencies: {
+          '@cloudflare/workers-types': '^4.20250124.0',
+          wrangler: '^3.107.3',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const gaps = workerPackageScaffoldGaps(repoPath, task);
+  assert.match(gaps.join('\n'), /scripts\.dev/);
+  assert.match(gaps.join('\n'), /scripts\.deploy/);
+  assert.match(gaps.join('\n'), /wrangler.*v4\+/);
+  assert.match(gaps.join('\n'), /workers-types.*last 90 days/);
+
+  const remediation = [`DETERMINISTIC worker_package_scaffold_current failed: ${gaps.join('; ')}`];
+  assert.equal(implementationFailureClass(remediation), 'worker_package');
+  assert.equal(
+    implementationRetryMode({
+      remediation,
+      missingSurfaces: [],
+    }),
+    'focused-repair',
+  );
+
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev',
+          deploy: 'wrangler deploy',
+          typecheck: 'tsc --noEmit',
+        },
+        devDependencies: {
+          '@cloudflare/workers-types': 'latest',
+          wrangler: '^4.0.0',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(workerPackageScaffoldGaps(repoPath, task), []);
+  assert.deepEqual(workerPackageScaffoldGaps(repoPath), []);
 });
 
 test('stale downstream verification repair resets only future failed task surfaces', async () => {

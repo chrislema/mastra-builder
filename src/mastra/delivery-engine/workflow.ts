@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -2026,6 +2026,92 @@ function packageDependencyNames(repoPath: string) {
   return [...names].sort();
 }
 
+function packageRecord(repoPath: string) {
+  return recordValue(readJsonArtifact(repoPath, 'package.json'));
+}
+
+function packageDependencyVersion(packageJson: Record<string, unknown>, name: string) {
+  for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    const bucket = recordValue(packageJson[key]);
+    const version = bucket?.[name];
+    if (typeof version === 'string') return version;
+  }
+  return undefined;
+}
+
+function dependencyRangeMajor(version: string) {
+  const match = /(?:^|[^\d])(\d+)(?:\.\d+)?/.exec(version.trim());
+  return match ? Number(match[1]) : undefined;
+}
+
+function dependencyRangeAllowsWranglerV4(version: string) {
+  const normalized = version.trim().toLowerCase();
+  if (normalized === 'latest') return true;
+  const major = dependencyRangeMajor(normalized);
+  return major !== undefined && major >= 4;
+}
+
+function workersTypesVersionDate(version: string) {
+  const match = /(?:^|[^\d])4\.(\d{4})(\d{2})(\d{2})\.\d+/.exec(version.trim());
+  if (!match) return undefined;
+  const value = `${match[1]}-${match[2]}-${match[3]}`;
+  return isoDateParts(value);
+}
+
+function workersTypesVersionIsCurrent(version: string) {
+  const normalized = version.trim().toLowerCase();
+  if (normalized === 'latest') return true;
+  const versionDate = workersTypesVersionDate(normalized);
+  const today = isoDateParts(todayIsoDate());
+  if (!versionDate || !today) return false;
+  const ageDays = Math.floor((today.time - versionDate.time) / 86_400_000);
+  return ageDays >= 0 && ageDays <= 90;
+}
+
+function scriptUsesWranglerWithoutEntrypoint(script: unknown, command: 'dev' | 'deploy') {
+  if (typeof script !== 'string') return false;
+  const match = new RegExp(`\\bwrangler\\s+${command}\\b([^;&|\\n]*)`).exec(script);
+  if (!match) return false;
+  return !/(^|\s)(?:\.\/)?src\/index\.ts(\s|$)/.test(match[1] ?? '');
+}
+
+export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
+  if (task && !taskOwnsPackageManifest(task)) return [];
+
+  const packageJson = packageRecord(repoPath);
+  if (!packageJson) return task ? ['package.json is owned but is not valid JSON.'] : [];
+
+  const gaps: string[] = [];
+  const scripts = recordValue(packageJson.scripts) ?? {};
+  if (!scriptUsesWranglerWithoutEntrypoint(scripts.dev, 'dev')) {
+    gaps.push('scripts.dev should run "wrangler dev" through wrangler.jsonc, without passing src/index.ts as an entrypoint argument.');
+  }
+  if (!scriptUsesWranglerWithoutEntrypoint(scripts.deploy, 'deploy')) {
+    gaps.push('scripts.deploy should run "wrangler deploy" through wrangler.jsonc, without passing src/index.ts as an entrypoint argument.');
+  }
+  if (typeof scripts.typecheck !== 'string' || !/\btsc\s+--noEmit\b/.test(scripts.typecheck)) {
+    gaps.push('scripts.typecheck should run "tsc --noEmit" for deterministic workflow verification.');
+  }
+
+  const wranglerVersion = packageDependencyVersion(packageJson, 'wrangler');
+  if (!wranglerVersion) {
+    gaps.push('devDependencies.wrangler is missing; new Worker scaffolds need Wrangler installed locally.');
+  } else if (!dependencyRangeAllowsWranglerV4(wranglerVersion)) {
+    gaps.push(`devDependencies.wrangler is "${wranglerVersion}", but new Worker scaffolds should use "latest" or a v4+ range.`);
+  }
+
+  const workersTypesVersion = packageDependencyVersion(packageJson, '@cloudflare/workers-types');
+  if (!workersTypesVersion) {
+    gaps.push('devDependencies["@cloudflare/workers-types"] is missing; Worker TypeScript projects need current Cloudflare runtime types.');
+  } else if (!workersTypesVersionIsCurrent(workersTypesVersion)) {
+    gaps.push(
+      `devDependencies["@cloudflare/workers-types"] is "${workersTypesVersion}", but new Worker scaffolds should use "latest" or a Workers types release from the last 90 days.`,
+    );
+  }
+
+  return gaps.map((gap) => `package.json: ${gap}`);
+}
+
 function remediationHasVerificationFailure(remediation: string[]) {
   return remediation.some((item) =>
     /\b(verification_passed|build_verification_passed|npm run|typecheck|tsc|TS\d+|Cannot find module)\b/i.test(item),
@@ -2072,10 +2158,19 @@ function remediationHasWorkerConfigFailure(remediation: string[]) {
   );
 }
 
+function remediationHasWorkerPackageFailure(remediation: string[]) {
+  return remediation.some((item) =>
+    /\b(worker_package_scaffold_current|worker_package_hygiene|workers-types|wrangler v4|new Worker scaffolds)\b/i.test(
+      item,
+    ),
+  );
+}
+
 export function implementationFailureClass(remediation: string[]) {
   if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
   if (remediationHasUnreplacedPreflightStubFailure(remediation)) return 'preflight_stub' as const;
   if (remediationHasReadBudgetFailure(remediation)) return 'read_budget' as const;
+  if (remediationHasWorkerPackageFailure(remediation)) return 'worker_package' as const;
   if (remediationHasWorkerConfigFailure(remediation)) return 'worker_config' as const;
   if (remediationHasStaleWorkspaceVerificationFailure(remediation)) return 'stale_workspace_verification' as const;
   if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
@@ -2126,6 +2221,7 @@ export function implementationRetryMode({
     timeoutRecovery ||
     noActionRecovery ||
     failureClass === 'read_budget' ||
+    failureClass === 'worker_package' ||
     failureClass === 'worker_config' ||
     failureClass === 'policy_boundary' ||
     failureClass === 'judge_timeout' ||
@@ -2396,14 +2492,24 @@ async function ensureNodeDependencies({
   mastra: any;
   stage: string;
 }) {
-  if (!existsSync(join(resolve(repoPath), 'package.json'))) return;
-  if (existsSync(join(resolve(repoPath), 'node_modules'))) return;
+  const root = resolve(repoPath);
+  const packagePath = join(root, 'package.json');
+  const packageLockPath = join(root, 'package-lock.json');
+  const nodeModulesPath = join(root, 'node_modules');
+  if (!existsSync(packagePath)) return;
+  if (existsSync(nodeModulesPath) && existsSync(packageLockPath)) {
+    try {
+      if (statSync(packageLockPath).mtimeMs >= statSync(packagePath).mtimeMs) return;
+    } catch {
+      // Fall through to npm install when mtimes cannot be read.
+    }
+  }
 
   const command = 'npm install';
   await recordRunCodeStart({ repoPath, mastra, stage, command, timeoutMs: 180_000 });
   try {
     const result = await execFileAsync('npm', ['install'], {
-      cwd: resolve(repoPath),
+      cwd: root,
       timeout: 180_000,
       maxBuffer: 1_000_000,
       env: process.env,
@@ -3652,6 +3758,7 @@ function implementationDeterministicResults({
   const routeMiddlewareGaps = routeMiddlewareBypassGaps(repoPath, task);
   const aiBindingGaps = workersAiBindingGaps(repoPath, task);
   const workerConfigGaps = workerConfigHygieneGaps(repoPath, task);
+  const workerPackageGaps = workerPackageScaffoldGaps(repoPath, task);
   const lifecycleStatusGaps = lifecycleStatusSchemaGaps(repoPath, task);
   const profileKindGaps = profileKindContractGaps(repoPath, task);
   const noteOwnership = runDeterministicCheck({
@@ -3713,6 +3820,12 @@ function implementationDeterministicResults({
       reason: workerConfigGaps.length ? workerConfigGaps.join('; ') : 'ok',
     },
     {
+      id: 'worker_package_scaffold_current',
+      check: 'worker_package_hygiene',
+      passed: workerPackageGaps.length === 0,
+      reason: workerPackageGaps.length ? workerPackageGaps.join('; ') : 'ok',
+    },
+    {
       id: 'lifecycle_status_schema_constrained',
       check: 'state_explicitness',
       passed: lifecycleStatusGaps.length === 0,
@@ -3750,6 +3863,8 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'workers_ai_binding_required',
         'cloudflare_worker_config_current',
         'worker_config_hygiene',
+        'worker_package_scaffold_current',
+        'worker_package_hygiene',
         'lifecycle_status_schema_constrained',
         'state_explicitness',
         'profile_kind_contract_aligned',
@@ -4037,7 +4152,7 @@ const deliveryAgentTimeouts = {
   judge: envTimeoutMs('DELIVERY_JUDGE_CALL_TIMEOUT_MS', 300_000),
 };
 
-const repairPostWriteQuietTimeoutMs = 45_000;
+const repairPostWriteQuietTimeoutMs = 8_000;
 const preWriteReadBudgetBlockLimit = 2;
 
 class DeliveryStageTimeoutError extends Error {
@@ -5949,6 +6064,7 @@ const executeBuildTaskAttemptStep = createStep({
       platform_policy_findings: [
         ...workersAiBindingGaps(inputData.repoPath, task),
         ...workerConfigHygieneGaps(inputData.repoPath, task),
+        ...workerPackageScaffoldGaps(inputData.repoPath, task),
       ],
     };
 
@@ -5979,6 +6095,7 @@ Execution rules:
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - For Worker config, use wrangler.jsonc for new projects with "$schema": "./node_modules/wrangler/config-schema.json", a current/recent compatibility_date, compatibility_flags including "nodejs_compat", and explicit observability enabled with head_sampling_rate.
+- For Worker scaffold package.json, use current Cloudflare tooling: Wrangler "latest" or v4+, @cloudflare/workers-types "latest" or a recent dated v4 release, scripts.dev as "wrangler dev", scripts.deploy as "wrangler deploy", and scripts.typecheck as "tsc --noEmit".
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
 - For route tasks, integrate new endpoints through the existing Worker router/barrel/middleware path. Do not import route handlers into src/index.ts and dispatch them before routeRequest when routeRequest already exists.
 - If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.
