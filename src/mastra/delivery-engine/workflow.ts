@@ -543,6 +543,32 @@ function namesTaskScopedBlocker(decision: string) {
   return /\bblocks?\s+T\d[\w-]*\b/i.test(decision) || /\bbefore\s+T\d[\w-]*\b/i.test(decision);
 }
 
+function looksLikeSafeBookmarksAdapterAmbiguity(question: string) {
+  return (
+    /\bBOOKMARKS\b|\bbookmarks service\b|\benv\.BOOKMARKS\b/i.test(question) &&
+    /\b(endpoint|RPC|method|path|parameters?|response envelope|contract|date-window|date window|API shape)\b/i.test(question)
+  );
+}
+
+export function normalizeReadoutSafeAdapterAmbiguities(readout: z.infer<typeof readoutSchema>) {
+  const safeAdapterQuestions = readout.blocking_ambiguities.filter(looksLikeSafeBookmarksAdapterAmbiguity);
+  if (!safeAdapterQuestions.length) return readout;
+
+  const blocking_ambiguities = readout.blocking_ambiguities.filter(
+    (question) => !looksLikeSafeBookmarksAdapterAmbiguity(question),
+  );
+  const safeAssumptions = safeAdapterQuestions.map(
+    (question) =>
+      `Safe adapter default: ${question} Proceed with env.BOOKMARKS.fetch behind src/bookmarkClient.ts using a date-window request and normalized Bookmark[] response; document the adapter contract risk instead of blocking delivery.`,
+  );
+
+  return {
+    ...readout,
+    blocking_ambiguities,
+    safe_assumptions: Array.from(new Set([...readout.safe_assumptions, ...safeAssumptions])),
+  };
+}
+
 export function openDecisionHygiene(taskPlan: TaskPlan) {
   for (const [index, decision] of taskPlan.open_decisions.entries()) {
     const missingFields = openDecisionRequiredFields.filter((field) => !hasOpenDecisionField(decision, field));
@@ -5149,6 +5175,7 @@ Open-decision hygiene:
 - Do not stop for preferences the harness already settles: Worker over Pages, vanilla UI over frameworks, Wrangler over GitHub Actions deploy, local validation before production, or Workers AI binding shape.
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
 - If an unknown is a non-blocking delivery concern, put it in taskPlan.risks.
+- The BOOKMARKS service API shape is not a human blocker. Default to an env.BOOKMARKS.fetch adapter in src/bookmarkClient.ts with a date-window request and normalized Bookmark[] response, then record contract mismatch as a risk.
 - Every open_decisions entry must be one string with this exact field shape:
   "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
 - The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.
@@ -5170,6 +5197,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
           }),
           'planner',
         );
+    output.readout = normalizeReadoutSafeAdapterAmbiguities(output.readout);
     output.taskPlan = normalizeTaskPlanForDelivery(inputData.repoPath, output.taskPlan);
 
     if (cachedOutput) {
@@ -5372,6 +5400,7 @@ Task-plan quality requirements:
 - Every consumes-output relation must be declared by task ID. If a later task uses storage, prompts, routes, services, generated types, bindings, or workflow steps from an earlier slice, add the dependency edge explicitly.
 - Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
 - Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks.
+- The BOOKMARKS service API shape is not a human blocker. Default to an env.BOOKMARKS.fetch adapter in src/bookmarkClient.ts with a date-window request and normalized Bookmark[] response, then record contract mismatch as a risk.
 - Every taskPlan.open_decisions entry must use this exact field shape:
 "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
 - The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.

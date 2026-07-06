@@ -31,6 +31,7 @@ import {
   normalizeTaskPlanConfigSchemaTasks,
   normalizeTaskPlanGeneratedSliceDependencies,
   normalizeTaskPlanOperatorDocumentation,
+  normalizeReadoutSafeAdapterAmbiguities,
   missingOwnedSurfacePaths,
   normalizeTaskPlanProfileContractDependencies,
   normalizeTaskPlanScaffoldDependencies,
@@ -131,6 +132,18 @@ test('planner questions do not suspend for settled policy or preferences', () =>
     ),
     false,
   );
+});
+
+test('planner readout normalization moves BOOKMARKS adapter ambiguity to safe assumptions', () => {
+  const normalized = normalizeReadoutSafeAdapterAmbiguities(
+    readout([
+      'The exact BOOKMARKS service binding date-window API is not specified: the plan needs the endpoint path/RPC method, HTTP method, request parameters, and response envelope before the bookmark client can be wired safely.',
+    ]),
+  );
+
+  assert.deepEqual(normalized.blocking_ambiguities, []);
+  assert.match(normalized.safe_assumptions.join('\n'), /env\.BOOKMARKS\.fetch/);
+  assert.match(normalized.safe_assumptions.join('\n'), /src\/bookmarkClient\.ts/);
 });
 
 test('task plan open decisions must be decision-shaped blockers', () => {
