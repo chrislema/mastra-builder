@@ -677,7 +677,7 @@ function taskCanSafelyDependOn(taskPlan: TaskPlan, taskId: string, dependencyId:
   return taskId !== dependencyId && !taskDependsOn(taskPlan, dependencyId, taskId);
 }
 
-const profileContractProducerSurfaces = ['src/validation.ts'];
+const profileContractProducerSurfaces = ['src/validation.ts', 'src/domain/profile.ts', 'src/domain/profiles.ts'];
 const profileContractConsumerSurfaces = ['migrations/0001_schema.sql', 'src/storage/profiles.ts', 'src/routes/profiles.ts'];
 
 function profileContractProducerTask(taskPlan: TaskPlan) {
@@ -725,6 +725,17 @@ export function profileContractDependencyHygiene(taskPlan: TaskPlan) {
 
 function taskOwnedBoundaryPaths(task: Task) {
   return normalizedOwnedSurfaces(task).map(concreteOwnedSurfacePath).filter((path): path is string => Boolean(path));
+}
+
+function taskOwnsStatePersistenceSurface(task?: Task) {
+  if (!task) return true;
+  return taskOwnedBoundaryPaths(task).some(
+    (path) =>
+      path.startsWith('migrations/') ||
+      path.startsWith('src/storage/') ||
+      path.startsWith('src/workflows/') ||
+      /\bdurable|do-state|state-store\b/i.test(path),
+  );
 }
 
 export function taskOwnedSurfaceRoleHygiene(taskPlan: TaskPlan) {
@@ -892,9 +903,19 @@ export const hasExecutableRootTask = (taskPlan: TaskPlan) =>
 export const shouldSuspendForPlannerQuestions = (readout: z.infer<typeof readoutSchema>, taskPlan: TaskPlan) =>
   readout.blocking_ambiguities.length > 0 && !hasExecutableRootTask(taskPlan);
 
-export function implementationWeakDimensionRemediation(judgment: AggregatedJudgment) {
+function weakDimensionIsNonActionableForTask(
+  dimension: AggregatedJudgment['dimensions_scored'][number],
+  task?: Task,
+) {
+  if (dimension.id !== 'state_explicitness') return false;
+  if (taskOwnsStatePersistenceSurface(task)) return false;
+  return /\b(database|db|d1|sql|schema|table|check constraints?|indexes?|indices)\b/i.test(dimension.evidence);
+}
+
+export function implementationWeakDimensionRemediation(judgment: AggregatedJudgment, task?: Task) {
   return judgment.dimensions_scored
     .filter((dimension) => dimension.score <= 3)
+    .filter((dimension) => !weakDimensionIsNonActionableForTask(dimension, task))
     .map(
       (dimension) =>
         `DIMENSION ${dimension.id} scored ${dimension.score}/5. Improve this before continuing: ${compactDiagnostic(
@@ -904,8 +925,8 @@ export function implementationWeakDimensionRemediation(judgment: AggregatedJudgm
     );
 }
 
-function implementationFindingSteps(taskId: string, judgment: AggregatedJudgment) {
-  const remediation = [...judgment.remediation, ...implementationWeakDimensionRemediation(judgment)];
+function implementationFindingSteps(taskId: string, judgment: AggregatedJudgment, task?: Task) {
+  const remediation = [...judgment.remediation, ...implementationWeakDimensionRemediation(judgment, task)];
   return remediation.length ? remediation : [`${taskId} did not produce a passing implementation judgment`];
 }
 
@@ -913,14 +934,16 @@ export function shouldProceedAfterNonActionableImplementationJudgment({
   judgment,
   deterministicResults,
   note,
+  task,
 }: {
   judgment: AggregatedJudgment;
   deterministicResults: DeterministicGateResult[];
   note: ImplementationNote;
+  task?: Task;
 }) {
   if (judgment.passed) return false;
   if (judgment.gates_failed.length || judgment.dimensions_missing.length || judgment.remediation.length) return false;
-  if (implementationWeakDimensionRemediation(judgment).length) return false;
+  if (implementationWeakDimensionRemediation(judgment, task).length) return false;
   if (!deterministicResults.every((result) => result.passed)) return false;
   if (!note.verification.performed.length) return false;
   if (note.verification.missing.some((item) => /\bfailed:/i.test(item))) return false;
@@ -931,13 +954,15 @@ export function implementationJudgmentCanComplete({
   judgment,
   deterministicResults,
   note,
+  task,
 }: {
   judgment: AggregatedJudgment;
   deterministicResults: DeterministicGateResult[];
   note: ImplementationNote;
+  task?: Task;
 }) {
-  if (judgment.passed && !implementationWeakDimensionRemediation(judgment).length) return true;
-  return shouldProceedAfterNonActionableImplementationJudgment({ judgment, deterministicResults, note });
+  if (judgment.passed && !implementationWeakDimensionRemediation(judgment, task).length) return true;
+  return shouldProceedAfterNonActionableImplementationJudgment({ judgment, deterministicResults, note, task });
 }
 
 function repoFileContents(repoPath: string, paths: string[]) {
@@ -1166,10 +1191,18 @@ function stringLiteralsFromText(text: string) {
 }
 
 function validationProfileKinds(repoPath: string) {
-  const source = repoTextIfExists(repoPath, 'src/validation.ts');
-  if (!source) return [];
-  const match = source.match(/\bPROFILE_KINDS\s*=\s*\[([\s\S]*?)\]\s*as\s+const\b/);
-  return match ? stringLiteralsFromText(match[1]) : [];
+  for (const path of profileContractProducerSurfaces) {
+    const source = repoTextIfExists(repoPath, path);
+    if (!source) continue;
+
+    const arrayMatch = source.match(/\bPROFILE_KINDS\s*=\s*\[([\s\S]*?)\]\s*as\s+const\b/);
+    if (arrayMatch) return stringLiteralsFromText(arrayMatch[1]);
+
+    const typeMatch = source.match(/\bexport\s+type\s+ProfileKind\s*=\s*([\s\S]*?);/);
+    if (typeMatch) return stringLiteralsFromText(typeMatch[1]);
+  }
+
+  return [];
 }
 
 function storageProfileKinds(repoPath: string) {
@@ -1209,7 +1242,7 @@ export function profileKindContractGaps(repoPath: string, task: Task) {
     const missing = missingProfileKinds(expected, migrationProfileKinds(repoPath));
     if (missing.length) {
       gaps.push(
-        `migrations/0001_schema.sql profile_artifacts.kind omits validation profile kind(s): ${missing.join(', ')}. Keep schema kind values aligned with src/validation.ts PROFILE_KINDS.`,
+        `migrations/0001_schema.sql profile_artifacts.kind omits profile contract kind(s): ${missing.join(', ')}. Keep schema kind values aligned with PROFILE_KINDS or ProfileKind from the validation/domain profile contract.`,
       );
     }
   }
@@ -1218,7 +1251,7 @@ export function profileKindContractGaps(repoPath: string, task: Task) {
     const missing = missingProfileKinds(expected, storageProfileKinds(repoPath));
     if (missing.length) {
       gaps.push(
-        `src/storage/profiles.ts ProfileKind/ProfileArtifactKind omits validation profile kind(s): ${missing.join(', ')}. Storage profile metadata kind must match src/validation.ts PROFILE_KINDS, not artifact object categories.`,
+        `src/storage/profiles.ts ProfileKind/ProfileArtifactKind omits profile contract kind(s): ${missing.join(', ')}. Storage profile metadata kind must match PROFILE_KINDS or ProfileKind from the validation/domain profile contract, not artifact object categories.`,
       );
     }
   }
@@ -1641,14 +1674,26 @@ export function implementationFailureClass(remediation: string[]) {
     return 'model_no_action' as const;
   }
   if (remediationHasJudgeTimeout(remediation)) return 'judge_timeout' as const;
-  if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
   if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
   if (remediationHasUnreplacedPreflightStubFailure(remediation)) return 'preflight_stub' as const;
+  if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
   if (remediationHasStaleWorkspaceVerificationFailure(remediation)) return 'stale_workspace_verification' as const;
   if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
   if (remediationHasPolicyBoundaryFailure(remediation)) return 'policy_boundary' as const;
   if (remediationHasImplementationJudgmentFailure(remediation)) return 'judge_quality' as const;
   return 'unknown' as const;
+}
+
+export function canSalvageTimedOutBuildAttempt({
+  stageHadToolUse,
+  missingSurfaces,
+  unreplacedStubs,
+}: {
+  stageHadToolUse: boolean;
+  missingSurfaces: string[];
+  unreplacedStubs: string[];
+}) {
+  return stageHadToolUse && missingSurfaces.length === 0 && unreplacedStubs.length === 0;
 }
 
 export function implementationRetryMode({
@@ -4950,6 +4995,7 @@ Execution rules:
 - Touch only the boundary surfaces in the task packet unless a dependency blocks the task.
 - If preflight_created_surfaces is non-empty, replace those stubs with the real implementation for this task.
 - If an owned surface is still missing, create it.
+- If unreplaced_preflight_stubs is non-empty, replace every listed stub before editing any other file.
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
 - For schema/storage/route tasks, read the relevant direct_dependency_surfaces before writing when they define or consume shared domain contracts.
 - Keep domain values aligned across validation, D1 schema, repository modules, and route adapters; profile kind values are not the same thing as R2 artifact object categories.
@@ -4983,6 +5029,8 @@ Timeout recovery is active.
 Focused repair mode is active.
 - Fix the remediation below before doing anything else:
 ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
+- If unreplaced_preflight_stubs is non-empty, replace every listed stub before doing anything else:
+${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
 - Use focused_repair_file_context as your source for current file contents. It includes boundary files plus direct dependency files needed for type and domain contracts.
 - Do not list or read files in this attempt.
 - Prefer editing existing generated files over adding new files.
@@ -5015,10 +5063,46 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
     } catch (error) {
       if (!(error instanceof DeliveryStageTimeoutError)) throw error;
 
+      const missingSurfacesAfterTimeout = missingOwnedSurfacePaths(inputData.repoPath, task);
+      const unreplacedStubsAfterTimeout = unreplacedPreflightStubPaths(inputData.repoPath, task);
+      const stageHadToolUse = await stageHasToolUse({ repoPath: inputData.repoPath, mastra, stage });
+      if (
+        canSalvageTimedOutBuildAttempt({
+          stageHadToolUse,
+          missingSurfaces: missingSurfacesAfterTimeout,
+          unreplacedStubs: unreplacedStubsAfterTimeout,
+        })
+      ) {
+        await appendDeliveryEventState({
+          repoPath: inputData.repoPath,
+          mastra,
+          event: {
+            type: 'build_timeout_salvaged',
+            stage,
+            ok: true,
+            task: task.id,
+            attempt: attemptNumber,
+            timeout_ms: error.timeoutMs,
+            reason:
+              'Build attempt timed out after file edits, but owned surfaces are present and preflight stubs are replaced; running workflow verification instead of marking stuck.',
+          },
+        });
+        await startDeliveryStageState({
+          repoPath: inputData.repoPath,
+          stage,
+          role,
+          surfaces: usableSurfaces.length ? usableSurfaces : undefined,
+          mastra,
+        });
+        buildResponse = {
+          text: `Build attempt timed out after ${error.timeoutMs}ms after making file changes; workflow recovered by running verification against the edited boundary surfaces.`,
+          finishReason: 'timeout-salvaged',
+        };
+      } else {
       const remediation = buildTimeoutRemediation({
         task,
         timeoutMs: error.timeoutMs,
-        missingSurfaces,
+        missingSurfaces: missingSurfacesAfterTimeout,
         verificationRecovery,
         noToolCall: error instanceof DeliveryNoToolCallTimeoutError,
       });
@@ -5089,6 +5173,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
         terminal: false,
         remediation,
       };
+      }
     }
     const buildTracePath = await writeStageTraceArtifact({
       repoPath: inputData.repoPath,
@@ -5412,6 +5497,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
         judgment: implementationJudge.judgment,
         deterministicResults,
         note,
+        task,
       })
     ) {
       const acceptedByFastPath = !implementationJudge.judgment.passed;
@@ -5476,7 +5562,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
       };
     }
 
-    const remediation = implementationFindingSteps(task.id, implementationJudge.judgment);
+    const remediation = implementationFindingSteps(task.id, implementationJudge.judgment, task);
     if (attempt >= inputData.maxRetries) {
       if (!judgeRepairAlreadyAttempted(inputData.remediation)) {
         const judgeRepairRemediation = implementationJudgeRepairRemediation(

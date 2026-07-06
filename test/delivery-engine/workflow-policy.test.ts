@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  canSalvageTimedOutBuildAttempt,
   createMissingOwnedSurfaceStubs,
   deliveryBuildResumePlan,
   directDependencySurfacePaths,
@@ -252,6 +253,29 @@ test('profile contract consumers normalize behind validation task', () => {
   assert.deepEqual(profileContractDependencyHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
+test('profile contract consumers normalize behind domain profile task', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/domain/profile.ts'],
+    },
+    {
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+    },
+    {
+      depends_on: ['T2'],
+      owned_surfaces: ['src/storage/profiles.ts'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanProfileContractDependencies(plan);
+
+  assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
+  assert.deepEqual(normalized.tasks[2].depends_on, ['T2', 'T1']);
+  assert.deepEqual(profileContractDependencyHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
 test('focused repair dependency surfaces include direct task contract files', () => {
   const plan = taskPlan([
     {
@@ -313,6 +337,36 @@ test('profile kind contract drift is caught for schema and storage tasks', () =>
 
   assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
   assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[1]), []);
+});
+
+test('profile kind contract drift can use domain profile contract source', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-profile-domain-contract-'));
+  mkdirSync(join(repoPath, 'src', 'domain'), { recursive: true });
+  mkdirSync(join(repoPath, 'src', 'storage'), { recursive: true });
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src', 'domain', 'profile.ts'),
+    'export const PROFILE_KINDS = ["speaker", "audience", "style"] as const;\n',
+  );
+  writeFileSync(join(repoPath, 'src', 'storage', 'profiles.ts'), "export type ProfileKind = 'speaker';\n");
+  writeFileSync(
+    join(repoPath, 'migrations', '0001_schema.sql'),
+    "CREATE TABLE IF NOT EXISTS profile_artifacts (\n  kind TEXT NOT NULL CHECK (kind IN ('speaker'))\n);\n",
+  );
+
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+    },
+    {
+      depends_on: [],
+      owned_surfaces: ['src/storage/profiles.ts'],
+    },
+  ]);
+
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /audience/);
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[1]).join('\n'), /audience/);
 });
 
 test('task plan role normalization strips designer-owned public surfaces from engineer scaffolds', () => {
@@ -1190,6 +1244,67 @@ test('passing implementation judgments with weak dimensions still require repair
   );
 });
 
+test('contract-only tasks ignore non-actionable database state dimension complaints', () => {
+  const judgment = {
+    ...implementationJudgment,
+    overall: 0.82,
+    passed: true,
+    dimensions_scored: [
+      { id: 'smallest_coherent_change', score: 5, weight: 8, evidence: 'ok' },
+      {
+        id: 'state_explicitness',
+        score: 3,
+        weight: 7,
+        evidence: 'The task does not show database CHECK constraints or indexes.',
+      },
+    ],
+  };
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/domain/profile.ts'],
+    },
+  ]);
+
+  assert.deepEqual(implementationWeakDimensionRemediation(judgment, plan.tasks[0]), []);
+  assert.equal(
+    implementationJudgmentCanComplete({
+      judgment,
+      deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
+      note: implementationNote,
+      task: plan.tasks[0],
+    }),
+    true,
+  );
+});
+
+test('state-owning tasks still repair weak state explicitness dimensions', () => {
+  const judgment = {
+    ...implementationJudgment,
+    overall: 0.82,
+    passed: true,
+    dimensions_scored: [
+      { id: 'smallest_coherent_change', score: 5, weight: 8, evidence: 'ok' },
+      {
+        id: 'state_explicitness',
+        score: 3,
+        weight: 7,
+        evidence: 'The schema lacks database CHECK constraints or indexes.',
+      },
+    ],
+  };
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+    },
+  ]);
+
+  assert.deepEqual(implementationWeakDimensionRemediation(judgment, plan.tasks[0]), [
+    'DIMENSION state_explicitness scored 3/5. Improve this before continuing: The schema lacks database CHECK constraints or indexes.',
+  ]);
+});
+
 test('missing owned surfaces block the non-actionable implementation fast path', () => {
   assert.equal(
     shouldProceedAfterNonActionableImplementationJudgment({
@@ -1456,6 +1571,13 @@ test('implementation retry mode classifies deterministic failure families', () =
     }),
     'focused-repair',
   );
+  assert.equal(
+    implementationFailureClass([
+      'T05 build attempt timed out after 180000ms.',
+      'DETERMINISTIC preflight_stubs_replaced failed: preflight stubs remain: src/storage/candidates.ts',
+    ]),
+    'preflight_stub',
+  );
 
   const policyBoundaryRemediation = [
     'DETERMINISTIC file_ownership failed: wrangler.toml is outside engineer owned globs',
@@ -1484,5 +1606,32 @@ test('implementation retry mode classifies deterministic failure families', () =
       missingSurfaces: [],
     }),
     'focused-repair',
+  );
+});
+
+test('timed out build attempts can be salvaged only after edits resolve owned surfaces and stubs', () => {
+  assert.equal(
+    canSalvageTimedOutBuildAttempt({
+      stageHadToolUse: true,
+      missingSurfaces: [],
+      unreplacedStubs: [],
+    }),
+    true,
+  );
+  assert.equal(
+    canSalvageTimedOutBuildAttempt({
+      stageHadToolUse: false,
+      missingSurfaces: [],
+      unreplacedStubs: [],
+    }),
+    false,
+  );
+  assert.equal(
+    canSalvageTimedOutBuildAttempt({
+      stageHadToolUse: true,
+      missingSurfaces: [],
+      unreplacedStubs: ['src/storage/candidates.ts'],
+    }),
+    false,
   );
 });
