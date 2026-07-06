@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'role-boundary-normalized-v9';
+const plannerPolicyVersion = 'role-boundary-normalized-v10';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -802,14 +802,17 @@ export function normalizeTaskPlanRoleBoundaries(taskPlan: TaskPlan): TaskPlan {
   return changed ? { ...taskPlan, tasks } : taskPlan;
 }
 
-const maxStorageOwnedSurfacesPerTask = 3;
-const minStorageOwnedSurfacesToSplit = 5;
+const maxImplementationOwnedSurfacesPerTask = 3;
+const minImplementationOwnedSurfacesToSplit = 5;
 
-function storageRepositorySurfacePath(surface: string) {
+function splittableImplementationSurfacePath(surface: string) {
   const path = concreteOwnedSurfacePath(surface);
-  if (!path?.startsWith('src/storage/')) return undefined;
-  if (!/\.[cm]?[jt]s$/.test(path)) return undefined;
-  return path;
+  if (!path) return undefined;
+  if (path === 'src/index.ts') return undefined;
+  if (path === 'package.json' || path === 'tsconfig.json' || path === 'wrangler.toml') return undefined;
+  if (path.startsWith('migrations/')) return undefined;
+  if (path.startsWith('src/') && /\.[cm]?[jt]s$/.test(path)) return path;
+  return undefined;
 }
 
 function chunkItems<T>(items: T[], size: number) {
@@ -818,38 +821,40 @@ function chunkItems<T>(items: T[], size: number) {
   return chunks;
 }
 
-function taskIsLargeStorageOnlyTask(task: Task) {
-  const surfaces = task.owned_surfaces.map(storageRepositorySurfacePath);
+function taskIsLargeImplementationTask(task: Task) {
+  const surfaces = task.owned_surfaces.map(splittableImplementationSurfacePath);
   return (
     task.owner === 'engineer' &&
-    surfaces.length >= minStorageOwnedSurfacesToSplit &&
+    surfaces.length >= minImplementationOwnedSurfacesToSplit &&
     surfaces.every(Boolean)
   );
 }
 
-function storageSliceAcceptanceCriteria(task: Task, surfaces: string[], sliceNumber: number, sliceCount: number) {
-  const paths = surfaces.map((surface) => storageRepositorySurfacePath(surface) ?? normalizeDeliveryPathReference(surface));
+function implementationSliceAcceptanceCriteria(task: Task, surfaces: string[], sliceNumber: number, sliceCount: number) {
+  const paths = surfaces.map(
+    (surface) => splittableImplementationSurfacePath(surface) ?? normalizeDeliveryPathReference(surface),
+  );
   return [
-    `Implement storage slice ${sliceNumber}/${sliceCount}: ${paths.join(', ')}.`,
-    `Replace any preflight stubs for this slice with real repository code before returning.`,
-    `Keep this slice compatible with previously completed storage slices and npm run typecheck.`,
+    `Implement delivery slice ${sliceNumber}/${sliceCount}: ${paths.join(', ')}.`,
+    `Replace any preflight stubs for this slice with real implementation code before returning.`,
+    `Keep this slice compatible with previously completed delivery slices and npm run typecheck.`,
     ...task.acceptance_criteria.filter((criterion) => paths.some((path) => criterion.includes(path))),
   ];
 }
 
-function splitLargeStorageTask(task: Task) {
-  if (!taskIsLargeStorageOnlyTask(task)) return [task];
+function splitLargeImplementationTask(task: Task) {
+  if (!taskIsLargeImplementationTask(task)) return [task];
 
-  const chunks = chunkItems(task.owned_surfaces, maxStorageOwnedSurfacesPerTask);
+  const chunks = chunkItems(task.owned_surfaces, maxImplementationOwnedSurfacesPerTask);
   return chunks.map((surfaces, index) => {
     const sliceNumber = index + 1;
     const previousSliceId = index === 1 ? task.id : `${task.id}-part-${index}`;
     return {
       ...task,
       id: index === 0 ? task.id : `${task.id}-part-${sliceNumber}`,
-      deliverable: `${task.deliverable} (storage slice ${sliceNumber}/${chunks.length})`,
+      deliverable: `${task.deliverable} (delivery slice ${sliceNumber}/${chunks.length})`,
       depends_on: index === 0 ? task.depends_on : [previousSliceId],
-      acceptance_criteria: storageSliceAcceptanceCriteria(task, surfaces, sliceNumber, chunks.length),
+      acceptance_criteria: implementationSliceAcceptanceCriteria(task, surfaces, sliceNumber, chunks.length),
       owned_surfaces: surfaces,
     };
   });
@@ -862,7 +867,7 @@ export function normalizeTaskPlanLargeStorageTasks(taskPlan: TaskPlan): TaskPlan
   let changed = false;
 
   for (const task of taskPlan.tasks) {
-    const slices = splitLargeStorageTask(task);
+    const slices = splitLargeImplementationTask(task);
     expandedTasks.push(...slices);
     if (slices.length > 1) {
       changed = true;
@@ -1052,7 +1057,7 @@ export function implementationJudgmentCanComplete({
   note: ImplementationNote;
   task?: Task;
 }) {
-  if (judgment.passed && !implementationWeakDimensionRemediation(judgment, task).length) return true;
+  if (judgment.passed && !judgment.gates_failed.length && !judgment.dimensions_missing.length) return true;
   return shouldProceedAfterNonActionableImplementationJudgment({ judgment, deterministicResults, note, task });
 }
 

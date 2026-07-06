@@ -452,6 +452,75 @@ test('task plan normalization splits oversized storage-only tasks and rewires do
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
+test('task plan normalization splits oversized repository implementation tasks', () => {
+  const plan = taskPlan([
+    {
+      depends_on: ['T0'],
+      owned_surfaces: [
+        'src/storage/d1.ts',
+        'src/storage/r2.ts',
+        'src/repositories/profileArtifacts.ts',
+        'src/repositories/runs.ts',
+        'src/repositories/bookmarks.ts',
+        'src/repositories/links.ts',
+        'src/repositories/candidates.ts',
+        'src/repositories/candidateScores.ts',
+        'src/repositories/transcripts.ts',
+      ],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['src/services/profileService.ts'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanLargeStorageTasks(plan);
+
+  assert.deepEqual(
+    normalized.tasks.map((task) => task.id),
+    ['T1', 'T1-part-2', 'T1-part-3', 'T2'],
+  );
+  assert.deepEqual(normalized.tasks[0].depends_on, ['T0']);
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, [
+    'src/storage/d1.ts',
+    'src/storage/r2.ts',
+    'src/repositories/profileArtifacts.ts',
+  ]);
+  assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
+  assert.deepEqual(normalized.tasks[1].owned_surfaces, [
+    'src/repositories/runs.ts',
+    'src/repositories/bookmarks.ts',
+    'src/repositories/links.ts',
+  ]);
+  assert.deepEqual(normalized.tasks[2].depends_on, ['T1-part-2']);
+  assert.deepEqual(normalized.tasks[2].owned_surfaces, [
+    'src/repositories/candidates.ts',
+    'src/repositories/candidateScores.ts',
+    'src/repositories/transcripts.ts',
+  ]);
+  assert.deepEqual(normalized.tasks[3].depends_on, ['T1-part-3']);
+});
+
+test('task plan normalization leaves scaffold and entrypoint tasks intact', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts', 'src/env.ts', 'src/http/router.ts'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanLargeStorageTasks(plan);
+
+  assert.deepEqual(normalized.tasks.map((task) => task.id), ['T1']);
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, [
+    'package.json',
+    'tsconfig.json',
+    'src/index.ts',
+    'src/env.ts',
+    'src/http/router.ts',
+  ]);
+});
+
 test('existing package scaffold satisfies Worker runtime plan hygiene', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-existing-scaffold-'));
   writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }, null, 2));
@@ -1263,7 +1332,7 @@ test('weak implementation dimensions synthesize actionable remediation', () => {
   ]);
 });
 
-test('passing implementation judgments with weak dimensions still require repair', () => {
+test('passing implementation judgments complete despite soft weak dimensions', () => {
   const judgment = {
     ...implementationJudgment,
     overall: 0.82,
@@ -1285,7 +1354,27 @@ test('passing implementation judgments with weak dimensions still require repair
       deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
       note: implementationNote,
     }),
-    false,
+    true,
+  );
+});
+
+test('passing implementation judgments complete despite explicit judge remediation', () => {
+  const judgment = {
+    ...implementationJudgment,
+    overall: 0.78,
+    passed: true,
+    remediation: [
+      'DIMENSION error_response_quality scored 2/5. Add richer next steps to the scaffold response.',
+    ],
+  };
+
+  assert.equal(
+    implementationJudgmentCanComplete({
+      judgment,
+      deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
+      note: implementationNote,
+    }),
+    true,
   );
 });
 
