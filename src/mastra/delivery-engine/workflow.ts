@@ -1814,19 +1814,35 @@ function taskBoundaryCanConfigureWorkersAi(repoPath: string, task: Task) {
   return taskBoundarySurfaces(repoPath, task)
     .map(concreteOwnedSurfacePath)
     .filter((path): path is string => Boolean(path))
-    .some((path) => ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc', 'src/index.ts'].includes(path));
+    .some(
+      (path) =>
+        ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'].includes(path) || workerSourceSurfaceIsConcrete(path),
+    );
 }
 
 function repoSourceUsesWorkersAi(repoPath: string) {
-  const sourceRoot = join(resolve(repoPath), 'src');
-  return [
+  const root = resolve(repoPath);
+  const sourceRoots = [
+    join(root, 'src'),
+    join(root, 'workers'),
+    join(root, 'worker.js'),
+    join(root, 'worker.mjs'),
+    join(root, 'worker.ts'),
+    join(root, 'worker.mts'),
+  ];
+  const needles = [
     'env.AI',
     'WorkersAiClient',
     'createAiClient',
     "from './ai/client'",
     "from '../ai/client'",
     "from '../../ai/client'",
-  ].some((needle) => sourceTreeContainsText(sourceRoot, needle, { count: 0 }));
+  ];
+
+  return needles.some((needle) => {
+    const scanned = { count: 0 };
+    return sourceRoots.some((sourceRoot) => sourceTreeContainsText(sourceRoot, needle, scanned));
+  });
 }
 
 function wranglerTomlHasWorkersAiBinding(text: string) {
@@ -2371,9 +2387,16 @@ export function wranglerConfigHasWorkersAiBinding(repoPath: string) {
 }
 
 function workerEnvMarksAiOptional(repoPath: string) {
-  const indexPath = join(resolve(repoPath), 'src/index.ts');
-  if (!existsSync(indexPath)) return false;
-  return /\bAI\?\s*:\s*Ai\b/.test(readFileSync(indexPath, 'utf8'));
+  const root = resolve(repoPath);
+  const sourceRoots = [
+    join(root, 'src'),
+    join(root, 'workers'),
+    join(root, 'worker.ts'),
+    join(root, 'worker.mts'),
+    join(root, 'worker.cts'),
+  ];
+
+  return sourceRoots.some((sourceRoot) => sourceTreeContainsText(sourceRoot, 'AI?: Ai', { count: 0 }));
 }
 
 export function workersAiBindingGaps(repoPath: string, task?: Task) {
@@ -3685,6 +3708,20 @@ export function releaseGateLocalD1DatabaseName(repoPath: string) {
 function sourceTreeContainsText(rootPath: string, needle: string, scanned = { count: 0 }): boolean {
   if (!existsSync(rootPath) || scanned.count > 150) return false;
 
+  const rootStat = statSync(rootPath);
+  if (rootStat.isFile()) {
+    if (!/\.[cm]?[jt]sx?$/.test(rootPath)) return false;
+    scanned.count += 1;
+    if (scanned.count > 150) return false;
+    try {
+      return readFileSync(rootPath, 'utf8').includes(needle);
+    } catch {
+      return false;
+    }
+  }
+
+  if (!rootStat.isDirectory()) return false;
+
   for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
     if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.delivery') continue;
 
@@ -4191,12 +4228,14 @@ export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateE
     results.push({
       tier: 'api',
       command: 'static check: Workers AI binding configured',
-      ok,
-      required: true,
-      reason: 'Source uses Workers AI, so the Worker must expose a real AI binding before AI-backed routes or workflows can be accepted.',
-      output_summary: ok ? 'Wrangler config contains active Workers AI binding and Env.AI is required.' : undefined,
-      error: ok ? undefined : aiGaps.join(' '),
-    });
+	      ok,
+	      required: true,
+	      reason: 'Source uses Workers AI, so the Worker must expose a real AI binding before AI-backed routes or workflows can be accepted.',
+	      output_summary: ok
+	        ? 'Wrangler config contains active Workers AI binding; TypeScript Env declarations, when present, keep AI required.'
+	        : undefined,
+	      error: ok ? undefined : aiGaps.join(' '),
+	    });
   }
 
   if (releaseGateRepoHasRoute(repoPath, '/latest') && releaseGateMigrationText(repoPath).trim()) {

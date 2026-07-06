@@ -238,7 +238,7 @@ Cloudflare architecture defaults:
 - Do not introduce Node HTTP servers, Express-style servers, generic server/ directories, or filesystem-backed runtime state.
 - For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml or the task explicitly owns TOML.
 - Use Cloudflare Worker runtime APIs and bindings: D1, KV, R2, Queues, Durable Objects, Workflows, service bindings, and scheduled handlers when appropriate.
-- If the task or existing repo uses Workers AI, configure it as a real Wrangler binding with [ai] binding = "AI" and make Env.AI required at the Worker boundary.
+- If the task or existing repo uses Workers AI, configure it as a real Wrangler binding with [ai] binding = "AI"; when TypeScript Env declarations exist, make Env.AI required at the Worker boundary.
 - Keep the deployment model consistent: do not split a cohesive feature set between standalone Workers and Pages Functions.
 - Worker API surfaces and proxy handlers stay thin: extract request, route/forward, log usage, return responses with enriched context on errors.
 - Worker entry/router creates request context; auth guards handle identity; API guards handle subscription/usage/limits when those concepts exist.

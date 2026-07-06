@@ -1857,6 +1857,66 @@ test('Workers AI projects require an active Wrangler AI binding and required Env
   assert.equal(workersAiEvidence()?.ok, true);
 });
 
+test('Workers AI binding checks support vanilla JS Worker source', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workers-ai-js-binding-'));
+  mkdirSync(join(repoPath, 'workers'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'workers/tally.js'),
+    [
+      'export default {',
+      '  async fetch(request, env) {',
+      '    const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", { prompt: "score" });',
+      '    return Response.json(response);',
+      '  }',
+      '};',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'workers/tally.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc', 'workers/tally.js'] }]).tasks;
+  const workersAiEvidence = () =>
+    releaseGateStaticEvidenceResults(repoPath).find((result) => result.command === 'static check: Workers AI binding configured');
+
+  assert.deepEqual(workersAiBindingGaps(repoPath, task), [
+    'Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section.',
+  ]);
+  assert.equal(workersAiEvidence()?.ok, false);
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'workers/tally.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        ai: { binding: 'AI' },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(workersAiBindingGaps(repoPath, task), []);
+  assert.equal(workersAiEvidence()?.ok, true);
+  assert.match(workersAiEvidence()?.output_summary ?? '', /TypeScript Env declarations, when present/);
+});
+
 test('Worker config hygiene requires current JSONC schema date flags and observability', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-hygiene-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
