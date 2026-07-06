@@ -396,6 +396,29 @@ test('profile kind contract drift is caught for schema and storage tasks', () =>
   assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[1]), []);
 });
 
+test('profile kind producer contract requires audience and voice profile kinds', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-profile-producer-contract-'));
+  mkdirSync(join(repoPath, 'src', 'domain'), { recursive: true });
+  writeFileSync(join(repoPath, 'src', 'domain', 'profileArtifacts.ts'), 'export const PROFILE_KINDS = ["creator"] as const;\n');
+
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/domain/profileArtifacts.ts'],
+    },
+  ]);
+
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /audience_segments, voice_profile/);
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /generic creator kind/);
+
+  writeFileSync(
+    join(repoPath, 'src', 'domain', 'profileArtifacts.ts'),
+    'export const PROFILE_KINDS = ["audience_segments", "voice_profile"] as const;\n',
+  );
+
+  assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
+});
+
 test('profile kind contract drift can use domain profile contract source', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-profile-domain-contract-'));
   mkdirSync(join(repoPath, 'src', 'domain'), { recursive: true });

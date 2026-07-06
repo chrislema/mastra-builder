@@ -708,7 +708,13 @@ function taskCanSafelyDependOn(taskPlan: TaskPlan, taskId: string, dependencyId:
   return taskId !== dependencyId && !taskDependsOn(taskPlan, dependencyId, taskId);
 }
 
-const profileContractProducerSurfaces = ['src/validation.ts', 'src/domain/profile.ts', 'src/domain/profiles.ts'];
+const requiredTalkingHeadProfileKinds = ['audience_segments', 'voice_profile'];
+const profileContractProducerSurfaces = [
+  'src/validation.ts',
+  'src/domain/profile.ts',
+  'src/domain/profiles.ts',
+  'src/domain/profileArtifacts.ts',
+];
 const profileContractConsumerSurfaces = ['migrations/0001_schema.sql', 'src/storage/profiles.ts', 'src/routes/profiles.ts'];
 
 function profileContractProducerTask(taskPlan: TaskPlan) {
@@ -1655,6 +1661,13 @@ function missingProfileKinds(expected: string[], actual: string[]) {
   return expected.filter((kind) => !actual.includes(kind));
 }
 
+function taskOwnsProfileContractProducer(task: Task) {
+  return effectiveOwnedSurfaces(task).some((surface) => {
+    const path = concreteOwnedSurfacePath(surface);
+    return path ? profileContractProducerSurfaces.includes(path) : false;
+  });
+}
+
 function taskOwnsProfileMigration(task: Task) {
   return effectiveOwnedSurfaces(task).some((surface) => concreteOwnedSurfacePath(surface) === 'migrations/0001_schema.sql');
 }
@@ -1665,9 +1678,25 @@ function taskOwnsProfileStorage(task: Task) {
 
 export function profileKindContractGaps(repoPath: string, task: Task) {
   const expected = validationProfileKinds(repoPath);
-  if (!expected.length) return [];
-
   const gaps: string[] = [];
+
+  if (taskOwnsProfileContractProducer(task)) {
+    if (!expected.length) {
+      gaps.push(
+        `Profile contract producer must export PROFILE_KINDS or ProfileKind with required Talking Head profile kinds: ${requiredTalkingHeadProfileKinds.join(', ')}.`,
+      );
+    } else {
+      const missingRequired = missingProfileKinds(requiredTalkingHeadProfileKinds, expected);
+      if (missingRequired.length) {
+        gaps.push(
+          `Profile contract producer omits required Talking Head profile kind(s): ${missingRequired.join(', ')}. Use audience_segments and voice_profile as the persistent profile kinds; do not replace them with a generic creator kind.`,
+        );
+      }
+    }
+  }
+
+  if (!expected.length) return gaps;
+
   if (taskOwnsProfileMigration(task)) {
     const missing = missingProfileKinds(expected, migrationProfileKinds(repoPath));
     if (missing.length) {
