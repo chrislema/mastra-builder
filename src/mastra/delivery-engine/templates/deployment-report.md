@@ -11,7 +11,7 @@
 ## Deploy Command
 
 - Direct Wrangler command
-- Local git/gh CLI source-control action, if any
+- Local git checkpoint or explicit human-approved gh remote action, if any
 - Confirmation that GitHub Actions was not used as the deployment path
 
 ## Result

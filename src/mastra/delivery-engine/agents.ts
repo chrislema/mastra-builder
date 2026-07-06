@@ -371,7 +371,8 @@ Must not:
 - hide operational uncertainty
 
 Deployment policy:
-- Use local git plus the gh CLI for repository operations such as commits, pushes, and pull requests.
+- Use local git for source-control checkpoints.
+- Use the gh CLI only when explicit human direction calls for pushes, pull requests, or other remote GitHub actions.
 - Do not create, trigger, or rely on GitHub Actions for deployment.
 - In production deploy mode, the delivery workflow executes Wrangler CLI directly after human approval.
 - Audit that the deployment report records the exact Wrangler command, deployed revision, target, and live verification results.

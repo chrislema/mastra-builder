@@ -103,9 +103,10 @@ and TypeScript Worker source are explicit exceptions, not the default. The deliv
 should not introduce React, JSX/TSX, frontend frameworks, preprocessors, generic
 Node/Express servers, filesystem-backed runtime state, or a new frontend build step.
 
-Use local `git` plus the `gh` CLI for repository operations such as commits, pushes,
-and pull requests. Do not use GitHub Actions as the deployment path. Production deployments
-should use Wrangler CLI directly.
+Use local `git` for source-control checkpoints. Use the `gh` CLI only when an explicit
+human instruction calls for pushes, pull requests, or other remote GitHub actions. Do not
+use GitHub Actions as the deployment path. Production deployments should use Wrangler CLI
+directly.
 
 ## Request Context
 

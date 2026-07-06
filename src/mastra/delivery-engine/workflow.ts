@@ -1168,7 +1168,7 @@ export function normalizeTaskPlanOperatorDocumentation(taskPlan: TaskPlan): Task
         acceptance_criteria: [
           'README.md documents local development and validation with Wrangler CLI, including npm scripts and expected ports.',
           'README.md lists required Cloudflare resources, bindings, secrets, and Workers AI binding expectations.',
-          'README.md explains source-control expectations with git/gh and states production deploy waits for human approval before running wrangler deploy.',
+          'README.md explains source-control expectations: local git checkpoints are allowed, while pushes/PRs through gh require explicit human direction, and production deploy waits for human approval before running wrangler deploy.',
         ],
         owned_surfaces: ['README.md'],
       },
@@ -1182,7 +1182,7 @@ export function operatorDocumentationHygiene(taskPlan: TaskPlan) {
   return {
     passed: false,
     reason:
-      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, git/gh source control, and human-approved wrangler deploy.',
+      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy.',
   };
 }
 
@@ -6566,7 +6566,7 @@ Project policy:
 Every task must have checkable acceptance criteria and owned_surfaces.
 Worker task slicing:
 - Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml belongs in one task, and migrations/*.sql belongs in a later task.
-- Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, git/gh source control, and human-approved wrangler deploy for production.
+- Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy for production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 Owned-surface hygiene:
 - Every owned_surfaces entry must be a concrete repo path, for example wrangler.jsonc, wrangler.toml, src/index.js, workers/tally.js, public/settings.html, migrations/0001_schema.sql.
@@ -6807,7 +6807,7 @@ Project policy:
 
 Task-plan quality requirements:
 - Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml in one task, migrations/*.sql in a later task.
-- Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, git/gh source control, and human-approved wrangler deploy.
+- Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 - Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.
 - Every consumes-output relation must be declared by task ID. If a later task uses storage, prompts, routes, services, generated types, bindings, or workflow steps from an earlier slice, add the dependency edge explicitly.

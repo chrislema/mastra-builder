@@ -773,7 +773,7 @@ test('task plan normalization appends operator documentation task', () => {
   assert.deepEqual(operatorDocumentationHygiene(plan), {
     passed: false,
     reason:
-      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, git/gh source control, and human-approved wrangler deploy.',
+      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy.',
   });
 
   const normalized = normalizeTaskPlanOperatorDocumentation(plan);
