@@ -18,6 +18,7 @@ import {
   releaseGateEvidenceCommandPlan,
   releaseGateLocalD1DatabaseName,
   releaseGateRuntimeProbePlan,
+  releaseGateStaticEvidenceResults,
   releaseGateWorkerDevCommand,
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
@@ -27,6 +28,8 @@ import {
   unreplacedPreflightStubPaths,
   verificationWithAcceptanceGaps,
   workflowStepIntegrationGaps,
+  workersAiBindingGaps,
+  wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 
 const readout = (blocking_ambiguities: string[]) => ({
@@ -275,6 +278,64 @@ test('release gate runtime probe planner falls back to npx wrangler for Worker c
     executable: 'npx',
     args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', '8999'],
   });
+});
+
+test('Workers AI projects require an active Wrangler AI binding and required Env field', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workers-ai-binding-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { createAiClient } from "./ai/client";',
+      'export interface Env { AI?: Ai }',
+      'export const load = (env: Env) => createAiClient(env);',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.toml'),
+    ['name = "demo-worker"', '# [ai]', '# binding = "AI"'].join('\n'),
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.toml', 'src/index.ts'] }]).tasks;
+
+  assert.equal(wranglerConfigHasWorkersAiBinding(repoPath), false);
+  assert.deepEqual(workersAiBindingGaps(repoPath, task), [
+    'Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section.',
+    'Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.',
+  ]);
+  assert.deepEqual(
+    releaseGateStaticEvidenceResults(repoPath).map((result) => ({
+      command: result.command,
+      ok: result.ok,
+      required: result.required,
+      error: result.error,
+    })),
+    [
+      {
+        command: 'static check: Workers AI binding configured',
+        ok: false,
+        required: true,
+        error:
+          'Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section. Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.',
+      },
+    ],
+  );
+
+  writeFileSync(
+    join(repoPath, 'wrangler.toml'),
+    ['name = "demo-worker"', '[ai]', 'binding = "AI"'].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { createAiClient } from "./ai/client";',
+      'export interface Env { AI: Ai }',
+      'export const load = (env: Env) => createAiClient(env);',
+    ].join('\n'),
+  );
+
+  assert.equal(wranglerConfigHasWorkersAiBinding(repoPath), true);
+  assert.deepEqual(workersAiBindingGaps(repoPath, task), []);
+  assert.equal(releaseGateStaticEvidenceResults(repoPath)[0]?.ok, true);
 });
 
 test('stale downstream verification repair resets only future failed task surfaces', async () => {
@@ -586,6 +647,38 @@ test('reusable implementation artifacts require passing judgment and present own
     judgeOutputPath: undefined,
     attempt: 1,
   });
+});
+
+test('reusable implementation artifacts reject stale Worker AI config artifacts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-reuse-ai-binding-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, '.delivery/artifacts/judgments'), { recursive: true });
+  writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\n# [ai]\n# binding = "AI"\n');
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    'import { createAiClient } from "./ai/client";\nexport interface Env { AI?: Ai }\nexport const load = (env: Env) => createAiClient(env);\n',
+  );
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/note-T1.a1.json'),
+    JSON.stringify({
+      ...implementationNote,
+      task: 'T1',
+      files_touched: ['wrangler.toml', 'src/index.ts'],
+    }),
+  );
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/judgments/implementation-T1-a1.judgment.json'),
+    JSON.stringify({
+      rubric: 'implementation',
+      overall: 0.91,
+      passed: true,
+      gates_failed: [],
+      dimensions_missing: [],
+    }),
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.toml', 'src/index.ts'] }]).tasks;
+
+  assert.equal(reusableImplementationArtifactForTask(repoPath, task), undefined);
 });
 
 test('build resume plan points to the next task after the passing artifact prefix', () => {

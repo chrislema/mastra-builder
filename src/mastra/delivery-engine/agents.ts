@@ -108,6 +108,10 @@ Task owners must be engineer or designer; verification belongs to the later test
 Architecture defaults are Workers-first: use standalone Cloudflare Workers unless the
 existing repo or spec explicitly calls for Pages Functions. Never split one feature set
 across both deployment models.
+If product behavior depends on AI-backed summarization, scoring, generation, or regeneration
+inside a Worker, plan Workers AI as required infrastructure: Wrangler must include an active
+[ai] binding = "AI", the Worker Env should expose AI as a required binding, and AI must not
+be left as an optional/commented binding.
 `,
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
@@ -160,8 +164,11 @@ Review checklist:
 6. Data flow
 7. Security
 8. Complexity
+9. Cloudflare binding completeness
 
 Return either an approved plan with conditions, or blocking findings with required task changes.
+For Workers AI projects, block any plan that treats the AI binding as optional when AI-backed
+product behavior is acceptance-critical. The required Wrangler shape is [ai] binding = "AI".
 `,
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
@@ -208,6 +215,7 @@ Cloudflare architecture defaults:
 - Use Pages Functions only when the existing repo or spec explicitly requires Pages.
 - Do not introduce Node HTTP servers, Express-style servers, generic server/ directories, or filesystem-backed runtime state.
 - Use Cloudflare Worker runtime APIs and bindings: D1, KV, R2, Queues, Durable Objects, Workflows, service bindings, and scheduled handlers when appropriate.
+- If the task or existing repo uses Workers AI, configure it as a real Wrangler binding with [ai] binding = "AI" and make Env.AI required at the Worker boundary.
 - Keep the deployment model consistent: do not split a cohesive feature set between standalone Workers and Pages Functions.
 - Worker API surfaces and proxy handlers stay thin: extract request, route/forward, log usage, return responses with enriched context on errors.
 - Worker entry/router creates request context; auth guards handle identity; API guards handle subscription/usage/limits when those concepts exist.

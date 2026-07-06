@@ -700,6 +700,79 @@ export function workflowStepIntegrationGaps(repoPath: string, task: Task) {
     });
 }
 
+function taskBoundaryCanConfigureWorkersAi(repoPath: string, task: Task) {
+  return taskBoundarySurfaces(repoPath, task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .some((path) => ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc', 'src/index.ts'].includes(path));
+}
+
+function repoSourceUsesWorkersAi(repoPath: string) {
+  const sourceRoot = join(resolve(repoPath), 'src');
+  return [
+    'env.AI',
+    'WorkersAiClient',
+    'createAiClient',
+    "from './ai/client'",
+    "from '../ai/client'",
+    "from '../../ai/client'",
+  ].some((needle) => sourceTreeContainsText(sourceRoot, needle, { count: 0 }));
+}
+
+function wranglerTomlHasWorkersAiBinding(text: string) {
+  let inAiSection = false;
+  for (const rawLine of text.split(/\r?\n/)) {
+    if (/^\s*#/.test(rawLine)) continue;
+    const line = rawLine.replace(/\s+#.*$/, '');
+    const section = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (section) {
+      inAiSection = section[1] === 'ai';
+      continue;
+    }
+    if (inAiSection && /^\s*binding\s*=\s*["']AI["']\s*$/.test(line)) return true;
+  }
+  return false;
+}
+
+function wranglerJsonHasWorkersAiBinding(text: string) {
+  const withoutLineComments = text.replace(/(^|[^:])\/\/.*$/gm, '$1');
+  try {
+    const parsed = JSON.parse(withoutLineComments) as { ai?: { binding?: unknown } };
+    if (parsed.ai?.binding === 'AI') return true;
+  } catch {
+    // Fall back to a narrow regex for JSONC with trailing commas.
+  }
+  return /"ai"\s*:\s*\{[\s\S]*?"binding"\s*:\s*"AI"/.test(text);
+}
+
+export function wranglerConfigHasWorkersAiBinding(repoPath: string) {
+  const configPath = releaseGateWorkerConfigPath(repoPath);
+  if (!configPath) return false;
+  const text = readFileSync(configPath, 'utf8');
+  if (configPath.endsWith('.toml')) return wranglerTomlHasWorkersAiBinding(text);
+  return wranglerJsonHasWorkersAiBinding(text);
+}
+
+function workerEnvMarksAiOptional(repoPath: string) {
+  const indexPath = join(resolve(repoPath), 'src/index.ts');
+  if (!existsSync(indexPath)) return false;
+  return /\bAI\?\s*:\s*Ai\b/.test(readFileSync(indexPath, 'utf8'));
+}
+
+export function workersAiBindingGaps(repoPath: string, task?: Task) {
+  if (!repoSourceUsesWorkersAi(repoPath)) return [];
+  if (task && !taskBoundaryCanConfigureWorkersAi(repoPath, task)) return [];
+
+  const gaps: string[] = [];
+  if (!wranglerConfigHasWorkersAiBinding(repoPath)) {
+    gaps.push('Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section.');
+  }
+  if (workerEnvMarksAiOptional(repoPath)) {
+    gaps.push('Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.');
+  }
+  return gaps;
+}
+
 export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
   return effectiveOwnedSurfaces(task)
     .map(concreteOwnedSurfacePath)
@@ -1082,6 +1155,7 @@ export function reusableImplementationArtifactForTask(repoPath: string, task: Ta
   if (process.env.DELIVERY_REUSE_TASK_ARTIFACTS === '0') return undefined;
   if (missingOwnedSurfacePaths(repoPath, task).length) return undefined;
   if (workflowStepIntegrationGaps(repoPath, task).length) return undefined;
+  if (workersAiBindingGaps(repoPath, task).length) return undefined;
 
   const judgmentDir = join(resolve(repoPath), '.delivery/artifacts/judgments');
   if (!existsSync(judgmentDir)) return undefined;
@@ -1656,6 +1730,49 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
   return commands;
 }
 
+export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateEvidenceResult[] {
+  const aiGaps = workersAiBindingGaps(repoPath);
+  if (!repoSourceUsesWorkersAi(repoPath) && !aiGaps.length) return [];
+
+  const ok = aiGaps.length === 0;
+  return [
+    {
+      tier: 'api',
+      command: 'static check: Workers AI binding configured',
+      ok,
+      required: true,
+      reason: 'Source uses Workers AI, so the Worker must expose a real AI binding before AI-backed routes or workflows can be accepted.',
+      output_summary: ok ? 'Wrangler config contains active Workers AI binding and Env.AI is required.' : undefined,
+      error: ok ? undefined : aiGaps.join(' '),
+    },
+  ];
+}
+
+async function recordReleaseGateStaticEvidenceResult({
+  repoPath,
+  mastra,
+  stage,
+  result,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+  result: ReleaseGateEvidenceResult;
+}) {
+  await appendDeliveryEventState({
+    repoPath,
+    mastra,
+    event: {
+      type: 'run_code',
+      stage,
+      command: result.command,
+      ok: result.ok,
+      output_summary: result.output_summary,
+      error: result.error,
+    },
+  });
+}
+
 async function runReleaseGateEvidenceCommand({
   repoPath,
   mastra,
@@ -2081,6 +2198,10 @@ async function collectReleaseGateEvidence({
   for (const command of plan) {
     commands.push(await runReleaseGateEvidenceCommand({ repoPath, mastra, stage, command }));
   }
+  for (const result of releaseGateStaticEvidenceResults(repoPath)) {
+    await recordReleaseGateStaticEvidenceResult({ repoPath, mastra, stage, result });
+    commands.push(result);
+  }
   const runtimeResult = await runReleaseGateRuntimeProbe({ repoPath, mastra, stage, persistTo: runtimePersistTo });
   if (runtimeResult) commands.push(runtimeResult);
 
@@ -2264,6 +2385,7 @@ function implementationDeterministicResults({
   const missingSurfaces = missingOwnedSurfacePaths(repoPath, task);
   const unreplacedStubs = unreplacedPreflightStubPaths(repoPath, task);
   const workflowIntegrationGaps = workflowStepIntegrationGaps(repoPath, task);
+  const aiBindingGaps = workersAiBindingGaps(repoPath, task);
   const noteOwnership = runDeterministicCheck({
     name: 'file_ownership',
     role,
@@ -2304,6 +2426,12 @@ function implementationDeterministicResults({
       passed: workflowIntegrationGaps.length === 0,
       reason: workflowIntegrationGaps.length ? workflowIntegrationGaps.join('; ') : 'ok',
     },
+    {
+      id: 'workers_ai_binding_required',
+      check: 'workers_ai_binding_required',
+      passed: aiBindingGaps.length === 0,
+      reason: aiBindingGaps.length ? aiBindingGaps.join('; ') : 'ok',
+    },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
     {
       id: 'verification_passed',
@@ -2325,6 +2453,7 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'owned_surfaces_present',
         'preflight_stubs_replaced',
         'workflow_step_integrated',
+        'workers_ai_binding_required',
         'module_loads',
         'ran_code_before_complete',
         'verification_passed',
@@ -3877,6 +4006,7 @@ const executeBuildTaskAttemptStep = createStep({
       package_manifest_owned: packageManifestOwned,
       existing_package_dependencies: existingPackageDependencies,
       focused_repair_file_context: focusedRepairFileContext,
+      platform_policy_findings: workersAiBindingGaps(inputData.repoPath, task),
     };
 
     const buildPrompt = `Implement build task ${task.id}.
@@ -3899,6 +4029,7 @@ Execution rules:
 - If failure_class is policy_boundary, do not repeat blocked writes; use only normalized boundary_surfaces paths.
 - Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
+- Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Do not inspect node_modules; rely on project types and workflow verification.
 - If timeout recovery is active, do not investigate. Create the missing owned surfaces immediately.
 - Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`;
