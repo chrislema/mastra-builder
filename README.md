@@ -26,6 +26,10 @@ The default weather scaffold has been removed.
 
 ## Run Locally
 
+Create `.env` from `.env.example` and set `OPENAI_API_KEY`. The default delivery and
+judge models are `openai/gpt-5.5`; Z.ai / GLM can still be selected per slot with
+`DELIVERY_MODEL` or `DELIVERY_JUDGE_MODEL`.
+
 ```shell
 npm install
 npm test
@@ -34,8 +38,9 @@ npm run build
 npm run dev
 ```
 
-Open `http://localhost:4111` for Mastra Studio, then run `deliveryWorkflow` from the
-Workflows tab.
+Open the Studio URL printed by `npm run dev`, then run `deliveryWorkflow` from the
+Workflows tab. On Chris's machine this is commonly `http://localhost:4112`, but Mastra may
+choose a different port if another Studio process is already running.
 
 ## Run A Delivery Workflow
 
@@ -48,16 +53,19 @@ npm run delivery:run -- --repo /absolute/path/to/target-repo --vision vision.md 
 The same native runner is exposed as a Mastra custom API route:
 
 ```shell
-curl -X POST http://localhost:4111/delivery/run \
+curl -X POST http://localhost:4112/api/delivery/run \
   -H 'Content-Type: application/json' \
   -d '{
     "repoPath": "/absolute/path/to/target-repo",
     "visionPath": "vision.md",
     "specPath": "spec.md",
     "maxRetries": 2,
-    "deployMode": "mock"
+    "deployMode": "local"
   }'
 ```
+
+Use the API base URL printed by `npm run dev`; in local Studio output this is usually
+`http://localhost:4112/api`, making the route `/api/delivery/run`.
 
 Both paths call `deliveryWorkflow.createRun({ resourceId })`, pass
 `requestContext.repoPath`, and include delivery trace metadata. The CLI waits for the native
@@ -75,7 +83,7 @@ builds do not block the request.
   "visionPath": "vision.md",
   "specPath": "spec.md",
   "maxRetries": 2,
-  "deployMode": "mock"
+  "deployMode": "local"
 }
 ```
 
@@ -84,7 +92,9 @@ resolved under `repoPath`, and absolute paths inside the repo are normalized to
 repo-relative paths. The workflow writes authoritative state and artifacts under
 `<repoPath>/.delivery/`.
 
-Use `deployMode: "mock"` unless a real deployment is explicitly intended.
+Use `deployMode: "local"` unless a production deployment is explicitly intended. The
+legacy aliases `mock` and `real` are still accepted, but the harness is designed around
+local Wrangler validation first and human approval before production deploy.
 
 Target projects are assumed to be standalone Cloudflare Workers projects with vanilla
 HTML, CSS, and JavaScript frontends. Pages Functions are an explicit exception, not the
@@ -133,7 +143,7 @@ The workflow currently runs:
 4. Architect reviews the plan and can bounce to planner within `maxRetries`.
 5. Engineer/designer build loop executes tasks in dependency order.
 6. Tester produces and judges a release gate.
-7. Deployer runs mock or real deployment and writes a deployment report.
+7. Deployer writes a local validation report or, after approval, runs production deploy and writes a deployment report.
 8. Deployment gate runs deterministic checks, judges the deployment report, and finalizes the run.
 9. The run finishes as `complete`, `failed`, or `stuck`.
 10. Final `.delivery` run state is persisted into Mastra observability storage.
@@ -185,7 +195,7 @@ The workflow uses Mastra suspend/resume for human input:
 ```
 
 - `create-deployment-report` suspends with resume label `approve-real-deployment` before
-  any real deployment command runs. Resume with:
+  any production deployment command runs. Resume with:
 
 ```json
 {
