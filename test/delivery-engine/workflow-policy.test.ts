@@ -89,7 +89,7 @@ const readout = (blocking_ambiguities: string[]) => ({
   artifact_type: 'readout' as const,
   product_intent: 'intent',
   technical_shape: 'shape',
-  safe_assumptions: [],
+  safe_assumptions: [] as string[],
   blocking_ambiguities,
   recommended_next_step: 'next',
 });
@@ -113,9 +113,9 @@ const taskPlan = (
     acceptance_criteria: task.acceptance_criteria ?? ['verified'],
     owned_surfaces: task.owned_surfaces ?? ['src/index.ts'],
   })),
-  technology_decisions: [],
-  open_decisions: [],
-  risks: [],
+  technology_decisions: [] as Array<{ decision: string; rationale: string }>,
+  open_decisions: [] as string[],
+  risks: [] as string[],
 });
 
 test('planner questions are deferred when a task plan has an executable root task', () => {

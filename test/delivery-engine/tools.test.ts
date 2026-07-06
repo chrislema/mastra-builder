@@ -42,6 +42,7 @@ test('repo-bound delivery tools can resolve repoPath from request context', asyn
     { requestContext: createDeliveryRequestContext(repoPath) } as any,
   );
 
+  assert.ok(status && 'run_id' in status && 'stage' in status);
   assert.equal(status?.run_id, run.run_id);
   assert.equal(status?.stage, 'readout');
 });
