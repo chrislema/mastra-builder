@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'verifiable-root-scaffold-v5';
+const plannerPolicyVersion = 'explicit-owned-surfaces-v6';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -570,13 +570,25 @@ function ownedSurfaceReferenceIsConcrete(surface: string) {
   return looksLikeRepoPathReference(normalized);
 }
 
+function ownedSurfaceReferenceIsWildcard(surface: string) {
+  const normalized = normalizeDeliveryPathReference(surface);
+  if (/^unknown:/i.test(normalized)) return false;
+  return /[*?]/.test(normalized);
+}
+
 export function ownedSurfaceHygiene(taskPlan: TaskPlan) {
   for (const task of taskPlan.tasks) {
     for (const surface of task.owned_surfaces) {
+      if (ownedSurfaceReferenceIsWildcard(surface)) {
+        return {
+          passed: false,
+          reason: `${task.id} owned_surfaces contains wildcard surface "${surface}". Enumerate concrete file paths so missing files, boundaries, and handoffs can be verified deterministically; use "unknown: <why>" only when a path is genuinely unknowable.`,
+        };
+      }
       if (ownedSurfaceReferenceIsConcrete(surface)) continue;
       return {
         passed: false,
-        reason: `${task.id} owned_surfaces contains conceptual surface "${surface}". Use concrete repo paths/globs like wrangler.toml, src/index.ts, public/settings.html, migrations/0001_schema.sql, or "unknown: <reason>".`,
+        reason: `${task.id} owned_surfaces contains conceptual surface "${surface}". Use concrete repo paths like wrangler.toml, src/index.ts, public/settings.html, migrations/0001_schema.sql, or "unknown: <reason>".`,
       };
     }
   }
@@ -3531,7 +3543,8 @@ Do not write code. Ask only blocking questions. Record safe assumptions in the r
 Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
 Every task must have checkable acceptance criteria and owned_surfaces.
 Owned-surface hygiene:
-- Every owned_surfaces entry must be a concrete repo path or glob, for example wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
+- Every owned_surfaces entry must be a concrete repo path, for example wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
+- Do not use wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/**. Enumerate each expected file path.
 - Do not use conceptual labels such as "Worker Env types", "wrangler configuration", "Workflow binding registration", "API routes", or "UI assets".
 - If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
 Root scaffold hygiene:
@@ -4032,7 +4045,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
 
 Return a full replacement taskPlan object. Preserve concrete deliverables, checkable acceptance criteria, dependencies, and owned surfaces.
 Do not write implementation code.
-Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path or glob, not a conceptual label. Use "unknown: <why>" only when the file truly cannot be known.
+Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
 Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks. Safe defaults belong in the readout on the next full planning pass, so do not add them to taskPlan.open_decisions here.
 Every taskPlan.open_decisions entry must use this exact field shape:
 "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."

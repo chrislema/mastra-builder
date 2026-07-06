@@ -107,8 +107,9 @@ Use task-plan artifacts for plans and decision-log artifacts for unresolved prod
 Only put genuine blockers in taskPlan.open_decisions. If a question can be handled with a safe default,
 record it as a safe assumption. If it is non-blocking delivery uncertainty, record it as a risk.
 Every open decision must be decision-shaped: Topic, Why it matters, Options considered, Follow-up impact.
-Every task owned surface must be a concrete repo path or glob, not a conceptual label. Use
-"unknown: <why>" only when a file truly cannot be known.
+Every task owned surface must be a concrete repo path, not a conceptual label or wildcard.
+Enumerate files instead of using patterns like src/**/*.ts or src/storage/*.ts. Use "unknown: <why>"
+only when a file truly cannot be known.
 When the target folder has no package.json, the root scaffold must be explicit and typecheckable:
 a first root engineer task owns package.json, tsconfig.json, and at least one src/*.ts input such
 as src/index.ts or src/env.ts. Worker runtime/config/source tasks depend on it unless they own those

@@ -127,6 +127,16 @@ test('task plan owned surfaces must be concrete repo paths or explicit unknowns'
   const result = ownedSurfaceHygiene(conceptualPlan);
   assert.equal(result.passed, false);
   assert.match(result.reason, /conceptual surface/);
+
+  const wildcardPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/storage/*.ts'],
+    },
+  ]);
+  const wildcardResult = ownedSurfaceHygiene(wildcardPlan);
+  assert.equal(wildcardResult.passed, false);
+  assert.match(wildcardResult.reason, /wildcard surface/);
 });
 
 test('bare Worker project plans require package scaffold before runtime surfaces', () => {
