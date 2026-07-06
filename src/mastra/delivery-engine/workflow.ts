@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'role-boundary-normalized-v10';
+const plannerPolicyVersion = 'role-boundary-normalized-v11';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -1819,6 +1819,10 @@ export function implementationRetryMode({
   return 'normal' as const;
 }
 
+export function implementationToolChoiceForRetryMode(retryMode: ReturnType<typeof implementationRetryMode>) {
+  return retryMode === 'write-first' || retryMode === 'focused-repair' ? 'required' : 'auto';
+}
+
 function judgeRepairAlreadyAttempted(remediation: string[]) {
   return remediation.some((item) => /^JUDGE repair attempt:/i.test(item));
 }
@@ -1833,18 +1837,20 @@ function implementationJudgeTimeoutRemediation(taskId: string, attemptNumber: nu
   ];
 }
 
-function buildTimeoutRemediation({
+export function buildTimeoutRemediation({
   task,
   timeoutMs,
   missingSurfaces,
-  verificationRecovery,
+  repairRecovery,
   noToolCall = false,
+  priorRemediation = [],
 }: {
   task: Task;
   timeoutMs: number;
   missingSurfaces: string[];
-  verificationRecovery: boolean;
+  repairRecovery: boolean;
   noToolCall?: boolean;
+  priorRemediation?: string[];
 }) {
   if (noToolCall && missingSurfaces.length) {
     return [
@@ -1852,10 +1858,10 @@ function buildTimeoutRemediation({
     ];
   }
 
-  if (noToolCall && verificationRecovery) {
-    return [
+  if (noToolCall && repairRecovery) {
+    return preservePriorRemediation([
       `${task.id} repair attempt made no tool calls after ${timeoutMs}ms. Make a focused write to the existing boundary surfaces before returning.`,
-    ];
+    ], priorRemediation);
   }
 
   if (noToolCall) {
@@ -1870,15 +1876,19 @@ function buildTimeoutRemediation({
     ];
   }
 
-  if (verificationRecovery) {
-    return [
-      `${task.id} repair attempt timed out after ${timeoutMs}ms. Fix the reported verification errors in the existing boundary surfaces before any broad investigation.`,
-    ];
+  if (repairRecovery) {
+    return preservePriorRemediation([
+      `${task.id} repair attempt timed out after ${timeoutMs}ms. Fix the reported repair findings in the existing boundary surfaces before any broad investigation.`,
+    ], priorRemediation);
   }
 
   return [
     `${task.id} build attempt timed out after ${timeoutMs}ms. Edit the boundary surfaces before any broad investigation.`,
   ];
+}
+
+function preservePriorRemediation(primary: string[], priorRemediation: string[]) {
+  return [...primary, ...priorRemediation.filter((item) => !primary.includes(item))];
 }
 
 export function priorStoppedBuildTaskIds({
@@ -5053,6 +5063,7 @@ const executeBuildTaskAttemptStep = createStep({
       : focusedRepairRecovery
         ? implementationRepairWorkspaceTools
         : implementationWorkspaceTools;
+    const toolChoice = implementationToolChoiceForRetryMode(retryMode);
     const maxSteps = writeFirstRecovery ? 3 : focusedRepairRecovery ? 4 : 8;
     const packageManifestOwned = taskOwnsPackageManifest(task);
     const existingPackageDependencies = packageDependencyNames(inputData.repoPath);
@@ -5098,6 +5109,7 @@ Execution rules:
 - direct_dependency_surfaces are read-only context unless a listed path is also present in boundary_surfaces.
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
+- In write-first or focused repair mode, you must call an available workspace write/edit tool before returning; a text-only response is a failed attempt.
 - If failure_class is missing_surface, create every missing_owned_surface before editing any other file.
 - If failure_class is preflight_stub, replace every unreplaced_preflight_stub before editing any other file.
 - If failure_class is policy_boundary, do not repeat blocked writes; use only normalized boundary_surfaces paths.
@@ -5116,6 +5128,7 @@ Execution rules:
 Timeout recovery is active.
 - Missing owned surfaces: ${missingSurfaces.join(', ')}
 - Use only write/mkdir tools.
+- The tool choice is required; call the workspace write tool now.
 - Do not read or list files in this attempt.
 - Create compile-safe placeholders that satisfy the task packet and allow workflow verification to run.`
       : '';
@@ -5129,6 +5142,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
 ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
 - Use focused_repair_file_context as your source for current file contents. It includes boundary files plus direct dependency files needed for type and domain contracts.
 - Do not list or read files in this attempt.
+- The tool choice is required; call mastra_workspace_edit_file or mastra_workspace_write_file now.
 - Prefer editing existing generated files over adding new files.
 - Do not edit dependency context files unless they also appear in boundary_surfaces.
 - Do not read spec.md, wrangler.toml, package.json, or package-lock.json unless that exact file is listed in boundary_surfaces.
@@ -5150,6 +5164,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
             {
               abortSignal,
               activeTools,
+              toolChoice,
               maxSteps,
               toolCallConcurrency: 1,
               requestContext: createDeliveryRequestContext(inputData.repoPath),
@@ -5199,8 +5214,9 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
         task,
         timeoutMs: error.timeoutMs,
         missingSurfaces: missingSurfacesAfterTimeout,
-        verificationRecovery,
+        repairRecovery: focusedRepairRecovery || verificationRecovery,
         noToolCall: error instanceof DeliveryNoToolCallTimeoutError,
+        priorRemediation: inputData.remediation,
       });
       if (attempt >= inputData.maxRetries) {
         await updateDeliveryTaskState({
@@ -5285,6 +5301,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
         prompt: finalBuildPrompt,
         response: serializeAgentResponse(buildResponse),
         activeTools,
+        toolChoice,
         retryMode,
       },
     });

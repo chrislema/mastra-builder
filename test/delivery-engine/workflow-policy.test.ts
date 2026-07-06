@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  buildTimeoutRemediation,
   canSalvageTimedOutBuildAttempt,
   createMissingOwnedSurfaceStubs,
   deliveryBuildResumePlan,
@@ -14,6 +15,7 @@ import {
   implementationFailureClass,
   implementationJudgmentCanComplete,
   implementationRetryMode,
+  implementationToolChoiceForRetryMode,
   implementationWeakDimensionRemediation,
   judgeProviderErrorDetails,
   judgeUnavailableOutputForRubric,
@@ -1708,6 +1710,31 @@ test('implementation retry mode focuses timeout retries when owned files already
     }),
     'focused-repair',
   );
+});
+
+test('implementation repair retries require a tool call', () => {
+  assert.equal(implementationToolChoiceForRetryMode('normal'), 'auto');
+  assert.equal(implementationToolChoiceForRetryMode('write-first'), 'required');
+  assert.equal(implementationToolChoiceForRetryMode('focused-repair'), 'required');
+});
+
+test('build no-tool remediation preserves prior judge findings during repair', () => {
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/storage/bookmarks.ts'] }]).tasks;
+  const remediation = buildTimeoutRemediation({
+    task,
+    timeoutMs: 60000,
+    missingSurfaces: [],
+    repairRecovery: true,
+    noToolCall: true,
+    priorRemediation: [
+      'GATE no_silent_degradation failed: parse helpers must throw on corrupted persisted JSON.',
+      'DIMENSION error_response_quality scored 2/5.',
+    ],
+  });
+
+  assert.match(remediation[0], /repair attempt made no tool calls/);
+  assert.match(remediation.join('\n'), /no_silent_degradation/);
+  assert.match(remediation.join('\n'), /error_response_quality/);
 });
 
 test('implementation retry mode classifies deterministic failure families', () => {
