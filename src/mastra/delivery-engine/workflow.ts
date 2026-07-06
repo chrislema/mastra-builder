@@ -3987,19 +3987,9 @@ export function releaseGateWorkerDevCommand(
 ) {
   if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
 
-  const scripts = packageScripts(repoPath);
-  const devScript = scripts.dev;
   const portValue = String(port);
   const persistArgs = persistTo ? ['--persist-to', String(persistTo)] : [];
   const persistCommand = persistTo ? ` --persist-to ${String(persistTo)}` : '';
-  if (typeof devScript === 'string' && /\bwrangler\s+dev\b/.test(devScript)) {
-    return {
-      command: `npm run dev -- --ip 127.0.0.1 --port ${portValue}${persistCommand}`,
-      executable: 'npm',
-      args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', portValue, ...persistArgs],
-    } satisfies ReleaseGateProcessCommand;
-  }
-
   return wranglerProcessCommand(repoPath, `dev --ip 127.0.0.1 --port ${portValue}${persistCommand}`, [
     'dev',
     '--ip',
@@ -4012,17 +4002,6 @@ export function releaseGateWorkerDevCommand(
 
 export function releaseGateWorkerDeployDryRunCommand(repoPath: string) {
   if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
-
-  const deployScript = packageScripts(repoPath).deploy;
-  if (typeof deployScript === 'string' && /\bwrangler\s+deploy\b/.test(deployScript)) {
-    const alreadyDryRun = /\b--dry-run\b/.test(deployScript);
-    return {
-      command: alreadyDryRun ? 'npm run deploy' : 'npm run deploy -- --dry-run',
-      executable: 'npm',
-      args: alreadyDryRun ? ['run', 'deploy'] : ['run', 'deploy', '--', '--dry-run'],
-    } satisfies ReleaseGateProcessCommand;
-  }
-
   return wranglerProcessCommand(repoPath, 'deploy --dry-run', ['deploy', '--dry-run']);
 }
 
@@ -5495,15 +5474,6 @@ export function localDeploymentReportFromReleaseGateEvidence({
 }
 
 export function productionWranglerDeployCommand(repoPath: string): ReleaseGateProcessCommand {
-  const deployScript = packageScripts(repoPath).deploy;
-  if (typeof deployScript === 'string' && /\bwrangler\s+deploy\b/.test(deployScript)) {
-    return {
-      command: 'npm run deploy',
-      executable: 'npm',
-      args: ['run', 'deploy'],
-    };
-  }
-
   return wranglerProcessCommand(repoPath, 'deploy', ['deploy']);
 }
 

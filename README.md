@@ -105,7 +105,7 @@ Node/Express servers, filesystem-backed runtime state, or a new frontend build s
 
 Use local `git` plus the `gh` CLI for repository operations such as commits, pushes,
 and pull requests. Do not use GitHub Actions as the deployment path. Production deployments
-should use Wrangler CLI, or an existing project script that directly wraps Wrangler.
+should use Wrangler CLI directly.
 
 ## Request Context
 

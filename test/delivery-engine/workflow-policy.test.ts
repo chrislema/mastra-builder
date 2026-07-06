@@ -1219,7 +1219,7 @@ test('local deployment report reuses release-gate evidence without production de
         },
         {
           tier: 'api',
-          command: 'npm run dev -- --ip 127.0.0.1 --port 8787 --persist-to /tmp/state',
+          command: 'npx wrangler dev --ip 127.0.0.1 --port 8787 --persist-to /tmp/state',
           ok: true,
           required: true,
           reason: 'A Wrangler Worker config was present, so local runtime verification is required before deployment.',
@@ -1309,14 +1309,14 @@ test('production deploy command uses Wrangler directly without GitHub Actions', 
   writeFileSync(join(scriptedRepo, 'wrangler.jsonc'), '{ "name": "demo-worker", "main": "src/index.ts" }\n');
 
   assert.deepEqual(productionWranglerDeployCommand(scriptedRepo), {
-    command: 'npm run deploy',
-    executable: 'npm',
-    args: ['run', 'deploy'],
+    command: 'npx wrangler deploy',
+    executable: 'npx',
+    args: ['wrangler', 'deploy'],
   });
   assert.deepEqual(releaseGateWorkerDeployDryRunCommand(scriptedRepo), {
-    command: 'npm run deploy -- --dry-run',
-    executable: 'npm',
-    args: ['run', 'deploy', '--', '--dry-run'],
+    command: 'npx wrangler deploy --dry-run',
+    executable: 'npx',
+    args: ['wrangler', 'deploy', '--dry-run'],
   });
 
   const directRepo = mkdtempSync(join(tmpdir(), 'delivery-production-direct-deploy-'));
@@ -1357,7 +1357,7 @@ test('production deployment report records native Wrangler deploy evidence', () 
     releaseGate,
     releaseGatePath: '.delivery/artifacts/release-gate.json',
     evidencePath: '.delivery/artifacts/test-evidence.a1.json',
-    deployCommand: 'npm run deploy',
+    deployCommand: './node_modules/.bin/wrangler deploy',
     deployOk: true,
     deployOutput: 'Published demo-worker https://demo-worker.example.workers.dev Version ID: abcdefgh',
     liveVerification: {
@@ -1374,13 +1374,13 @@ test('production deployment report records native Wrangler deploy evidence', () 
   assert.equal(report.next_action, 'monitor');
   assert.equal(report.revision, 'wrangler:abcdefgh');
   assert.equal(report.config_changes.some((change) => /GitHub Actions not used/.test(change)), true);
-  assert.equal(report.verification.some((row) => row.check === 'npm run deploy' && row.passed), true);
+  assert.equal(report.verification.some((row) => row.check === './node_modules/.bin/wrangler deploy' && row.passed), true);
 
   const failed = productionDeploymentReportFromWranglerResult({
     runId: 'run-prod-fail',
     releaseGate,
     releaseGatePath: '.delivery/artifacts/release-gate.json',
-    deployCommand: 'npm run deploy',
+    deployCommand: './node_modules/.bin/wrangler deploy',
     deployOk: false,
     deployError: 'authentication failed',
     liveVerification: {
@@ -1594,7 +1594,7 @@ test('release gate deterministic checks fail closed on failed required local evi
   );
 });
 
-test('release gate runtime probe planner uses the project Wrangler dev script', () => {
+test('release gate runtime probe planner uses Wrangler CLI directly', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-'));
   mkdirSync(join(repoPath, 'src/routes'), { recursive: true });
   writeFileSync(
@@ -1605,19 +1605,19 @@ test('release gate runtime probe planner uses the project Wrangler dev script', 
   writeFileSync(join(repoPath, 'src/routes/health.ts'), 'export const path = "/health";\n');
 
   assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999), {
-    command: 'npm run dev -- --ip 127.0.0.1 --port 8999',
-    executable: 'npm',
-    args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', '8999'],
+    command: 'npx wrangler dev --ip 127.0.0.1 --port 8999',
+    executable: 'npx',
+    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', '8999'],
   });
   assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999, '/tmp/state'), {
-    command: 'npm run dev -- --ip 127.0.0.1 --port 8999 --persist-to /tmp/state',
-    executable: 'npm',
-    args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', '8999', '--persist-to', '/tmp/state'],
+    command: 'npx wrangler dev --ip 127.0.0.1 --port 8999 --persist-to /tmp/state',
+    executable: 'npx',
+    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', '8999', '--persist-to', '/tmp/state'],
   });
 
   const plan = releaseGateRuntimeProbePlan(repoPath);
   assert.equal(plan?.required, true);
-  assert.equal(plan?.command.command, 'npm run dev -- --ip 127.0.0.1 --port <port>');
+  assert.equal(plan?.command.command, 'npx wrangler dev --ip 127.0.0.1 --port <port>');
   assert.deepEqual(
     plan?.probes.map((probe) => ({ path: probe.path, expectedStatus: probe.expectedStatus, statusBelow: probe.statusBelow })),
     [
