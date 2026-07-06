@@ -2857,6 +2857,12 @@ test('Worker config task packet policy carries the exact current compatibility d
     },
   });
   assert.deepEqual(policy.deployment_environments.required, ['staging', 'production']);
+  assert.equal(policy.deployment_environments.staging_dev_command, 'wrangler dev --env staging');
+  assert.equal(
+    policy.deployment_environments.staging_d1_migration_command,
+    'wrangler d1 migrations apply <database> --env staging --local',
+  );
+  assert.equal(policy.deployment_environments.production_dry_run_command, 'wrangler deploy --dry-run --env production');
   assert.equal(policy.deployment_environments.production_deploy_command, 'wrangler deploy --env production');
   assert.match(policy.deployment_environments.note, /non-inheritable/);
   assert.deepEqual(policy.generated_types, {
@@ -2864,6 +2870,32 @@ test('Worker config task packet policy carries the exact current compatibility d
     output: 'worker-configuration.d.ts',
     tsconfig_types: ['./worker-configuration.d.ts', 'node'],
   });
+});
+
+test('task plan schema describes explicit Worker environment commands', () => {
+  const schema = JSON.parse(
+    readFileSync(join(process.cwd(), 'src/mastra/delivery-engine/schemas/task-plan.schema.json'), 'utf8'),
+  ) as {
+    properties: {
+      tasks: {
+        items: {
+          properties: {
+            owner: { description: string };
+            owned_surfaces: { description: string };
+          };
+        };
+      };
+    };
+  };
+
+  const descriptions = [
+    schema.properties.tasks.items.properties.owner.description,
+    schema.properties.tasks.items.properties.owned_surfaces.description,
+  ].join('\n');
+
+  assert.match(descriptions, /wrangler dev --env staging/);
+  assert.match(descriptions, /wrangler deploy --env production/);
+  assert.match(descriptions, /env\.staging\/env\.production|env\.staging and env\.production/);
 });
 
 test('Worker package scaffold hygiene requires current Wrangler tooling and config-based scripts', () => {

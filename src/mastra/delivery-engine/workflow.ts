@@ -2053,6 +2053,9 @@ export function workerConfigTaskPacketPolicy() {
     },
     deployment_environments: {
       required: ['staging', 'production'],
+      staging_dev_command: 'wrangler dev --env staging',
+      staging_d1_migration_command: 'wrangler d1 migrations apply <database> --env staging --local',
+      production_dry_run_command: 'wrangler deploy --dry-run --env production',
       production_deploy_command: 'wrangler deploy --env production',
       note: 'Wrangler bindings and vars are non-inheritable, so mirror required binding names and required vars inside env.staging and env.production.',
     },
@@ -8210,7 +8213,7 @@ Execution rules:
 - For TS18046 on unknown values, narrow with typeof/asRecord/Array.isArray before property access or numeric comparison. Number.isInteger(value) alone does not narrow unknown to number.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
-- When worker_config_policy is not null, use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, Workers Static Assets from worker_config_policy.static_assets when public/ UI files exist, worker_config_policy.deployment_environments with env.staging and env.production, worker_config_policy.generated_types for TypeScript source, and Wrangler binding names that exactly match generated Env binding property names.
+- When worker_config_policy is not null, use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, Workers Static Assets from worker_config_policy.static_assets when public/ UI files exist, worker_config_policy.deployment_environments with env.staging/env.production and the listed staging/prod Wrangler commands, worker_config_policy.generated_types for TypeScript source, and Wrangler binding names that exactly match generated Env binding property names.
 - For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, scripts.dev as "wrangler dev --env staging", and scripts.deploy as "wrangler deploy --env production". For TypeScript Worker source, add scripts.generate-types as "wrangler types", scripts.typecheck as "npm run generate-types && tsc --noEmit", @types/node, and tsconfig.json. Do not add @cloudflare/workers-types; Wrangler generates Worker binding/runtime types from config.
 - Do not add React, Vite, Next, Vue, Svelte, or frontend build dependencies/scripts. Chris's Worker frontends are vanilla HTML/CSS/JS served as static assets.
 - When TypeScript is used, configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes ./worker-configuration.d.ts and node, and strict is true.
