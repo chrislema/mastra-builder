@@ -2301,7 +2301,8 @@ test('Worker config hygiene requires Workers Static Assets for public UI files',
 
   assert.match(workerConfigHygieneGaps(repoPath, task).join('\n'), /assets\.binding/);
 
-  writeFileSync(join(repoPath, 'src/env.ts'), ['export interface Env {', '  ASSETS: Fetcher;', '}'].join('\n'));
+  writeFileSync(join(repoPath, 'src/env.ts'), ['export interface Env {', '  OLD_ASSETS: Fetcher;', '}'].join('\n'));
+  writeFileSync(join(repoPath, 'worker-configuration.d.ts'), ['interface Env {', '  ASSETS: Fetcher;', '}'].join('\n'));
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
@@ -2335,6 +2336,11 @@ test('Worker config task packet policy carries the exact current compatibility d
       directory: './public',
       binding: 'ASSETS',
     },
+  });
+  assert.deepEqual(policy.generated_types, {
+    command: 'wrangler types',
+    output: 'worker-configuration.d.ts',
+    tsconfig_types: ['./worker-configuration.d.ts', 'node'],
   });
 });
 
@@ -2411,9 +2417,11 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
   const [tsTask] = taskPlan([{ depends_on: [], owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'] }]).tasks;
 
   const missingTypeScriptGaps = workerPackageScaffoldGaps(repoPath, tsTask);
-  assert.match(missingTypeScriptGaps.join('\n'), /scripts\.typecheck/);
-  assert.match(missingTypeScriptGaps.join('\n'), /workers-types.*missing/);
+  assert.match(missingTypeScriptGaps.join('\n'), /scripts\.generate-types/);
+  assert.match(missingTypeScriptGaps.join('\n'), /scripts\.typecheck.*generate-types/);
+  assert.match(missingTypeScriptGaps.join('\n'), /@types\/node.*missing/);
   assert.match(missingTypeScriptGaps.join('\n'), /tsconfig\.json: missing/);
+  assert.doesNotMatch(missingTypeScriptGaps.join('\n'), /workers-types/);
 
   writeFileSync(
     join(repoPath, 'package.json'),
@@ -2422,10 +2430,11 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
         scripts: {
           dev: 'wrangler dev',
           deploy: 'wrangler deploy',
-          typecheck: 'tsc --noEmit',
+          'generate-types': 'wrangler types',
+          typecheck: 'npm run generate-types && tsc --noEmit',
         },
         devDependencies: {
-          '@cloudflare/workers-types': 'latest',
+          '@types/node': 'latest',
           wrangler: '^4.0.0',
         },
       },
@@ -2442,7 +2451,7 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
           module: 'ESNext',
           moduleResolution: 'Bundler',
           lib: ['ES2022', 'WebWorker'],
-          types: ['@cloudflare/workers-types'],
+          types: ['./worker-configuration.d.ts', 'node'],
           strict: true,
         },
         include: ['src/**/*.ts'],
