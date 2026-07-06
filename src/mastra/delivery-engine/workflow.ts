@@ -4211,6 +4211,77 @@ export function verificationWithAcceptanceGaps({
   };
 }
 
+function taskBoundaryAllowsRepairPath(repoPath: string, task: Task, path: string) {
+  return matchesAny(path, taskBoundarySurfaces(repoPath, task));
+}
+
+function repairUnknownNumberIntegerLine(line: string) {
+  return line.replace(/\bNumber\.isInteger\(([_$A-Za-z][_$A-Za-z0-9]*)\)\s*&&/g, (match, identifier, offset) => {
+    const prefix = line.slice(0, offset);
+    const narrowingPattern = new RegExp(`typeof\\s+${identifier}\\s*===\\s*["']number["']`);
+    if (narrowingPattern.test(prefix)) return match;
+    return `typeof ${identifier} === "number" && ${match}`;
+  });
+}
+
+export async function repairUnknownNumberIntegerNarrowing({
+  repoPath,
+  mastra,
+  stage,
+  taskPlan,
+  currentTaskIndex,
+  failure,
+}: {
+  repoPath: string;
+  mastra?: any;
+  stage: string;
+  taskPlan: TaskPlan;
+  currentTaskIndex: number;
+  failure: string;
+}) {
+  const currentTask = topoOrderTasks(taskPlan.tasks)[currentTaskIndex];
+  if (!currentTask) return false;
+
+  const diagnostics = typeScriptDiagnosticsFromText(failure).filter(
+    (diagnostic) => diagnostic.code === 'TS18046' && /\bunknown\b/i.test(diagnostic.message),
+  );
+  if (!diagnostics.length) return false;
+
+  const repairedPaths: string[] = [];
+  for (const path of new Set(diagnostics.map((diagnostic) => diagnostic.path))) {
+    if (!taskBoundaryAllowsRepairPath(repoPath, currentTask, path)) continue;
+    const fullPath = join(resolve(repoPath), path);
+    if (!existsSync(fullPath)) continue;
+
+    const source = readFileSync(fullPath, 'utf8');
+    const next = source
+      .split('\n')
+      .map((line) => repairUnknownNumberIntegerLine(line))
+      .join('\n');
+    if (next === source) continue;
+
+    writeFileSync(fullPath, next);
+    repairedPaths.push(path);
+  }
+
+  if (!repairedPaths.length) return false;
+
+  await appendDeliveryEventState({
+    repoPath,
+    mastra,
+    event: {
+      type: 'tool_use',
+      tool: 'auto_repair',
+      ok: true,
+      stage,
+      paths: repairedPaths,
+      output_summary:
+        'Added typeof number narrowing before Number.isInteger checks after TS18046 unknown-value typecheck failures.',
+    },
+  }).catch(() => undefined);
+  return true;
+}
+
 async function applyBuildVerificationRepair({
   repoPath,
   mastra,
@@ -4230,6 +4301,21 @@ async function applyBuildVerificationRepair({
     taskPlan &&
     typeof taskIndex === 'number' &&
     (await repairStaleDownstreamVerificationSurfaces({
+      repoPath,
+      mastra,
+      stage,
+      taskPlan,
+      currentTaskIndex: taskIndex,
+      failure,
+    }))
+  ) {
+    return true;
+  }
+
+  if (
+    taskPlan &&
+    typeof taskIndex === 'number' &&
+    (await repairUnknownNumberIntegerNarrowing({
       repoPath,
       mastra,
       stage,

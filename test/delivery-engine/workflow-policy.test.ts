@@ -48,6 +48,7 @@ import {
   projectScaffoldHygiene,
   readBudgetBlockedToolCount,
   repairStaleDownstreamVerificationSurfaces,
+  repairUnknownNumberIntegerNarrowing,
   releaseGateForInvalidTesterOutput,
   releaseGateEvidenceCommandPlan,
   releaseGateLocalD1DatabaseName,
@@ -2278,6 +2279,58 @@ src/ai/profilePrompts.ts(304,51): error TS18046: 'value' is of type 'unknown'.
       (diagnostic) => `${diagnostic.path}:${diagnostic.line}:${diagnostic.column} ${diagnostic.code}`,
     ),
     ['src/ai/profilePrompts.ts:304:37 TS18046', 'src/ai/profilePrompts.ts:304:51 TS18046'],
+  );
+});
+
+test('unknown Number.isInteger auto repair is scoped to the current task boundary', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-unknown-number-repair-'));
+  mkdirSync(join(repoPath, 'src/ai'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/ai/profilePrompts.ts'),
+    [
+      'function isScore(value: unknown): value is number {',
+      '  return Number.isInteger(value) && value >= 0 && value <= 10;',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  mkdirSync(join(repoPath, 'src/other'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/other/outside.ts'),
+    [
+      'function isScore(value: unknown): value is number {',
+      '  return Number.isInteger(value) && value >= 0 && value <= 10;',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const plan = taskPlan([
+    { id: 'T06', depends_on: [], owned_surfaces: ['src/ai/profilePrompts.ts'] },
+    { id: 'T99', depends_on: ['T06'], owned_surfaces: ['src/other/outside.ts'] },
+  ]);
+  const failure = [
+    "src/ai/profilePrompts.ts(2,37): error TS18046: 'value' is of type 'unknown'.",
+    "src/other/outside.ts(2,37): error TS18046: 'value' is of type 'unknown'.",
+  ].join('\n');
+
+  assert.equal(
+    await repairUnknownNumberIntegerNarrowing({
+      repoPath,
+      stage: 'build:T06',
+      taskPlan: plan,
+      currentTaskIndex: 0,
+      failure,
+    }),
+    true,
+  );
+  assert.match(
+    readFileSync(join(repoPath, 'src/ai/profilePrompts.ts'), 'utf8'),
+    /typeof value === "number" && Number\.isInteger\(value\) && value >= 0/,
+  );
+  assert.doesNotMatch(
+    readFileSync(join(repoPath, 'src/other/outside.ts'), 'utf8'),
+    /typeof value === "number"/,
   );
 });
 
