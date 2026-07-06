@@ -2401,9 +2401,43 @@ test('Worker release gate fails closed when Wrangler config is missing', () => {
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   writeFileSync(
     join(repoPath, 'package.json'),
-    JSON.stringify({ scripts: { dev: 'wrangler dev', typecheck: 'tsc --noEmit' }, devDependencies: { wrangler: '^4.0.0' } }, null, 2),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+          'generate-types': 'wrangler types',
+          typecheck: 'npm run generate-types && tsc --noEmit',
+        },
+        devDependencies: { '@types/node': 'latest', wrangler: '^4.0.0' },
+      },
+      null,
+      2,
+    ),
   );
   writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
+  writeFileSync(
+    join(repoPath, 'tsconfig.json'),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ESNext',
+          moduleResolution: 'Bundler',
+          lib: ['ES2022', 'WebWorker'],
+          types: ['./worker-configuration.d.ts', 'node'],
+          strict: true,
+        },
+        include: ['src/**/*.ts'],
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile', ''].join('\n'),
+  );
 
   const staticResult = releaseGateStaticEvidenceResults(repoPath).find(
     (result) => result.command === 'static check: Worker config hygiene',
@@ -2418,6 +2452,107 @@ test('Worker release gate fails closed when Wrangler config is missing', () => {
     requiredStaticFailures.map((result) => result.command),
     ['static check: Worker config hygiene'],
   );
+});
+
+test('Worker release gate fails closed on package scaffold drift', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-package-release-gate-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default { fetch: () => new Response("ok") };\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      withWorkerDeploymentEnvironments({
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      }),
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev',
+          deploy: 'wrangler deploy',
+        },
+        devDependencies: {
+          wrangler: '^4.0.0',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile', ''].join('\n'),
+  );
+
+  const badResult = releaseGateStaticEvidenceResults(repoPath).find(
+    (result) => result.command === 'static check: Worker package scaffold hygiene',
+  );
+  assert.equal(badResult?.required, true);
+  assert.equal(badResult?.ok, false);
+  assert.match(badResult?.error ?? '', /wrangler dev --env staging/);
+  assert.match(badResult?.error ?? '', /wrangler deploy --env production/);
+  assert.equal(releaseGateRequiredStaticEvidenceFailures([badResult!]).length, 1);
+
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+        },
+        devDependencies: {
+          wrangler: '^4.0.0',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const goodResult = releaseGateStaticEvidenceResults(repoPath).find(
+    (result) => result.command === 'static check: Worker package scaffold hygiene',
+  );
+  assert.equal(goodResult?.required, true);
+  assert.equal(goodResult?.ok, true);
+  assert.match(goodResult?.output_summary ?? '', /Worker package scripts/);
+});
+
+test('Worker package scaffold release gate catches missing package manifests', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-package-missing-release-gate-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default { fetch: () => new Response("ok") };\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      withWorkerDeploymentEnvironments({
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      }),
+      null,
+      2,
+    ),
+  );
+
+  const result = releaseGateStaticEvidenceResults(repoPath).find(
+    (item) => item.command === 'static check: Worker package scaffold hygiene',
+  );
+  assert.equal(result?.ok, false);
+  assert.match(result?.error ?? '', /package\.json is missing/);
 });
 
 test('Worker config hygiene requires a service name and existing entrypoint', () => {

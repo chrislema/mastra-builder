@@ -2177,6 +2177,7 @@ function repoLooksLikeWorkerProject(repoPath: string) {
   const packageJson = packageRecord(repoPath);
   const scripts = recordValue(packageJson?.scripts) ?? {};
   return (
+    Boolean(releaseGateWorkerConfigPath(repoPath)) ||
     existsSync(join(root, 'src', 'index.ts')) ||
     existsSync(join(root, 'src', 'index.js')) ||
     existsSync(join(root, 'src', 'index.mjs')) ||
@@ -3269,7 +3270,12 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
   if (task && !taskOwnsPackageManifest(task)) return [];
 
   const packageJson = packageRecord(repoPath);
-  if (!packageJson) return task ? ['package.json is owned but is not valid JSON.'] : [];
+  if (!packageJson) {
+    if (task) return ['package.json is owned but is not valid JSON.'];
+    return repoLooksLikeWorkerProject(repoPath)
+      ? ['package.json is missing; Worker release requires local package scripts and a local Wrangler devDependency.']
+      : [];
+  }
 
   const gaps: string[] = [];
   const usesTypeScript = repoUsesTypeScriptWorkerSource(repoPath, task);
@@ -4661,6 +4667,7 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
 export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateEvidenceResult[] {
   const aiGaps = workersAiBindingGaps(repoPath);
   const workerConfigGaps = workerConfigHygieneGaps(repoPath);
+  const workerPackageGaps = workerPackageScaffoldGaps(repoPath);
   const transcriptFixtureGaps = releaseGateTranscriptFixtureSchemaGaps(repoPath);
   const results: ReleaseGateEvidenceResult[] = [];
 
@@ -4704,6 +4711,22 @@ export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateE
         'Worker release requires a current Wrangler config with local schema validation, recent compatibility date, Node.js compatibility, and observability.',
       output_summary: ok ? 'Wrangler config is current, Node-compatible, and observable.' : undefined,
       error: ok ? undefined : workerConfigGaps.join(' '),
+    });
+  }
+
+  if (repoLooksLikeWorkerProject(repoPath) || workerPackageGaps.length) {
+    const ok = workerPackageGaps.length === 0;
+    results.push({
+      tier: 'api',
+      command: 'static check: Worker package scaffold hygiene',
+      ok,
+      required: true,
+      reason:
+        'Worker release requires local Wrangler tooling, staging/production package scripts, vanilla frontend dependencies, and gitignored local delivery/Wrangler state.',
+      output_summary: ok
+        ? 'Worker package scripts and local tooling match the Worker-first release policy.'
+        : undefined,
+      error: ok ? undefined : workerPackageGaps.join(' '),
     });
   }
 
