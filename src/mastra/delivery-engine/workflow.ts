@@ -2513,6 +2513,12 @@ export function unreplacedPreflightStubPaths(repoPath: string, task: Task) {
     });
 }
 
+const moduleSourceExtensions = ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs'] as const;
+
+function firstExistingRepoPath(repoPath: string, candidates: string[]) {
+  return candidates.find((candidate) => existsSync(join(resolve(repoPath), candidate)));
+}
+
 export function taskBoundarySurfaces(repoPath: string, task: Task) {
   const surfaces = new Set(effectiveOwnedSurfaces(task));
   for (const surface of effectiveOwnedSurfaces(task)) {
@@ -2522,11 +2528,18 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
     parts.pop();
     const directory = parts.join('/');
     if (!directory) continue;
-    const barrel = `${directory}/index.ts`;
-    if (existsSync(join(resolve(repoPath), barrel))) surfaces.add(barrel);
+    const barrel = firstExistingRepoPath(
+      repoPath,
+      moduleSourceExtensions.map((extension) => `${directory}/index.${extension}`),
+    );
+    if (barrel) surfaces.add(barrel);
 
-    if (directory === 'src/routes' && existsSync(join(resolve(repoPath), 'src/index.ts'))) {
-      surfaces.add('src/index.ts');
+    const workerEntry = firstExistingRepoPath(
+      repoPath,
+      moduleSourceExtensions.map((extension) => `src/index.${extension}`),
+    );
+    if (directory === 'src/routes' && workerEntry) {
+      surfaces.add(workerEntry);
     }
 
     if (directory === 'src/workflows/steps' && existsSync(join(resolve(repoPath), 'src/workflows/weekly.ts'))) {

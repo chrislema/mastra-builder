@@ -2426,6 +2426,15 @@ test('task boundaries include existing sibling TypeScript barrel files', () => {
   assert.deepEqual(taskBoundarySurfaces(repoPath, task), ['src/ai/client.ts', 'src/ai/types.ts', 'src/ai/index.ts']);
 });
 
+test('task boundaries include existing sibling JavaScript barrel files', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-js-boundary-surfaces-'));
+  mkdirSync(join(repoPath, 'src/ai'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/ai/index.js'), 'export {};\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/ai/client.js', 'src/ai/types.js'] }]).tasks;
+
+  assert.deepEqual(taskBoundarySurfaces(repoPath, task), ['src/ai/client.js', 'src/ai/types.js', 'src/ai/index.js']);
+});
+
 test('route task boundaries include the existing Worker entry integration surface', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-route-boundary-surfaces-'));
   mkdirSync(join(repoPath, 'src/routes'), { recursive: true });
@@ -2437,6 +2446,20 @@ test('route task boundaries include the existing Worker entry integration surfac
     'src/routes/profiles.ts',
     'src/routes/index.ts',
     'src/index.ts',
+  ]);
+});
+
+test('route task boundaries include JavaScript Worker entry integration surfaces', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-js-route-boundary-surfaces-'));
+  mkdirSync(join(repoPath, 'src/routes'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default {};\n');
+  writeFileSync(join(repoPath, 'src/routes/index.js'), 'export {};\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/routes/profiles.js'] }]).tasks;
+
+  assert.deepEqual(taskBoundarySurfaces(repoPath, task), [
+    'src/routes/profiles.js',
+    'src/routes/index.js',
+    'src/index.js',
   ]);
 });
 
