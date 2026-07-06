@@ -139,6 +139,12 @@ export async function initializeDeliveryRunState({
         mastra,
         run: localTerminalProjection,
         events: readDeliveryEvents(repo),
+      }).catch((error) => {
+        mastra?.getLogger?.().warn('Failed to repair stale running delivery snapshot before starting a new run', {
+          repoPath: repo,
+          runId: localTerminalProjection.run_id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
     } else {
       const startedAt = localRun?.run_id === storedStatus.run_id ? localRun.started_at : 'unknown';

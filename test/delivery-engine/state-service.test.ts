@@ -118,6 +118,33 @@ test('delivery state initialization repairs stale running Mastra snapshots from 
   );
 });
 
+test('delivery state initialization proceeds when stale Mastra repair write fails', async () => {
+  const repoPath = createRepo();
+  const memory = createMemoryObservabilityStore();
+  let failNextWrite = false;
+  const store: DeliveryObservabilityStore = {
+    ...memory.store,
+    async batchCreateLogs(args) {
+      if (failNextWrite) {
+        failNextWrite = false;
+        throw new Error('storage client closed');
+      }
+      await memory.store.batchCreateLogs?.(args);
+    },
+  };
+  const mastra = createMastra(store);
+
+  const staleRun = await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md', mastra });
+  finishDeliveryRun({ repoPath, status: 'failed' });
+  failNextWrite = true;
+
+  const nextRun = await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md', mastra });
+
+  assert.notEqual(nextRun.run_id, staleRun.run_id);
+  assert.equal(nextRun.status, 'running');
+  assert.equal(readDeliveryRun(repoPath).run_id, nextRun.run_id);
+});
+
 test('delivery state service keeps richer local projection when Mastra snapshot is stale', async () => {
   const repoPath = createRepo();
   const { store } = createMemoryObservabilityStore();
