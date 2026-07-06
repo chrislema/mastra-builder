@@ -1006,6 +1006,31 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
   return [...surfaces];
 }
 
+function sqlHasCheckConstraintForColumn(sql: string, column: string) {
+  const escaped = column.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`CHECK\\s*\\([^)]*\\b${escaped}\\b\\s+IN\\s*\\(`, 'i').test(sql);
+}
+
+export function lifecycleStatusSchemaGaps(repoPath: string, task: Task) {
+  return taskBoundarySurfaces(repoPath, task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path && /\.sql$/i.test(path)))
+    .flatMap((path) => {
+      const fullPath = join(resolve(repoPath), path);
+      if (!existsSync(fullPath)) return [];
+      const sql = readFileSync(fullPath, 'utf8');
+      const gaps: string[] = [];
+      const statusColumnPattern = /^\s*([a-z_]*status)\s+TEXT\s+NOT\s+NULL\b([^,\n]*)/gim;
+      for (const match of sql.matchAll(statusColumnPattern)) {
+        const column = match[1];
+        const definition = match[0];
+        if (/\bCHECK\s*\(/i.test(definition) || sqlHasCheckConstraintForColumn(sql, column)) continue;
+        gaps.push(`${path}:${column} is a lifecycle status column without a D1 CHECK constraint`);
+      }
+      return gaps;
+    });
+}
+
 function verificationFailurePaths(failure: string) {
   const paths = new Set<string>();
   const pathPattern =
@@ -2670,6 +2695,7 @@ function implementationDeterministicResults({
   const unreplacedStubs = unreplacedPreflightStubPaths(repoPath, task);
   const workflowIntegrationGaps = workflowStepIntegrationGaps(repoPath, task);
   const aiBindingGaps = workersAiBindingGaps(repoPath, task);
+  const lifecycleStatusGaps = lifecycleStatusSchemaGaps(repoPath, task);
   const noteOwnership = runDeterministicCheck({
     name: 'file_ownership',
     role,
@@ -2716,6 +2742,12 @@ function implementationDeterministicResults({
       passed: aiBindingGaps.length === 0,
       reason: aiBindingGaps.length ? aiBindingGaps.join('; ') : 'ok',
     },
+    {
+      id: 'lifecycle_status_schema_constrained',
+      check: 'state_explicitness',
+      passed: lifecycleStatusGaps.length === 0,
+      reason: lifecycleStatusGaps.length ? lifecycleStatusGaps.join('; ') : 'ok',
+    },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
     {
       id: 'verification_passed',
@@ -2738,6 +2770,8 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'preflight_stubs_replaced',
         'workflow_step_integrated',
         'workers_ai_binding_required',
+        'lifecycle_status_schema_constrained',
+        'state_explicitness',
         'module_loads',
         'ran_code_before_complete',
         'verification_passed',

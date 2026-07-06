@@ -15,6 +15,7 @@ import {
   judgeProviderErrorDetails,
   judgeUnavailableOutputForRubric,
   judgeUnavailableRemediation,
+  lifecycleStatusSchemaGaps,
   missingOwnedSurfacePaths,
   openDecisionHygiene,
   ownedSurfaceHygiene,
@@ -560,6 +561,39 @@ test('out-of-plan verification failures are classified as stale workspace contam
     ]),
     'stale_workspace_verification',
   );
+});
+
+test('lifecycle status schema columns require D1 CHECK constraints', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-lifecycle-status-'));
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'migrations/0001_schema.sql'),
+    [
+      'CREATE TABLE runs (',
+      "  id TEXT PRIMARY KEY,",
+      "  status TEXT NOT NULL DEFAULT 'pending',",
+      "  fetch_status TEXT NOT NULL DEFAULT 'queued' CHECK (fetch_status IN ('queued', 'complete', 'failed'))",
+      ');',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['migrations/0001_schema.sql'] }]).tasks;
+
+  assert.deepEqual(lifecycleStatusSchemaGaps(repoPath, task), [
+    'migrations/0001_schema.sql:status is a lifecycle status column without a D1 CHECK constraint',
+  ]);
+
+  writeFileSync(
+    join(repoPath, 'migrations/0001_schema.sql'),
+    [
+      'CREATE TABLE runs (',
+      "  id TEXT PRIMARY KEY,",
+      "  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'complete', 'failed', 'stuck')),",
+      "  fetch_status TEXT NOT NULL DEFAULT 'queued' CHECK (fetch_status IN ('queued', 'complete', 'failed'))",
+      ');',
+    ].join('\n'),
+  );
+
+  assert.deepEqual(lifecycleStatusSchemaGaps(repoPath, task), []);
 });
 
 test('task boundaries include existing sibling TypeScript barrel files', () => {
