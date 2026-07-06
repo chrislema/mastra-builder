@@ -61,6 +61,7 @@ import {
   releaseGateTranscriptFixtureSchemaGaps,
   releaseGateWorkerDeployDryRunCommand,
   releaseGateWorkerDevCommand,
+  releaseGateWorkerStartupCheckCommand,
   releaseGateWorkerTypesCheckCommand,
   routeMiddlewareBypassGaps,
   reusableImplementationArtifactForTask,
@@ -337,6 +338,7 @@ test('bare Worker project plans normalize root static assets behind the package 
 
   assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'src/index.js', '.gitignore']);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\.delivery/);
+  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\*\.cpuprofile/);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
   assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
 });
@@ -1433,6 +1435,7 @@ test('release gate evidence planner uses bounded local commands', () => {
 	    [
 	      { tier: 'smoke', command: 'npm run typecheck', required: true },
 	      { tier: 'api', command: 'npx wrangler deploy --dry-run', required: true },
+	      { tier: 'api', command: 'npx wrangler check startup', required: true },
 	      { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: true },
 	    ],
 	  );
@@ -1441,6 +1444,7 @@ test('release gate evidence planner uses bounded local commands', () => {
 	    [
 	      'npm run typecheck',
 	      'npx wrangler deploy --dry-run',
+	      'npx wrangler check startup',
 	      'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
 	    ],
 	  );
@@ -1516,6 +1520,7 @@ test('release gate evidence planner checks generated Wrangler types for TypeScri
       { tier: 'smoke', command: 'npx wrangler types --check', required: true },
       { tier: 'smoke', command: 'npm run typecheck', required: true },
       { tier: 'api', command: 'npx wrangler deploy --dry-run', required: true },
+      { tier: 'api', command: 'npx wrangler check startup', required: true },
     ],
   );
 });
@@ -1553,6 +1558,7 @@ test('release gate evidence planner uses wrangler.jsonc D1 config for required l
 	    [
 	      { tier: 'smoke', command: 'npm run typecheck', required: true },
 	      { tier: 'api', command: 'npx wrangler deploy --dry-run', required: true },
+	      { tier: 'api', command: 'npx wrangler check startup', required: true },
 	      {
 	        tier: 'api',
 	        command: 'npx wrangler d1 migrations apply talking-head-builder --local --persist-to /tmp/probe-state',
@@ -1593,10 +1599,15 @@ test('release gate Wrangler commands prefer the installed local binary', () => {
   );
   assert.equal(
     releaseGateEvidenceCommandPlan(repoPath)[2].command,
+    './node_modules/.bin/wrangler check startup',
+  );
+  assert.equal(
+    releaseGateEvidenceCommandPlan(repoPath)[3].command,
     './node_modules/.bin/wrangler d1 migrations apply demo-db --local',
   );
   assert.equal(releaseGateWorkerTypesCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler types --check');
   assert.equal(releaseGateWorkerDeployDryRunCommand(repoPath)?.command, './node_modules/.bin/wrangler deploy --dry-run');
+  assert.equal(releaseGateWorkerStartupCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler check startup');
   assert.equal(releaseGateWorkerDevCommand(repoPath, 8787)?.command, './node_modules/.bin/wrangler dev --ip 127.0.0.1 --port 8787');
 });
 
@@ -1893,6 +1904,7 @@ test('release gate evidence planner seeds latest transcript and version audit fi
   assert.deepEqual(commands, [
     'npx wrangler types --check',
     'npx wrangler deploy --dry-run',
+    'npx wrangler check startup',
     'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
     'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --file .delivery/tmp/release-gate-transcript-fixture.sql --json',
     'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --command "SELECT COUNT(*) AS transcript_versions, SUM(CASE WHEN id = \'release-gate-transcript-v1\' THEN 1 ELSE 0 END) AS preserved_original_versions, SUM(CASE WHEN id = \'release-gate-transcript-v2\' THEN 1 ELSE 0 END) AS regenerated_versions, (SELECT transcript_id FROM runs WHERE id = \'release-gate-run\') AS active_transcript_id FROM transcripts WHERE run_id = \'release-gate-run\'" --json',
@@ -2475,7 +2487,10 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
       2,
     ),
   );
-  writeFileSync(join(repoPath, '.gitignore'), ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', ''].join('\n'));
+  writeFileSync(
+    join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile', ''].join('\n'),
+  );
 
   assert.deepEqual(workerPackageScaffoldGaps(repoPath, jsTask), []);
 
