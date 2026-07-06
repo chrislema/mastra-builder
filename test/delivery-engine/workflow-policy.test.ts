@@ -11,6 +11,9 @@ import {
   implementationFailureClass,
   implementationRetryMode,
   implementationWeakDimensionRemediation,
+  judgeProviderErrorDetails,
+  judgeUnavailableOutputForRubric,
+  judgeUnavailableRemediation,
   missingOwnedSurfacePaths,
   priorStoppedBuildTaskIds,
   repairStaleDownstreamVerificationSurfaces,
@@ -31,6 +34,7 @@ import {
   workersAiBindingGaps,
   wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
+import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
 
 const readout = (blocking_ambiguities: string[]) => ({
   artifact_type: 'readout' as const,
@@ -66,6 +70,50 @@ test('planner questions are deferred when a task plan has an executable root tas
 
 test('planner questions suspend when no executable root task exists', () => {
   assert.equal(shouldSuspendForPlannerQuestions(readout(['Cannot start safely.']), taskPlan([])), true);
+});
+
+test('judge provider overloads synthesize bounded failing judge output', () => {
+  const error = Object.assign(new Error('The service may be temporarily overloaded, please try again later'), {
+    name: 'AI_APICallError',
+    statusCode: 429,
+    isRetryable: true,
+    url: 'https://api.z.ai/api/coding/paas/v4/chat/completions',
+    data: {
+      error: {
+        code: '1305',
+      },
+    },
+  });
+
+  const details = judgeProviderErrorDetails(error);
+  assert.ok(details);
+  assert.equal(details.statusCode, 429);
+  assert.equal(details.code, '1305');
+  assert.equal(details.retryable, true);
+
+  const rubric = loadDeliveryEngineRubric('task-plan');
+  const judgeOutput = judgeUnavailableOutputForRubric({
+    rubric,
+    details,
+    stage: 'judge:task-plan',
+  });
+  assert.equal(judgeOutput.gates.every((gate) => gate.passed === false), true);
+  assert.equal(judgeOutput.dimensions.length, rubric.dimensions?.length ?? 0);
+  assert.equal(judgeOutput.dimensions.every((dimension) => dimension.score === null), true);
+
+  const remediation = judgeUnavailableRemediation('judge:task-plan', details);
+  const judgment = aggregateJudgment({
+    rubric,
+    judgeOutput: {
+      gates: judgeOutput.gates.map((gate) => ({ ...gate, evidence: remediation })),
+      dimensions: judgeOutput.dimensions.map((dimension) => ({ ...dimension, evidence: remediation })),
+    },
+  });
+  judgment.remediation = [remediation, ...judgment.remediation];
+
+  assert.equal(judgment.passed, false);
+  assert.match(judgment.remediation.join('\n'), /JUDGE_UNAVAILABLE judge:task-plan/);
+  assert.match(judgment.remediation.join('\n'), /no target-code change is implied/);
 });
 
 test('implementation notes list acceptance criteria that workflow verification did not run', () => {
