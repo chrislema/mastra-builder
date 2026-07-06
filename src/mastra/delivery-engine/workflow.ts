@@ -4059,7 +4059,7 @@ function parseDevVarsValue(text: string, key: string) {
 }
 
 function releaseGateLocalWorkerEnvironment(repoPath: string) {
-  return workerConfigHasEnvironment(repoPath, 'staging') ? 'staging' : undefined;
+  return releaseGateWorkerConfigPath(repoPath) ? 'staging' : undefined;
 }
 
 export function releaseGateLocalAdminSecretPath(repoPath: string) {
@@ -4411,11 +4411,10 @@ export function releaseGateWorkerDevCommand(
   const portValue = String(port);
   const persistArgs = persistTo ? ['--persist-to', String(persistTo)] : [];
   const persistCommand = persistTo ? ` --persist-to ${String(persistTo)}` : '';
-  const stagingEnvArgs = workerConfigHasEnvironment(repoPath, 'staging') ? ['--env', 'staging'] : [];
-  const stagingEnvCommand = stagingEnvArgs.length ? ' --env staging' : '';
-  return wranglerProcessCommand(repoPath, `dev${stagingEnvCommand} --ip 127.0.0.1 --port ${portValue}${persistCommand}`, [
+  return wranglerProcessCommand(repoPath, `dev --env staging --ip 127.0.0.1 --port ${portValue}${persistCommand}`, [
     'dev',
-    ...stagingEnvArgs,
+    '--env',
+    'staging',
     '--ip',
     '127.0.0.1',
     '--port',
@@ -4426,21 +4425,16 @@ export function releaseGateWorkerDevCommand(
 
 export function releaseGateWorkerDeployDryRunCommand(repoPath: string) {
   if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
-  const productionEnvArgs = workerConfigHasEnvironment(repoPath, 'production') ? ['--env', 'production'] : [];
-  const productionEnvTail = productionEnvArgs.length ? ' --env production' : '';
-  return wranglerProcessCommand(repoPath, `deploy --dry-run${productionEnvTail}`, [
+  return wranglerProcessCommand(repoPath, 'deploy --dry-run --env production', [
     'deploy',
     '--dry-run',
-    ...productionEnvArgs,
+    '--env',
+    'production',
   ]);
 }
 
 export function releaseGateWorkerStartupCheckCommand(repoPath: string) {
   if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
-  if (!workerConfigHasEnvironment(repoPath, 'production')) {
-    return wranglerProcessCommand(repoPath, 'check startup', ['check', 'startup']);
-  }
-
   return wranglerProcessCommand(repoPath, 'check startup --args="--env production"', [
     'check',
     'startup',
@@ -6006,7 +6000,6 @@ export function localDeploymentReportFromReleaseGateEvidence({
 }
 
 export function productionWranglerDeployCommand(repoPath: string): ReleaseGateProcessCommand {
-  if (!workerConfigHasEnvironment(repoPath, 'production')) return wranglerProcessCommand(repoPath, 'deploy', ['deploy']);
   return wranglerProcessCommand(repoPath, 'deploy --env production', ['deploy', '--env', 'production']);
 }
 

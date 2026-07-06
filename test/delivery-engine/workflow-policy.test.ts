@@ -1403,14 +1403,14 @@ test('production deploy command uses Wrangler directly without GitHub Actions', 
   writeFileSync(join(scriptedRepo, 'wrangler.jsonc'), '{ "name": "demo-worker", "main": "src/index.ts" }\n');
 
   assert.deepEqual(productionWranglerDeployCommand(scriptedRepo), {
-    command: 'npx wrangler deploy',
+    command: 'npx wrangler deploy --env production',
     executable: 'npx',
-    args: ['wrangler', 'deploy'],
+    args: ['wrangler', 'deploy', '--env', 'production'],
   });
   assert.deepEqual(releaseGateWorkerDeployDryRunCommand(scriptedRepo), {
-    command: 'npx wrangler deploy --dry-run',
+    command: 'npx wrangler deploy --dry-run --env production',
     executable: 'npx',
-    args: ['wrangler', 'deploy', '--dry-run'],
+    args: ['wrangler', 'deploy', '--dry-run', '--env', 'production'],
   });
 
   const productionEnvRepo = mkdtempSync(join(tmpdir(), 'delivery-production-env-deploy-'));
@@ -1440,8 +1440,8 @@ test('production deploy command uses Wrangler directly without GitHub Actions', 
   writeFileSync(join(directRepo, 'node_modules/.bin/wrangler'), '#!/usr/bin/env node\n');
 
   const command = productionWranglerDeployCommand(directRepo);
-  assert.equal(command.command, './node_modules/.bin/wrangler deploy');
-  assert.equal(command.args.join(' '), 'deploy');
+  assert.equal(command.command, './node_modules/.bin/wrangler deploy --env production');
+  assert.equal(command.args.join(' '), 'deploy --env production');
 });
 
 test('production deployment report records native Wrangler deploy evidence', () => {
@@ -1534,18 +1534,18 @@ test('release gate evidence planner uses bounded local commands', () => {
     })),
 	    [
 	      { tier: 'smoke', command: 'npm run typecheck', required: true },
-	      { tier: 'api', command: 'npx wrangler deploy --dry-run', required: true },
-	      { tier: 'api', command: 'npx wrangler check startup', required: true },
-	      { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: true },
+	      { tier: 'api', command: 'npx wrangler deploy --dry-run --env production', required: true },
+	      { tier: 'api', command: 'npx wrangler check startup --args="--env production"', required: true },
+	      { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --env staging --local', required: true },
 	    ],
 	  );
   assert.deepEqual(
     releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command),
 	    [
 	      'npm run typecheck',
-	      'npx wrangler deploy --dry-run',
-	      'npx wrangler check startup',
-	      'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
+	      'npx wrangler deploy --dry-run --env production',
+	      'npx wrangler check startup --args="--env production"',
+	      'npx wrangler d1 migrations apply demo-db --env staging --local --persist-to /tmp/probe-state',
 	    ],
 	  );
 });
@@ -1715,11 +1715,11 @@ test('release gate evidence planner uses wrangler.jsonc D1 config for required l
     })),
 	    [
 	      { tier: 'smoke', command: 'npm run typecheck', required: true },
-	      { tier: 'api', command: 'npx wrangler deploy --dry-run', required: true },
-	      { tier: 'api', command: 'npx wrangler check startup', required: true },
+	      { tier: 'api', command: 'npx wrangler deploy --dry-run --env production', required: true },
+	      { tier: 'api', command: 'npx wrangler check startup --args="--env production"', required: true },
 	      {
 	        tier: 'api',
-	        command: 'npx wrangler d1 migrations apply talking-head-builder --local --persist-to /tmp/probe-state',
+	        command: 'npx wrangler d1 migrations apply talking-head-builder --env staging --local --persist-to /tmp/probe-state',
         required: true,
       },
     ],
@@ -1832,20 +1832,20 @@ test('release gate Wrangler commands prefer the installed local binary', () => {
   );
   assert.equal(
     releaseGateEvidenceCommandPlan(repoPath)[1].command,
-    './node_modules/.bin/wrangler deploy --dry-run',
+    './node_modules/.bin/wrangler deploy --dry-run --env production',
   );
   assert.equal(
     releaseGateEvidenceCommandPlan(repoPath)[2].command,
-    './node_modules/.bin/wrangler check startup',
+    './node_modules/.bin/wrangler check startup --args="--env production"',
   );
   assert.equal(
     releaseGateEvidenceCommandPlan(repoPath)[3].command,
-    './node_modules/.bin/wrangler d1 migrations apply demo-db --local',
+    './node_modules/.bin/wrangler d1 migrations apply demo-db --env staging --local',
   );
   assert.equal(releaseGateWorkerTypesCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler types --check');
-  assert.equal(releaseGateWorkerDeployDryRunCommand(repoPath)?.command, './node_modules/.bin/wrangler deploy --dry-run');
-  assert.equal(releaseGateWorkerStartupCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler check startup');
-  assert.equal(releaseGateWorkerDevCommand(repoPath, 8787)?.command, './node_modules/.bin/wrangler dev --ip 127.0.0.1 --port 8787');
+  assert.equal(releaseGateWorkerDeployDryRunCommand(repoPath)?.command, './node_modules/.bin/wrangler deploy --dry-run --env production');
+  assert.equal(releaseGateWorkerStartupCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler check startup --args="--env production"');
+  assert.equal(releaseGateWorkerDevCommand(repoPath, 8787)?.command, './node_modules/.bin/wrangler dev --env staging --ip 127.0.0.1 --port 8787');
 
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
@@ -1866,13 +1866,13 @@ test('release gate Wrangler commands prefer the installed local binary', () => {
   );
 });
 
-test('release gate local admin secret path follows Wrangler environment file precedence', () => {
+test('release gate local admin secret path targets staging Wrangler environment files', () => {
   const baseRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-secret-base-'));
   writeFileSync(
     join(baseRepoPath, 'wrangler.jsonc'),
     JSON.stringify({ name: 'demo-worker', main: 'src/index.ts' }, null, 2),
   );
-  assert.equal(releaseGateLocalAdminSecretPath(baseRepoPath), join(baseRepoPath, '.dev.vars'));
+  assert.equal(releaseGateLocalAdminSecretPath(baseRepoPath), join(baseRepoPath, '.dev.vars.staging'));
 
   const stagingRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-secret-staging-'));
   writeFileSync(
@@ -1980,19 +1980,19 @@ test('release gate runtime probe planner uses Wrangler CLI directly', () => {
   writeFileSync(join(repoPath, 'src/routes/health.ts'), 'export const path = "/health";\n');
 
   assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999), {
-    command: 'npx wrangler dev --ip 127.0.0.1 --port 8999',
+    command: 'npx wrangler dev --env staging --ip 127.0.0.1 --port 8999',
     executable: 'npx',
-    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', '8999'],
+    args: ['wrangler', 'dev', '--env', 'staging', '--ip', '127.0.0.1', '--port', '8999'],
   });
   assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999, '/tmp/state'), {
-    command: 'npx wrangler dev --ip 127.0.0.1 --port 8999 --persist-to /tmp/state',
+    command: 'npx wrangler dev --env staging --ip 127.0.0.1 --port 8999 --persist-to /tmp/state',
     executable: 'npx',
-    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', '8999', '--persist-to', '/tmp/state'],
+    args: ['wrangler', 'dev', '--env', 'staging', '--ip', '127.0.0.1', '--port', '8999', '--persist-to', '/tmp/state'],
   });
 
   const plan = releaseGateRuntimeProbePlan(repoPath);
   assert.equal(plan?.required, true);
-  assert.equal(plan?.command.command, 'npx wrangler dev --ip 127.0.0.1 --port <port>');
+  assert.equal(plan?.command.command, 'npx wrangler dev --env staging --ip 127.0.0.1 --port <port>');
   assert.deepEqual(
     plan?.probes.map((probe) => ({ path: probe.path, expectedStatus: probe.expectedStatus, statusBelow: probe.statusBelow })),
     [
@@ -2220,11 +2220,11 @@ test('release gate evidence planner seeds latest transcript and version audit fi
   const commands = releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command);
   assert.deepEqual(commands, [
     'npx wrangler types --check',
-    'npx wrangler deploy --dry-run',
-    'npx wrangler check startup',
-    'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
-    'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --file .delivery/tmp/release-gate-transcript-fixture.sql --json',
-    'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --command "SELECT COUNT(*) AS transcript_versions, SUM(CASE WHEN id = \'release-gate-transcript-v1\' THEN 1 ELSE 0 END) AS preserved_original_versions, SUM(CASE WHEN id = \'release-gate-transcript-v2\' THEN 1 ELSE 0 END) AS regenerated_versions, (SELECT transcript_id FROM runs WHERE id = \'release-gate-run\') AS active_transcript_id FROM transcripts WHERE run_id = \'release-gate-run\'" --json',
+    'npx wrangler deploy --dry-run --env production',
+    'npx wrangler check startup --args="--env production"',
+    'npx wrangler d1 migrations apply demo-db --env staging --local --persist-to /tmp/probe-state',
+    'npx wrangler d1 execute demo-db --env staging --local --persist-to /tmp/probe-state --file .delivery/tmp/release-gate-transcript-fixture.sql --json',
+    'npx wrangler d1 execute demo-db --env staging --local --persist-to /tmp/probe-state --command "SELECT COUNT(*) AS transcript_versions, SUM(CASE WHEN id = \'release-gate-transcript-v1\' THEN 1 ELSE 0 END) AS preserved_original_versions, SUM(CASE WHEN id = \'release-gate-transcript-v2\' THEN 1 ELSE 0 END) AS regenerated_versions, (SELECT transcript_id FROM runs WHERE id = \'release-gate-run\') AS active_transcript_id FROM transcripts WHERE run_id = \'release-gate-run\'" --json',
   ]);
   assert.match(
     readFileSync(join(repoPath, '.delivery/tmp/release-gate-transcript-fixture.sql'), 'utf8'),
@@ -2274,9 +2274,9 @@ test('release gate runtime probe planner falls back to npx wrangler for Worker c
   writeFileSync(join(repoPath, 'wrangler.jsonc'), '{ "name": "demo-worker", "main": "src/index.ts" }\n');
 
   assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999), {
-    command: 'npx wrangler dev --ip 127.0.0.1 --port 8999',
+    command: 'npx wrangler dev --env staging --ip 127.0.0.1 --port 8999',
     executable: 'npx',
-    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', '8999'],
+    args: ['wrangler', 'dev', '--env', 'staging', '--ip', '127.0.0.1', '--port', '8999'],
   });
 });
 
