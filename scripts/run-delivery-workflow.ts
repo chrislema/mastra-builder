@@ -28,6 +28,14 @@ Options:
 }
 
 type WorkflowResponse = Awaited<ReturnType<typeof startDeliveryWorkflowRun>>;
+type ReviewMode = 'fast' | 'thorough';
+
+function parseReviewMode(value: string | undefined): ReviewMode | undefined {
+  if (value === undefined || value === 'fast' || value === 'thorough') return value;
+  console.error(`Invalid --review/--reviewMode value "${value}". Expected fast or thorough.`);
+  console.error(usage());
+  process.exit(1);
+}
 
 function readProjectedDeliveryStatus(repoPath: string) {
   try {
@@ -120,6 +128,7 @@ try {
     process.exit(1);
   }
   const resolvedRepoPath = resolve(repoPath);
+  const reviewMode = parseReviewMode(values.reviewMode ?? values.review);
   let shuttingDown = false;
   const handleStop = (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
@@ -143,7 +152,7 @@ try {
     visionPath: values.visionPath ?? values.vision,
     specPath: values.specPath ?? values.spec,
     deployMode: values.deployMode ?? values.deploy,
-    reviewMode: values.reviewMode ?? values.review,
+    reviewMode,
     maxRetries: values.maxRetries === undefined ? undefined : Number(values.maxRetries),
     resourceId: values.resourceId,
     runId: values.runId,
