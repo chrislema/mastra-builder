@@ -3824,6 +3824,22 @@ export function releaseGateWorkerDevCommand(
   ]);
 }
 
+export function releaseGateWorkerDeployDryRunCommand(repoPath: string) {
+  if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
+
+  const deployScript = packageScripts(repoPath).deploy;
+  if (typeof deployScript === 'string' && /\bwrangler\s+deploy\b/.test(deployScript)) {
+    const alreadyDryRun = /\b--dry-run\b/.test(deployScript);
+    return {
+      command: alreadyDryRun ? 'npm run deploy' : 'npm run deploy -- --dry-run',
+      executable: 'npm',
+      args: alreadyDryRun ? ['run', 'deploy'] : ['run', 'deploy', '--', '--dry-run'],
+    } satisfies ReleaseGateProcessCommand;
+  }
+
+  return wranglerProcessCommand(repoPath, 'deploy --dry-run', ['deploy', '--dry-run']);
+}
+
 export function releaseGateRuntimeProbePlan(
   repoPath: string,
   adminToken = releaseGateLocalAdminToken,
@@ -4012,6 +4028,19 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
       args: ['run', script],
       required: true,
       reason: `Project verification script "${script}" was available.`,
+    });
+  }
+
+  const deployDryRunCommand = releaseGateWorkerDeployDryRunCommand(repoPath);
+  if (deployDryRunCommand) {
+    commands.push({
+      tier: 'api',
+      command: deployDryRunCommand.command,
+      executable: deployDryRunCommand.executable,
+      args: deployDryRunCommand.args,
+      required: true,
+      reason:
+        'A Wrangler Worker config was present, so production deploy bundling must pass a local Wrangler dry-run before approval.',
     });
   }
 

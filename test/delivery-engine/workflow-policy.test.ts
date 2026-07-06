@@ -59,6 +59,7 @@ import {
   releaseGateRequiredStaticEvidenceFailures,
   releaseGateStaticEvidenceResults,
   releaseGateTranscriptFixtureSchemaGaps,
+  releaseGateWorkerDeployDryRunCommand,
   releaseGateWorkerDevCommand,
   routeMiddlewareBypassGaps,
   reusableImplementationArtifactForTask,
@@ -1270,11 +1271,17 @@ test('production deploy command uses Wrangler directly without GitHub Actions', 
     join(scriptedRepo, 'package.json'),
     JSON.stringify({ scripts: { deploy: 'wrangler deploy' } }, null, 2),
   );
+  writeFileSync(join(scriptedRepo, 'wrangler.jsonc'), '{ "name": "demo-worker", "main": "src/index.ts" }\n');
 
   assert.deepEqual(productionWranglerDeployCommand(scriptedRepo), {
     command: 'npm run deploy',
     executable: 'npm',
     args: ['run', 'deploy'],
+  });
+  assert.deepEqual(releaseGateWorkerDeployDryRunCommand(scriptedRepo), {
+    command: 'npm run deploy -- --dry-run',
+    executable: 'npm',
+    args: ['run', 'deploy', '--', '--dry-run'],
   });
 
   const directRepo = mkdtempSync(join(tmpdir(), 'delivery-production-direct-deploy-'));
@@ -1373,18 +1380,20 @@ test('release gate evidence planner uses bounded local commands', () => {
       command: command.command,
       required: command.required,
     })),
-    [
-      { tier: 'smoke', command: 'npm run typecheck', required: true },
-      { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: true },
-    ],
-  );
+	    [
+	      { tier: 'smoke', command: 'npm run typecheck', required: true },
+	      { tier: 'api', command: 'npx wrangler deploy --dry-run', required: true },
+	      { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: true },
+	    ],
+	  );
   assert.deepEqual(
     releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command),
-    [
-      'npm run typecheck',
-      'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
-    ],
-  );
+	    [
+	      'npm run typecheck',
+	      'npx wrangler deploy --dry-run',
+	      'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
+	    ],
+	  );
 });
 
 test('release gate evidence planner runs the available package verification matrix', () => {
@@ -1448,11 +1457,12 @@ test('release gate evidence planner uses wrangler.jsonc D1 config for required l
       command: command.command,
       required: command.required,
     })),
-    [
-      { tier: 'smoke', command: 'npm run typecheck', required: true },
-      {
-        tier: 'api',
-        command: 'npx wrangler d1 migrations apply talking-head-builder --local --persist-to /tmp/probe-state',
+	    [
+	      { tier: 'smoke', command: 'npm run typecheck', required: true },
+	      { tier: 'api', command: 'npx wrangler deploy --dry-run', required: true },
+	      {
+	        tier: 'api',
+	        command: 'npx wrangler d1 migrations apply talking-head-builder --local --persist-to /tmp/probe-state',
         required: true,
       },
     ],
@@ -1478,12 +1488,17 @@ test('release gate Wrangler commands prefer the installed local binary', () => {
     ),
   );
 
-  assert.equal(
-    releaseGateEvidenceCommandPlan(repoPath)[0].command,
-    './node_modules/.bin/wrangler d1 migrations apply demo-db --local',
-  );
-  assert.equal(releaseGateWorkerDevCommand(repoPath, 8787)?.command, './node_modules/.bin/wrangler dev --ip 127.0.0.1 --port 8787');
-});
+	  assert.equal(
+	    releaseGateEvidenceCommandPlan(repoPath)[0].command,
+	    './node_modules/.bin/wrangler deploy --dry-run',
+	  );
+	  assert.equal(
+	    releaseGateEvidenceCommandPlan(repoPath)[1].command,
+	    './node_modules/.bin/wrangler d1 migrations apply demo-db --local',
+	  );
+	  assert.equal(releaseGateWorkerDeployDryRunCommand(repoPath)?.command, './node_modules/.bin/wrangler deploy --dry-run');
+	  assert.equal(releaseGateWorkerDevCommand(repoPath, 8787)?.command, './node_modules/.bin/wrangler dev --ip 127.0.0.1 --port 8787');
+	});
 
 test('release gate deterministic checks fail closed on failed required local evidence', () => {
   assert.deepEqual(
@@ -1691,10 +1706,11 @@ test('release gate evidence planner seeds latest transcript and version audit fi
     ].join('\n'),
   );
 
-  const commands = releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command);
-  assert.deepEqual(commands, [
-    'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
-    'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --file .delivery/tmp/release-gate-transcript-fixture.sql --json',
+	  const commands = releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command);
+	  assert.deepEqual(commands, [
+	    'npx wrangler deploy --dry-run',
+	    'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
+	    'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --file .delivery/tmp/release-gate-transcript-fixture.sql --json',
     'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --command "SELECT COUNT(*) AS transcript_versions, SUM(CASE WHEN id = \'release-gate-transcript-v1\' THEN 1 ELSE 0 END) AS preserved_original_versions, SUM(CASE WHEN id = \'release-gate-transcript-v2\' THEN 1 ELSE 0 END) AS regenerated_versions, (SELECT transcript_id FROM runs WHERE id = \'release-gate-run\') AS active_transcript_id FROM transcripts WHERE run_id = \'release-gate-run\'" --json',
   ]);
   assert.match(
