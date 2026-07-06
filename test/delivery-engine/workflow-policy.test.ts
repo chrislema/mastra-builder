@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   createMissingOwnedSurfaceStubs,
   deliveryBuildResumePlan,
+  directDependencySurfacePaths,
   implementationDeterministicRemediation,
   implementationEnginePolicyMismatch,
   implementationFilesTouched,
@@ -18,10 +19,13 @@ import {
   judgeUnavailableRemediation,
   lifecycleStatusSchemaGaps,
   missingOwnedSurfacePaths,
+  normalizeTaskPlanProfileContractDependencies,
   normalizeTaskPlanScaffoldDependencies,
   normalizeTaskPlanRoleBoundaries,
   openDecisionHygiene,
   ownedSurfaceHygiene,
+  profileContractDependencyHygiene,
+  profileKindContractGaps,
   outOfPlanVerificationFailurePaths,
   priorStoppedBuildTaskIds,
   projectScaffoldHygiene,
@@ -216,6 +220,99 @@ test('bare Worker project plans normalize root static assets behind the package 
 
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
   assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
+});
+
+test('profile contract consumers normalize behind validation task', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/validation.ts'],
+    },
+    {
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+    },
+    {
+      depends_on: ['T2'],
+      owned_surfaces: ['src/storage/profiles.ts'],
+    },
+    {
+      depends_on: ['T3'],
+      owned_surfaces: ['src/routes/profiles.ts'],
+    },
+  ]);
+
+  assert.equal(profileContractDependencyHygiene(plan).passed, false);
+
+  const normalized = normalizeTaskPlanProfileContractDependencies(plan);
+
+  assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
+  assert.deepEqual(normalized.tasks[2].depends_on, ['T2', 'T1']);
+  assert.deepEqual(normalized.tasks[3].depends_on, ['T3', 'T1']);
+  assert.deepEqual(profileContractDependencyHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('focused repair dependency surfaces include direct task contract files', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/validation.ts'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['src/storage/profiles.ts'],
+    },
+    {
+      depends_on: ['T1', 'T2'],
+      owned_surfaces: ['src/routes/profiles.ts', 'src/index.ts'],
+    },
+  ]);
+
+  assert.deepEqual(directDependencySurfacePaths(plan, plan.tasks[2]), ['src/validation.ts', 'src/storage/profiles.ts']);
+});
+
+test('profile kind contract drift is caught for schema and storage tasks', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-profile-contract-'));
+  mkdirSync(join(repoPath, 'src', 'storage'), { recursive: true });
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src', 'validation.ts'),
+    'export const PROFILE_KINDS = ["speaker", "audience", "style"] as const;\n',
+  );
+  writeFileSync(
+    join(repoPath, 'src', 'storage', 'profiles.ts'),
+    "export type ProfileArtifactKind = 'profile_markdown' | 'profile_snapshot';\n",
+  );
+  writeFileSync(
+    join(repoPath, 'migrations', '0001_schema.sql'),
+    "CREATE TABLE IF NOT EXISTS profile_artifacts (\n  kind TEXT NOT NULL CHECK (kind IN ('profile_markdown', 'profile_snapshot'))\n);\n",
+  );
+
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+    },
+    {
+      depends_on: [],
+      owned_surfaces: ['src/storage/profiles.ts'],
+    },
+  ]);
+
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /migrations\/0001_schema\.sql.*speaker/);
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[1]).join('\n'), /src\/storage\/profiles\.ts.*speaker/);
+
+  writeFileSync(
+    join(repoPath, 'src', 'storage', 'profiles.ts'),
+    "export type ProfileKind = 'speaker' | 'audience' | 'style';\n",
+  );
+  writeFileSync(
+    join(repoPath, 'migrations', '0001_schema.sql'),
+    "CREATE TABLE IF NOT EXISTS profile_artifacts (\n  kind TEXT NOT NULL CHECK (kind IN ('speaker', 'audience', 'style'))\n);\n",
+  );
+
+  assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
+  assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[1]), []);
 });
 
 test('task plan role normalization strips designer-owned public surfaces from engineer scaffolds', () => {

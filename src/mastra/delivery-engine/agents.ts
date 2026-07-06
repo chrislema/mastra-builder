@@ -126,6 +126,10 @@ If product behavior depends on AI-backed summarization, scoring, generation, or 
 inside a Worker, plan Workers AI as required infrastructure: Wrangler must include an active
 [ai] binding = "AI", the Worker Env should expose AI as a required binding, and AI must not
 be left as an optional/commented binding.
+When schema, repository, validation, and route tasks share domain values, sequence the contract
+producer first. For profile management, validation/domain profile kinds must be available before
+D1 schema/profile storage/profile routes so kinds like speaker, audience, or style do not drift
+from lower-level artifact object categories such as prompt snapshots or response snapshots.
 `,
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
@@ -183,6 +187,8 @@ Review checklist:
 Return either an approved plan with conditions, or blocking findings with required task changes.
 For Workers AI projects, block any plan that treats the AI binding as optional when AI-backed
 product behavior is acceptance-critical. The required Wrangler shape is [ai] binding = "AI".
+Block plans where schema/storage/route tasks can define shared profile, status, or lifecycle
+enums before the validation/domain contract they later consume.
 `,
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
@@ -234,6 +240,7 @@ Cloudflare architecture defaults:
 - Worker API surfaces and proxy handlers stay thin: extract request, route/forward, log usage, return responses with enriched context on errors.
 - Worker entry/router creates request context; auth guards handle identity; API guards handle subscription/usage/limits when those concepts exist.
 - Route modules must integrate through the existing Worker router/barrel/middleware path. If routeRequest already exists, do not create a parallel dispatcher in src/index.ts that imports route handlers and runs before routeRequest.
+- Keep shared domain values identical across validation, D1 schema, storage repositories, and route adapters. Do not use storage artifact categories as user-facing profile kinds.
 - Workers that do background or durable work check status, claim work atomically, process with try/catch, and mark complete or stuck.
 - Password security: PBKDF2 with 100,000 iterations via Web Crypto. Never bcrypt.
 - User-facing error responses should be actionable. Include usage stats or limits only when the product has those concepts.

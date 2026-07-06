@@ -609,6 +609,10 @@ function ownsExactSurface(task: Task, path: string) {
   return normalizedOwnedSurfaces(task).includes(path);
 }
 
+function taskOwnsAnyExactSurface(task: Task, paths: readonly string[]) {
+  return paths.some((path) => ownsExactSurface(task, path));
+}
+
 function ownsPackageScaffold(task: Task) {
   return ownsExactSurface(task, 'package.json') && ownsExactSurface(task, 'tsconfig.json');
 }
@@ -656,6 +660,67 @@ export function normalizeTaskPlanScaffoldDependencies(repoPath: string, taskPlan
   });
 
   return changed ? { ...taskPlan, tasks } : taskPlan;
+}
+
+function taskDependsOn(taskPlan: TaskPlan, taskId: string, dependencyId: string, seen = new Set<string>()): boolean {
+  if (taskId === dependencyId) return true;
+  if (seen.has(taskId)) return false;
+  seen.add(taskId);
+
+  const task = taskPlan.tasks.find((candidate) => candidate.id === taskId);
+  if (!task) return false;
+  if (task.depends_on.includes(dependencyId)) return true;
+  return task.depends_on.some((parentId) => taskDependsOn(taskPlan, parentId, dependencyId, seen));
+}
+
+function taskCanSafelyDependOn(taskPlan: TaskPlan, taskId: string, dependencyId: string) {
+  return taskId !== dependencyId && !taskDependsOn(taskPlan, dependencyId, taskId);
+}
+
+const profileContractProducerSurfaces = ['src/validation.ts'];
+const profileContractConsumerSurfaces = ['migrations/0001_schema.sql', 'src/storage/profiles.ts', 'src/routes/profiles.ts'];
+
+function profileContractProducerTask(taskPlan: TaskPlan) {
+  return taskPlan.tasks.find((task) => taskOwnsAnyExactSurface(task, profileContractProducerSurfaces));
+}
+
+function profileContractConsumerTasks(taskPlan: TaskPlan) {
+  return taskPlan.tasks.filter((task) => taskOwnsAnyExactSurface(task, profileContractConsumerSurfaces));
+}
+
+export function normalizeTaskPlanProfileContractDependencies(taskPlan: TaskPlan): TaskPlan {
+  const producer = profileContractProducerTask(taskPlan);
+  if (!producer) return taskPlan;
+
+  let changed = false;
+  const tasks = taskPlan.tasks.map((task) => {
+    if (!profileContractConsumerTasks(taskPlan).some((consumer) => consumer.id === task.id)) return task;
+    if (taskDependsOn(taskPlan, task.id, producer.id)) return task;
+    if (!taskCanSafelyDependOn(taskPlan, task.id, producer.id)) return task;
+
+    changed = true;
+    return {
+      ...task,
+      depends_on: [...task.depends_on, producer.id],
+    };
+  });
+
+  return changed ? { ...taskPlan, tasks } : taskPlan;
+}
+
+export function profileContractDependencyHygiene(taskPlan: TaskPlan) {
+  const producer = profileContractProducerTask(taskPlan);
+  if (!producer) return { passed: true, reason: 'ok' };
+
+  for (const task of profileContractConsumerTasks(taskPlan)) {
+    if (taskDependsOn(taskPlan, task.id, producer.id)) continue;
+    return {
+      passed: false,
+      reason: `${task.id} owns a profile contract consumer surface but does not depend_on ${producer.id}. Schema, storage, and profile routes must run after the validation/domain contract so profile kind values stay aligned.`,
+    };
+  }
+
+  return { passed: true, reason: 'ok' };
 }
 
 function taskOwnedBoundaryPaths(task: Task) {
@@ -760,6 +825,12 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
   return { passed: true, reason: 'ok' };
 }
 
+function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
+  return normalizeTaskPlanRoleBoundaries(
+    normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+  );
+}
+
 const taskPlanDeterministicResults = ({
   repoPath,
   taskPlan,
@@ -773,6 +844,11 @@ const taskPlanDeterministicResults = ({
   { id: 'owned_surfaces_concrete', check: 'owned_surface_hygiene', ...ownedSurfaceHygiene(taskPlan) },
   { id: 'owned_surfaces_match_roles', check: 'task_owned_surfaces_in_role_boundary', ...taskOwnedSurfaceRoleHygiene(taskPlan) },
   { id: 'root_project_scaffolded', check: 'project_scaffold_hygiene', ...projectScaffoldHygiene(repoPath, taskPlan) },
+  {
+    id: 'profile_contract_dependency_order',
+    check: 'profile_contract_dependency_order',
+    ...profileContractDependencyHygiene(taskPlan),
+  },
 ];
 
 function topoOrderTasks(tasks: Task[]) {
@@ -876,6 +952,33 @@ function repoFileContents(repoPath: string, paths: string[]) {
       };
     })
     .filter((file): file is { path: string; content: string } => Boolean(file));
+}
+
+function concreteTaskSurfacePaths(task: Task) {
+  return normalizedOwnedSurfaces(task)
+    .filter((surface) => !surface.includes('*'))
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path) && !/^unknown:/i.test(path));
+}
+
+export function directDependencySurfacePaths(taskPlan: TaskPlan, task: Task) {
+  const byId = new Map(taskPlan.tasks.map((candidate) => [candidate.id, candidate]));
+  const paths = task.depends_on.flatMap((dependencyId) => {
+    const dependency = byId.get(dependencyId);
+    return dependency ? concreteTaskSurfacePaths(dependency) : [];
+  });
+  return Array.from(new Set(paths.filter((path) => !taskOwnedBoundaryPaths(task).includes(path))));
+}
+
+function focusedRepairContextPaths(taskPlan: TaskPlan, task: Task, boundarySurfaces: string[]) {
+  const boundaryPaths = boundarySurfaces
+    .filter((surface) => !surface.includes('*'))
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path));
+  const dependencyPaths = directDependencySurfacePaths(taskPlan, task).filter(
+    (path) => path.startsWith('src/') || path.startsWith('migrations/'),
+  );
+  return Array.from(new Set([...boundaryPaths, ...dependencyPaths]));
 }
 
 const implementationWriteTools = new Set<string>([
@@ -1051,6 +1154,76 @@ export function routeMiddlewareBypassGaps(repoPath: string, task: Task) {
       `Route surface ${surface} is imported directly from src/index.ts while the existing routeRequest router is present; register it through the router/barrel/middleware path instead of dispatching before routeRequest.`,
     ];
   });
+}
+
+function repoTextIfExists(repoPath: string, path: string) {
+  const fullPath = join(resolve(repoPath), path);
+  return existsSync(fullPath) ? readFileSync(fullPath, 'utf8') : undefined;
+}
+
+function stringLiteralsFromText(text: string) {
+  return Array.from(text.matchAll(/['"]([^'"]+)['"]/g)).map((match) => match[1]).filter(Boolean);
+}
+
+function validationProfileKinds(repoPath: string) {
+  const source = repoTextIfExists(repoPath, 'src/validation.ts');
+  if (!source) return [];
+  const match = source.match(/\bPROFILE_KINDS\s*=\s*\[([\s\S]*?)\]\s*as\s+const\b/);
+  return match ? stringLiteralsFromText(match[1]) : [];
+}
+
+function storageProfileKinds(repoPath: string) {
+  const source = repoTextIfExists(repoPath, 'src/storage/profiles.ts');
+  if (!source) return [];
+  const match = source.match(/\bexport\s+type\s+Profile(?:Artifact)?Kind\s*=\s*([\s\S]*?);/);
+  return match ? stringLiteralsFromText(match[1]) : [];
+}
+
+function migrationProfileKinds(repoPath: string) {
+  const source = repoTextIfExists(repoPath, 'migrations/0001_schema.sql');
+  if (!source) return [];
+  const table = source.match(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+profile_artifacts\s*\([\s\S]*?\n\);/i)?.[0] ?? source;
+  const match = table.match(/CHECK\s*\(\s*kind\s+IN\s*\(([^)]*)\)\s*\)/i);
+  return match ? stringLiteralsFromText(match[1]) : [];
+}
+
+function missingProfileKinds(expected: string[], actual: string[]) {
+  if (!expected.length || !actual.length) return [];
+  return expected.filter((kind) => !actual.includes(kind));
+}
+
+function taskOwnsProfileMigration(task: Task) {
+  return effectiveOwnedSurfaces(task).some((surface) => concreteOwnedSurfacePath(surface) === 'migrations/0001_schema.sql');
+}
+
+function taskOwnsProfileStorage(task: Task) {
+  return effectiveOwnedSurfaces(task).some((surface) => concreteOwnedSurfacePath(surface) === 'src/storage/profiles.ts');
+}
+
+export function profileKindContractGaps(repoPath: string, task: Task) {
+  const expected = validationProfileKinds(repoPath);
+  if (!expected.length) return [];
+
+  const gaps: string[] = [];
+  if (taskOwnsProfileMigration(task)) {
+    const missing = missingProfileKinds(expected, migrationProfileKinds(repoPath));
+    if (missing.length) {
+      gaps.push(
+        `migrations/0001_schema.sql profile_artifacts.kind omits validation profile kind(s): ${missing.join(', ')}. Keep schema kind values aligned with src/validation.ts PROFILE_KINDS.`,
+      );
+    }
+  }
+
+  if (taskOwnsProfileStorage(task)) {
+    const missing = missingProfileKinds(expected, storageProfileKinds(repoPath));
+    if (missing.length) {
+      gaps.push(
+        `src/storage/profiles.ts ProfileKind/ProfileArtifactKind omits validation profile kind(s): ${missing.join(', ')}. Storage profile metadata kind must match src/validation.ts PROFILE_KINDS, not artifact object categories.`,
+      );
+    }
+  }
+
+  return gaps;
 }
 
 function taskBoundaryCanConfigureWorkersAi(repoPath: string, task: Task) {
@@ -2938,6 +3111,7 @@ function implementationDeterministicResults({
   const routeMiddlewareGaps = routeMiddlewareBypassGaps(repoPath, task);
   const aiBindingGaps = workersAiBindingGaps(repoPath, task);
   const lifecycleStatusGaps = lifecycleStatusSchemaGaps(repoPath, task);
+  const profileKindGaps = profileKindContractGaps(repoPath, task);
   const noteOwnership = runDeterministicCheck({
     name: 'file_ownership',
     role,
@@ -2996,6 +3170,12 @@ function implementationDeterministicResults({
       passed: lifecycleStatusGaps.length === 0,
       reason: lifecycleStatusGaps.length ? lifecycleStatusGaps.join('; ') : 'ok',
     },
+    {
+      id: 'profile_kind_contract_aligned',
+      check: 'profile_kind_contract',
+      passed: profileKindGaps.length === 0,
+      reason: profileKindGaps.length ? profileKindGaps.join('; ') : 'ok',
+    },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
     {
       id: 'verification_passed',
@@ -3022,6 +3202,8 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'workers_ai_binding_required',
         'lifecycle_status_schema_constrained',
         'state_explicitness',
+        'profile_kind_contract_aligned',
+        'profile_kind_contract',
         'module_loads',
         'ran_code_before_complete',
         'verification_passed',
@@ -3743,9 +3925,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
           }),
           'planner',
         );
-    output.taskPlan = normalizeTaskPlanRoleBoundaries(
-      normalizeTaskPlanScaffoldDependencies(inputData.repoPath, output.taskPlan),
-    );
+    output.taskPlan = normalizeTaskPlanForDelivery(inputData.repoPath, output.taskPlan);
 
     if (cachedOutput) {
       await appendDeliveryEventState({
@@ -4256,7 +4436,7 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
       });
     }
     const revision = parsedRevision.revision;
-    const revisedTaskPlan = revision.taskPlan;
+    const revisedTaskPlan = normalizeTaskPlanForDelivery(inputData.repoPath, revision.taskPlan);
     const revisionPath = `.delivery/artifacts/task-plan.revision-${revisionNumber}.json`;
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
@@ -4735,8 +4915,9 @@ const executeBuildTaskAttemptStep = createStep({
     const maxSteps = writeFirstRecovery ? 3 : focusedRepairRecovery ? 4 : 8;
     const packageManifestOwned = taskOwnsPackageManifest(task);
     const existingPackageDependencies = packageDependencyNames(inputData.repoPath);
+    const dependencySurfaces = directDependencySurfacePaths(taskPlan, task);
     const focusedRepairFileContext = focusedRepairRecovery
-      ? repoFileContents(inputData.repoPath, usableSurfaces.filter((surface) => !surface.includes('*')))
+      ? repoFileContents(inputData.repoPath, focusedRepairContextPaths(taskPlan, task, usableSurfaces))
       : [];
     const taskPacket = {
       scope: taskPlan.scope,
@@ -4750,6 +4931,7 @@ const executeBuildTaskAttemptStep = createStep({
       unreplaced_preflight_stubs: unreplacedStubs,
       preflight_created_surfaces: preflightCreatedSurfaces,
       boundary_surfaces: usableSurfaces,
+      direct_dependency_surfaces: dependencySurfaces,
       package_manifest_owned: packageManifestOwned,
       existing_package_dependencies: existingPackageDependencies,
       focused_repair_file_context: focusedRepairFileContext,
@@ -4769,6 +4951,9 @@ Execution rules:
 - If preflight_created_surfaces is non-empty, replace those stubs with the real implementation for this task.
 - If an owned surface is still missing, create it.
 - Spend at most one quick list/read pass on the existing repo shape before writing files.
+- For schema/storage/route tasks, read the relevant direct_dependency_surfaces before writing when they define or consume shared domain contracts.
+- Keep domain values aligned across validation, D1 schema, repository modules, and route adapters; profile kind values are not the same thing as R2 artifact object categories.
+- direct_dependency_surfaces are read-only context unless a listed path is also present in boundary_surfaces.
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
 - If failure_class is missing_surface, create every missing_owned_surface before editing any other file.
@@ -4798,9 +4983,10 @@ Timeout recovery is active.
 Focused repair mode is active.
 - Fix the remediation below before doing anything else:
 ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
-- Use focused_repair_file_context as your source for current file contents.
+- Use focused_repair_file_context as your source for current file contents. It includes boundary files plus direct dependency files needed for type and domain contracts.
 - Do not list or read files in this attempt.
 - Prefer editing existing generated files over adding new files.
+- Do not edit dependency context files unless they also appear in boundary_surfaces.
 - Do not read spec.md, wrangler.toml, package.json, or package-lock.json unless that exact file is listed in boundary_surfaces.
 - Do not add or import a package that is not already listed in existing_package_dependencies unless package_manifest_owned is true.`
       : '';
