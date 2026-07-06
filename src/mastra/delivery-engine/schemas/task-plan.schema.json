@@ -17,13 +17,13 @@
           "id": { "type": "string", "pattern": "^T[0-9]+$" },
           "owner": {
             "enum": ["engineer", "designer"],
-            "description": "engineer owns Worker config/source/migration files like package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml, src/**, workers/**, and migrations/**. TypeScript Worker scaffolds should use Wrangler-generated worker-configuration.d.ts types, not hand-written runtime types. designer owns static UI files like public/index.html, public/styles.css, public/app.js, and assets/**."
+            "description": "engineer owns Worker config/source/migration files like package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml, src/**, workers/**, and migrations/**. Worker config tasks should define env.staging and env.production, mirroring required bindings and vars because Wrangler environments do not inherit them. TypeScript Worker scaffolds should use Wrangler-generated worker-configuration.d.ts types, not hand-written runtime types. designer owns static UI files like public/index.html, public/styles.css, public/app.js, and assets/**."
           },
           "deliverable": { "type": "string", "minLength": 1 },
           "depends_on": { "type": "array", "items": { "type": "string", "pattern": "^T[0-9]+$" } },
           "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
           "owned_surfaces": {
-            "description": "Concrete repo paths this task will change, for example package.json, wrangler.jsonc, wrangler.toml, src/index.js, workers/tally.js, public/settings.html, migrations/0001_schema.sql. Wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/** are not allowed. Use ['unknown: <reason>'] only when genuinely unknown; conceptual labels are not allowed. In a bare Worker folder, root scaffold ownership must include package.json, .gitignore, and at least one concrete Worker source input such as src/index.js or workers/app.js before runtime/source/static asset/migration tasks; include tsconfig.json only for TypeScript Worker source, and configure package scripts to run wrangler types before tsc.",
+            "description": "Concrete repo paths this task will change, for example package.json, wrangler.jsonc, wrangler.toml, src/index.js, workers/tally.js, public/settings.html, migrations/0001_schema.sql. Wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/** are not allowed. Use ['unknown: <reason>'] only when genuinely unknown; conceptual labels are not allowed. In a bare Worker folder, root scaffold ownership must include package.json, .gitignore, and at least one concrete Worker source input such as src/index.js or workers/app.js before runtime/source/static asset/migration tasks; include tsconfig.json only for TypeScript Worker source, configure package scripts to run wrangler types before tsc, and define env.staging/env.production for human-approved Wrangler production deploys.",
             "type": "array",
             "minItems": 1,
             "items": { "type": "string", "minLength": 1 }

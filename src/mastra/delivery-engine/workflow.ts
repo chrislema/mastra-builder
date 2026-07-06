@@ -1168,7 +1168,7 @@ export function normalizeTaskPlanOperatorDocumentation(taskPlan: TaskPlan): Task
         acceptance_criteria: [
           'README.md documents local development and validation with Wrangler CLI, including npm scripts and expected ports.',
           'README.md lists required Cloudflare resources, bindings, secrets, and Workers AI binding expectations.',
-          'README.md explains source-control expectations: local git checkpoints are allowed, while pushes/PRs through gh require explicit human direction, and production deploy waits for human approval before running wrangler deploy.',
+          'README.md explains source-control expectations: local git checkpoints are allowed, while pushes/PRs through gh require explicit human direction, and production deploy waits for human approval before running wrangler deploy --env production.',
         ],
         owned_surfaces: ['README.md'],
       },
@@ -1182,7 +1182,7 @@ export function operatorDocumentationHygiene(taskPlan: TaskPlan) {
   return {
     passed: false,
     reason:
-      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy.',
+      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.',
   };
 }
 
@@ -2051,6 +2051,11 @@ export function workerConfigTaskPacketPolicy() {
         binding: 'ASSETS',
       },
     },
+    deployment_environments: {
+      required: ['staging', 'production'],
+      production_deploy_command: 'wrangler deploy --env production',
+      note: 'Wrangler bindings and vars are non-inheritable, so mirror required binding names and required vars inside env.staging and env.production.',
+    },
     generated_types: {
       command: 'wrangler types',
       output: 'worker-configuration.d.ts',
@@ -2286,6 +2291,19 @@ function workerJsonConfigBindingDeclarations(config: Record<string, unknown>): W
   return declarations;
 }
 
+function workerJsonConfigVarNames(config: Record<string, unknown>) {
+  const vars = recordValue(config.vars);
+  return vars ? Object.keys(vars).filter(Boolean) : [];
+}
+
+function workerJsonEnvironmentRecord(config: Record<string, unknown>, environmentName: string) {
+  return recordValue(recordValue(config.env)?.[environmentName]);
+}
+
+function workerJsonHasEnvironment(config: Record<string, unknown>, environmentName: string) {
+  return Boolean(workerJsonEnvironmentRecord(config, environmentName));
+}
+
 function tomlArrayTableBodies(text: string, tableName: string) {
   const bodies: string[] = [];
   const lines = text.split(/\r?\n/);
@@ -2345,6 +2363,44 @@ function workerTomlConfigBindingDeclarations(text: string): WorkerBindingDeclara
   return declarations;
 }
 
+function workerTomlEnvironmentBindingDeclarations(text: string, environmentName: string): WorkerBindingDeclaration[] {
+  const declarations: WorkerBindingDeclaration[] = [];
+  const prefix = `env.${environmentName}`;
+
+  const aiBody = tomlSectionBody(text, `${prefix}.ai`);
+  const aiBinding = aiBody === undefined ? undefined : firstTomlStringValue(aiBody, 'binding');
+  if (aiBinding) declarations.push({ name: aiBinding, kind: 'ai', source: `env.${environmentName} Wrangler config` });
+
+  const assetsBody = tomlSectionBody(text, `${prefix}.assets`);
+  const assetsBinding = assetsBody === undefined ? undefined : firstTomlStringValue(assetsBody, 'binding');
+  if (assetsBinding) {
+    declarations.push({ name: assetsBinding, kind: 'assets', source: `env.${environmentName} Wrangler config` });
+  }
+
+  pushTomlBindings(declarations, text, `${prefix}.d1_databases`, 'd1');
+  pushTomlBindings(declarations, text, `${prefix}.durable_objects.bindings`, 'durable_object', 'name');
+  pushTomlBindings(declarations, text, `${prefix}.hyperdrive`, 'hyperdrive');
+  pushTomlBindings(declarations, text, `${prefix}.kv_namespaces`, 'kv');
+  pushTomlBindings(declarations, text, `${prefix}.queues.producers`, 'queue');
+  pushTomlBindings(declarations, text, `${prefix}.r2_buckets`, 'r2');
+  pushTomlBindings(declarations, text, `${prefix}.services`, 'service');
+  pushTomlBindings(declarations, text, `${prefix}.vectorize`, 'vectorize');
+  pushTomlBindings(declarations, text, `${prefix}.workflows`, 'workflow');
+
+  return declarations;
+}
+
+function tomlSectionKeyNames(text: string, sectionName: string) {
+  const body = tomlSectionBody(text, sectionName);
+  if (body === undefined) return [];
+  return Array.from(body.matchAll(/^\s*([A-Za-z_$][\w$]*)\s*=/gm)).map((match) => match[1]);
+}
+
+function tomlHasEnvironment(text: string, environmentName: string) {
+  const escaped = environmentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^\\s*\\[\\[?env\\.${escaped}(?:\\.|\\])`, 'm').test(text);
+}
+
 function workerConfigBindingDeclarations(repoPath: string): WorkerBindingDeclaration[] {
   const configPath = releaseGateWorkerConfigPath(repoPath);
   if (!configPath) return [];
@@ -2380,6 +2436,109 @@ export function workerEnvBindingAlignmentGaps(repoPath: string) {
   }
 
   return gaps;
+}
+
+const workerDeploymentEnvironments = ['staging', 'production'] as const;
+
+function workerEnvironmentMirrorGaps({
+  environmentName,
+  topLevelBindings,
+  environmentBindings,
+  topLevelVars,
+  environmentVars,
+}: {
+  environmentName: string;
+  topLevelBindings: WorkerBindingDeclaration[];
+  environmentBindings: WorkerBindingDeclaration[];
+  topLevelVars: string[];
+  environmentVars: string[];
+}) {
+  const gaps: string[] = [];
+  const environmentBindingKeys = new Set(environmentBindings.map((binding) => `${binding.kind}:${binding.name}`));
+  const environmentVarSet = new Set(environmentVars);
+
+  for (const binding of topLevelBindings) {
+    if (environmentBindingKeys.has(`${binding.kind}:${binding.name}`)) continue;
+    const article = /^[aeiou]/i.test(binding.kind) ? 'an' : 'a';
+    gaps.push(
+      `env.${environmentName} must declare ${binding.name} as ${article} ${binding.kind} binding because Wrangler bindings are non-inheritable across environments.`,
+    );
+  }
+
+  for (const varName of topLevelVars) {
+    if (environmentVarSet.has(varName)) continue;
+    gaps.push(
+      `env.${environmentName}.vars must declare ${varName} because Wrangler vars are non-inheritable across environments.`,
+    );
+  }
+
+  return gaps;
+}
+
+function workerJsonDeploymentEnvironmentGaps(config: Record<string, unknown>) {
+  const gaps: string[] = [];
+  const topLevelBindings = workerJsonConfigBindingDeclarations(config);
+  const topLevelVars = workerJsonConfigVarNames(config);
+
+  for (const environmentName of workerDeploymentEnvironments) {
+    const environment = workerJsonEnvironmentRecord(config, environmentName);
+    if (!environment) {
+      gaps.push(
+        `env.${environmentName} is missing; define a Wrangler ${environmentName} environment so local validation, preview/staging, and human-approved production deploys have explicit targets.`,
+      );
+      continue;
+    }
+
+    gaps.push(
+      ...workerEnvironmentMirrorGaps({
+        environmentName,
+        topLevelBindings,
+        environmentBindings: workerJsonConfigBindingDeclarations(environment),
+        topLevelVars,
+        environmentVars: workerJsonConfigVarNames(environment),
+      }),
+    );
+  }
+
+  return gaps;
+}
+
+function workerTomlDeploymentEnvironmentGaps(text: string) {
+  const gaps: string[] = [];
+  const topLevelBindings = workerTomlConfigBindingDeclarations(text);
+  const topLevelVars = tomlSectionKeyNames(text, 'vars');
+
+  for (const environmentName of workerDeploymentEnvironments) {
+    if (!tomlHasEnvironment(text, environmentName)) {
+      gaps.push(
+        `env.${environmentName} is missing; define a Wrangler ${environmentName} environment so local validation, preview/staging, and human-approved production deploys have explicit targets.`,
+      );
+      continue;
+    }
+
+    gaps.push(
+      ...workerEnvironmentMirrorGaps({
+        environmentName,
+        topLevelBindings,
+        environmentBindings: workerTomlEnvironmentBindingDeclarations(text, environmentName),
+        topLevelVars,
+        environmentVars: tomlSectionKeyNames(text, `env.${environmentName}.vars`),
+      }),
+    );
+  }
+
+  return gaps;
+}
+
+function workerConfigHasEnvironment(repoPath: string, environmentName: string) {
+  const configPath = releaseGateWorkerConfigPath(repoPath);
+  if (!configPath) return false;
+
+  const text = readFileSync(configPath, 'utf8');
+  if (configPath.endsWith('.toml')) return tomlHasEnvironment(text, environmentName);
+
+  const config = parseWranglerJsonConfig(text);
+  return config ? workerJsonHasEnvironment(config, environmentName) : false;
 }
 
 function directoryHasNonIgnoredFiles(directory: string): boolean {
@@ -2481,6 +2640,7 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
           : undefined,
       ),
     );
+    gaps.push(...workerTomlDeploymentEnvironmentGaps(text));
     gaps.push(...workerEnvBindingAlignmentGaps(repoPath));
 
     return gaps.map((gap) => `${configName}: ${gap}`);
@@ -2503,6 +2663,7 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
 
   gaps.push(...observabilityConfigGaps(recordValue(config.observability)));
   gaps.push(...workerStaticAssetsGaps(repoPath, recordValue(config.assets)));
+  gaps.push(...workerJsonDeploymentEnvironmentGaps(config));
   gaps.push(...workerEnvBindingAlignmentGaps(repoPath));
 
   return gaps.map((gap) => `${configName}: ${gap}`);
@@ -4131,12 +4292,26 @@ export function releaseGateWorkerDevCommand(
 
 export function releaseGateWorkerDeployDryRunCommand(repoPath: string) {
   if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
-  return wranglerProcessCommand(repoPath, 'deploy --dry-run', ['deploy', '--dry-run']);
+  const productionEnvArgs = workerConfigHasEnvironment(repoPath, 'production') ? ['--env', 'production'] : [];
+  const productionEnvTail = productionEnvArgs.length ? ' --env production' : '';
+  return wranglerProcessCommand(repoPath, `deploy --dry-run${productionEnvTail}`, [
+    'deploy',
+    '--dry-run',
+    ...productionEnvArgs,
+  ]);
 }
 
 export function releaseGateWorkerStartupCheckCommand(repoPath: string) {
   if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
-  return wranglerProcessCommand(repoPath, 'check startup', ['check', 'startup']);
+  if (!workerConfigHasEnvironment(repoPath, 'production')) {
+    return wranglerProcessCommand(repoPath, 'check startup', ['check', 'startup']);
+  }
+
+  return wranglerProcessCommand(repoPath, 'check startup --args="--env production"', [
+    'check',
+    'startup',
+    '--args=--env production',
+  ]);
 }
 
 export function releaseGateWorkerTypesCheckCommand(repoPath: string) {
@@ -5677,7 +5852,8 @@ export function localDeploymentReportFromReleaseGateEvidence({
 }
 
 export function productionWranglerDeployCommand(repoPath: string): ReleaseGateProcessCommand {
-  return wranglerProcessCommand(repoPath, 'deploy', ['deploy']);
+  if (!workerConfigHasEnvironment(repoPath, 'production')) return wranglerProcessCommand(repoPath, 'deploy', ['deploy']);
+  return wranglerProcessCommand(repoPath, 'deploy --env production', ['deploy', '--env', 'production']);
 }
 
 function wranglerDeployUrls(output: string) {
@@ -6631,14 +6807,15 @@ Project policy:
 - This harness is for Chris's standalone Cloudflare Worker projects. Do not plan desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages unless the source docs explicitly require them.
 - Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require TypeScript.
 - Prefer wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
+- New Worker config must define env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments.
 - Use wrangler CLI for deploy and local runtime validation; never use GitHub Actions as the deployment path.
 - If vanilla UI files are planned under public/, configure Workers Static Assets in Wrangler with assets.directory "./public" and binding "ASSETS"; do not use Pages or a frontend build to serve them.
-- Git/gh may support source-control steps, but production deployment is a separate Wrangler action after human approval.
+- Git/gh may support source-control steps, but production deployment is a separate Wrangler action after human approval: wrangler deploy --env production.
 - New Worker config must use compatibility_date "${todayIsoDate()}" unless the source docs explicitly require a different recent date.
 Every task must have checkable acceptance criteria and owned_surfaces.
 Worker task slicing:
 - Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml belongs in one task, and migrations/*.sql belongs in a later task.
-- Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy for production.
+- Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 Owned-surface hygiene:
 - Every owned_surfaces entry must be a concrete repo path, for example wrangler.jsonc, wrangler.toml, src/index.js, workers/tally.js, public/settings.html, migrations/0001_schema.sql.
@@ -6872,6 +7049,7 @@ Project policy:
 - This harness is for Chris's standalone Cloudflare Worker projects, not desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages.
 - Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require it.
 - Use wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
+- New Worker config must define env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments.
 - Use Wrangler CLI for local validation and deployment; never make GitHub Actions the deployment path.
 - If AI is used in the target Worker, plan an active Workers AI binding and an internal adapter around it.
 - If vanilla UI files are planned under public/, configure Workers Static Assets in Wrangler with assets.directory "./public" and binding "ASSETS"; do not use Pages or a frontend build to serve them.
@@ -6879,7 +7057,7 @@ Project policy:
 
 Task-plan quality requirements:
 - Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml in one task, migrations/*.sql in a later task.
-- Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy.
+- Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 - Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.
 - Every consumes-output relation must be declared by task ID. If a later task uses storage, prompts, routes, services, generated types, bindings, or workflow steps from an earlier slice, add the dependency edge explicitly.
@@ -7945,7 +8123,7 @@ Execution rules:
 - For TS18046 on unknown values, narrow with typeof/asRecord/Array.isArray before property access or numeric comparison. Number.isInteger(value) alone does not narrow unknown to number.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
-- When worker_config_policy is not null, use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, Workers Static Assets from worker_config_policy.static_assets when public/ UI files exist, worker_config_policy.generated_types for TypeScript source, and Wrangler binding names that exactly match generated Env binding property names.
+- When worker_config_policy is not null, use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, Workers Static Assets from worker_config_policy.static_assets when public/ UI files exist, worker_config_policy.deployment_environments with env.staging and env.production, worker_config_policy.generated_types for TypeScript source, and Wrangler binding names that exactly match generated Env binding property names.
 - For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, scripts.dev as "wrangler dev", and scripts.deploy as "wrangler deploy". For TypeScript Worker source, add scripts.generate-types as "wrangler types", scripts.typecheck as "npm run generate-types && tsc --noEmit", @types/node, and tsconfig.json. Do not add @cloudflare/workers-types; Wrangler generates Worker binding/runtime types from config.
 - Do not add React, Vite, Next, Vue, Svelte, or frontend build dependencies/scripts. Chris's Worker frontends are vanilla HTML/CSS/JS served as static assets.
 - When TypeScript is used, configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes ./worker-configuration.d.ts and node, and strict is true.

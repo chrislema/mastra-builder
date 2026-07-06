@@ -10,7 +10,7 @@
 
 ## Deploy Command
 
-- Direct Wrangler command
+- Direct Wrangler command, normally `wrangler deploy --env production`
 - Local git checkpoint or explicit human-approved gh remote action, if any
 - Confirmation that GitHub Actions was not used as the deployment path
 

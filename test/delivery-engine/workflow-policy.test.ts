@@ -87,6 +87,44 @@ import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/de
 
 const currentCompatibilityDate = () => new Date().toISOString().slice(0, 10);
 
+const workerEnvironmentMirrorKeys = [
+  'vars',
+  'ai',
+  'assets',
+  'd1_databases',
+  'durable_objects',
+  'hyperdrive',
+  'kv_namespaces',
+  'queues',
+  'r2_buckets',
+  'services',
+  'vectorize',
+  'workflows',
+];
+
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function workerDeploymentEnvironments(config: Record<string, unknown> = {}) {
+  const mirrored: Record<string, unknown> = {};
+  for (const key of workerEnvironmentMirrorKeys) {
+    if (config[key] !== undefined) mirrored[key] = cloneJsonValue(config[key]);
+  }
+
+  return {
+    staging: cloneJsonValue(mirrored),
+    production: cloneJsonValue(mirrored),
+  };
+}
+
+function withWorkerDeploymentEnvironments(config: Record<string, unknown>) {
+  return {
+    ...config,
+    env: workerDeploymentEnvironments(config),
+  };
+}
+
 const readout = (blocking_ambiguities: string[]) => ({
   artifact_type: 'readout' as const,
   product_intent: 'intent',
@@ -626,6 +664,10 @@ test('task packet policies are scoped to owning tasks', () => {
   assert.equal(profileKindTaskPacketPolicyForTask(scaffoldTask), null);
   assert.equal(workerConfigTaskPacketPolicyForTask(configTask)?.schema, './node_modules/wrangler/config-schema.json');
   assert.equal(workerConfigTaskPacketPolicyForTask(configTask)?.compatibility_date, currentCompatibilityDate());
+  assert.deepEqual(workerConfigTaskPacketPolicyForTask(configTask)?.deployment_environments.required, [
+    'staging',
+    'production',
+  ]);
   assert.deepEqual(profileKindTaskPacketPolicyForTask(profileTask)?.required_persistent_kinds, [
     'audience_segments',
     'voice_profile',
@@ -790,7 +832,7 @@ test('task plan normalization appends operator documentation task', () => {
   assert.deepEqual(operatorDocumentationHygiene(plan), {
     passed: false,
     reason:
-      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy.',
+      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.',
   });
 
   const normalized = normalizeTaskPlanOperatorDocumentation(plan);
@@ -1336,6 +1378,28 @@ test('production deploy command uses Wrangler directly without GitHub Actions', 
     args: ['wrangler', 'deploy', '--dry-run'],
   });
 
+  const productionEnvRepo = mkdtempSync(join(tmpdir(), 'delivery-production-env-deploy-'));
+  writeFileSync(
+    join(productionEnvRepo, 'wrangler.jsonc'),
+    JSON.stringify(withWorkerDeploymentEnvironments({ name: 'demo-worker', main: 'src/index.ts' }), null, 2),
+  );
+
+  assert.deepEqual(productionWranglerDeployCommand(productionEnvRepo), {
+    command: 'npx wrangler deploy --env production',
+    executable: 'npx',
+    args: ['wrangler', 'deploy', '--env', 'production'],
+  });
+  assert.deepEqual(releaseGateWorkerDeployDryRunCommand(productionEnvRepo), {
+    command: 'npx wrangler deploy --dry-run --env production',
+    executable: 'npx',
+    args: ['wrangler', 'deploy', '--dry-run', '--env', 'production'],
+  });
+  assert.deepEqual(releaseGateWorkerStartupCheckCommand(productionEnvRepo), {
+    command: 'npx wrangler check startup --args="--env production"',
+    executable: 'npx',
+    args: ['wrangler', 'check', 'startup', '--args=--env production'],
+  });
+
   const directRepo = mkdtempSync(join(tmpdir(), 'delivery-production-direct-deploy-'));
   mkdirSync(join(directRepo, 'node_modules/.bin'), { recursive: true });
   writeFileSync(join(directRepo, 'node_modules/.bin/wrangler'), '#!/usr/bin/env node\n');
@@ -1492,14 +1556,14 @@ test('release gate evidence planner checks generated Wrangler types for TypeScri
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.ts',
         compatibility_date: currentCompatibilityDate(),
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
-      },
+      }),
       null,
       2,
     ),
@@ -1519,8 +1583,8 @@ test('release gate evidence planner checks generated Wrangler types for TypeScri
     [
       { tier: 'smoke', command: 'npx wrangler types --check', required: true },
       { tier: 'smoke', command: 'npm run typecheck', required: true },
-      { tier: 'api', command: 'npx wrangler deploy --dry-run', required: true },
-      { tier: 'api', command: 'npx wrangler check startup', required: true },
+      { tier: 'api', command: 'npx wrangler deploy --dry-run --env production', required: true },
+      { tier: 'api', command: 'npx wrangler check startup --args="--env production"', required: true },
     ],
   );
 });
@@ -1714,7 +1778,7 @@ test('release gate runtime probe planner verifies public Worker assets', () => {
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.js',
@@ -1722,7 +1786,7 @@ test('release gate runtime probe planner verifies public Worker assets', () => {
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
         assets: { directory: './public', binding: 'ASSETS' },
-      },
+      }),
       null,
       2,
     ),
@@ -1798,14 +1862,14 @@ test('release gate runtime probe planner discovers routes in vanilla JS Worker e
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'workers/app.js',
         compatibility_date: currentCompatibilityDate(),
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
-      },
+      }),
       null,
       2,
     ),
@@ -2060,14 +2124,14 @@ test('Workers AI binding checks support vanilla JS Worker source', () => {
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'workers/tally.js',
         compatibility_date: currentCompatibilityDate(),
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
-      },
+      }),
       null,
       2,
     ),
@@ -2084,7 +2148,7 @@ test('Workers AI binding checks support vanilla JS Worker source', () => {
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'workers/tally.js',
@@ -2092,7 +2156,7 @@ test('Workers AI binding checks support vanilla JS Worker source', () => {
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
         ai: { binding: 'AI' },
-      },
+      }),
       null,
       2,
     ),
@@ -2130,6 +2194,7 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
   assert.match(gaps.join('\n'), /nodejs_compat/);
   assert.match(gaps.join('\n'), /observability\.enabled/);
   assert.match(gaps.join('\n'), /head_sampling_rate/);
+  assert.match(gaps.join('\n'), /env\.staging is missing/);
 
   const remediation = [`DETERMINISTIC cloudflare_worker_config_current failed: ${gaps.join('; ')}`];
   assert.equal(implementationFailureClass(remediation), 'worker_config');
@@ -2144,7 +2209,7 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.ts',
@@ -2154,7 +2219,7 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
           enabled: true,
           head_sampling_rate: 1,
         },
-      },
+      }),
       null,
       2,
     ),
@@ -2167,6 +2232,132 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
   );
   assert.equal(workerConfigEvidence?.tier, 'api');
   assert.equal(workerConfigEvidence?.ok, true);
+});
+
+test('Worker config hygiene requires deployment environments with mirrored bindings and vars', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-envs-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc'] }]).tasks;
+
+  const baseConfig = {
+    $schema: './node_modules/wrangler/config-schema.json',
+    name: 'demo-worker',
+    main: 'src/index.ts',
+    compatibility_date: currentCompatibilityDate(),
+    compatibility_flags: ['nodejs_compat'],
+    observability: { enabled: true, head_sampling_rate: 1 },
+    vars: { ENVIRONMENT: 'local' },
+    ai: { binding: 'AI' },
+    d1_databases: [{ binding: 'DB', database_name: 'demo-db', database_id: 'demo-db' }],
+  };
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        ...baseConfig,
+        env: {
+          staging: {},
+          production: { ai: { binding: 'AI' } },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const gaps = workerConfigHygieneGaps(repoPath, task).join('\n');
+  assert.match(gaps, /env\.staging must declare AI as an ai binding/);
+  assert.match(gaps, /env\.staging must declare DB as a d1 binding/);
+  assert.match(gaps, /env\.staging\.vars must declare ENVIRONMENT/);
+  assert.match(gaps, /env\.production must declare DB as a d1 binding/);
+  assert.match(gaps, /env\.production\.vars must declare ENVIRONMENT/);
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(withWorkerDeploymentEnvironments(baseConfig), null, 2),
+  );
+
+  assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
+});
+
+test('Worker config hygiene checks TOML deployment environment mirrors', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-toml-envs-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.toml'] }]).tasks;
+
+  writeFileSync(
+    join(repoPath, 'wrangler.toml'),
+    [
+      'name = "demo-worker"',
+      'main = "src/index.ts"',
+      `compatibility_date = "${currentCompatibilityDate()}"`,
+      'compatibility_flags = ["nodejs_compat"]',
+      '[observability]',
+      'enabled = true',
+      'head_sampling_rate = 1',
+      '[vars]',
+      'ENVIRONMENT = "local"',
+      '[ai]',
+      'binding = "AI"',
+      '[[d1_databases]]',
+      'binding = "DB"',
+      'database_name = "demo-db"',
+      'database_id = "demo-db"',
+      '[env.staging]',
+      '[env.production.ai]',
+      'binding = "AI"',
+      '',
+    ].join('\n'),
+  );
+
+  const gaps = workerConfigHygieneGaps(repoPath, task).join('\n');
+  assert.match(gaps, /env\.staging must declare AI as an ai binding/);
+  assert.match(gaps, /env\.staging must declare DB as a d1 binding/);
+  assert.match(gaps, /env\.production must declare DB as a d1 binding/);
+  assert.match(gaps, /env\.production\.vars must declare ENVIRONMENT/);
+
+  writeFileSync(
+    join(repoPath, 'wrangler.toml'),
+    [
+      'name = "demo-worker"',
+      'main = "src/index.ts"',
+      `compatibility_date = "${currentCompatibilityDate()}"`,
+      'compatibility_flags = ["nodejs_compat"]',
+      '[observability]',
+      'enabled = true',
+      'head_sampling_rate = 1',
+      '[vars]',
+      'ENVIRONMENT = "local"',
+      '[ai]',
+      'binding = "AI"',
+      '[[d1_databases]]',
+      'binding = "DB"',
+      'database_name = "demo-db"',
+      'database_id = "demo-db"',
+      '[env.staging.vars]',
+      'ENVIRONMENT = "staging"',
+      '[env.staging.ai]',
+      'binding = "AI"',
+      '[[env.staging.d1_databases]]',
+      'binding = "DB"',
+      'database_name = "demo-db-staging"',
+      'database_id = "demo-db-staging"',
+      '[env.production.vars]',
+      'ENVIRONMENT = "production"',
+      '[env.production.ai]',
+      'binding = "AI"',
+      '[[env.production.d1_databases]]',
+      'binding = "DB"',
+      'database_name = "demo-db-production"',
+      'database_id = "demo-db-production"',
+      '',
+    ].join('\n'),
+  );
+
+  assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
 });
 
 test('Worker release gate fails closed when Wrangler config is missing', () => {
@@ -2222,14 +2413,14 @@ test('Worker config hygiene requires a service name and existing entrypoint', ()
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo_worker',
         main: 'src/index.ts',
         compatibility_date: currentCompatibilityDate(),
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
-      },
+      }),
       null,
       2,
     ),
@@ -2261,7 +2452,7 @@ test('Worker config hygiene aligns Cloudflare binding names with Env declaration
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.ts',
@@ -2273,7 +2464,7 @@ test('Worker config hygiene aligns Cloudflare binding names with Env declaration
         r2_buckets: [{ binding: 'ARTIFACTS', bucket_name: 'artifacts' }],
         workflows: [{ binding: 'WEEKLY_WORKFLOW', name: 'weekly', class_name: 'WeeklyWorkflow' }],
         ai: { binding: 'AI' },
-      },
+      }),
       null,
       2,
     ),
@@ -2290,7 +2481,7 @@ test('Worker config hygiene aligns Cloudflare binding names with Env declaration
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.ts',
@@ -2305,7 +2496,7 @@ test('Worker config hygiene aligns Cloudflare binding names with Env declaration
         ],
         workflows: [{ binding: 'PROCESSING_WORKFLOW', name: 'weekly', class_name: 'WeeklyWorkflow' }],
         ai: { binding: 'AI' },
-      },
+      }),
       null,
       2,
     ),
@@ -2326,14 +2517,14 @@ test('Worker config hygiene requires Workers Static Assets for public UI files',
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.ts',
         compatibility_date: currentCompatibilityDate(),
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
-      },
+      }),
       null,
       2,
     ),
@@ -2344,7 +2535,7 @@ test('Worker config hygiene requires Workers Static Assets for public UI files',
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.ts',
@@ -2352,7 +2543,7 @@ test('Worker config hygiene requires Workers Static Assets for public UI files',
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
         assets: { directory: './dist', binding: 'ASSETS' },
-      },
+      }),
       null,
       2,
     ),
@@ -2363,7 +2554,7 @@ test('Worker config hygiene requires Workers Static Assets for public UI files',
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.ts',
@@ -2371,7 +2562,7 @@ test('Worker config hygiene requires Workers Static Assets for public UI files',
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
         assets: { directory: './public' },
-      },
+      }),
       null,
       2,
     ),
@@ -2384,7 +2575,7 @@ test('Worker config hygiene requires Workers Static Assets for public UI files',
   writeFileSync(
     join(repoPath, 'wrangler.jsonc'),
     JSON.stringify(
-      {
+      withWorkerDeploymentEnvironments({
         $schema: './node_modules/wrangler/config-schema.json',
         name: 'demo-worker',
         main: 'src/index.ts',
@@ -2392,7 +2583,7 @@ test('Worker config hygiene requires Workers Static Assets for public UI files',
         compatibility_flags: ['nodejs_compat'],
         observability: { enabled: true, head_sampling_rate: 1 },
         assets: { directory: './public', binding: 'ASSETS' },
-      },
+      }),
       null,
       2,
     ),
@@ -2415,6 +2606,9 @@ test('Worker config task packet policy carries the exact current compatibility d
       binding: 'ASSETS',
     },
   });
+  assert.deepEqual(policy.deployment_environments.required, ['staging', 'production']);
+  assert.equal(policy.deployment_environments.production_deploy_command, 'wrangler deploy --env production');
+  assert.match(policy.deployment_environments.note, /non-inheritable/);
   assert.deepEqual(policy.generated_types, {
     command: 'wrangler types',
     output: 'worker-configuration.d.ts',

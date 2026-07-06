@@ -124,6 +124,9 @@ existing repo or spec explicitly calls for Pages Functions. Never split one feat
 across both deployment models.
 For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml
 or the source docs explicitly require TOML.
+New Worker config must define Wrangler env.staging and env.production. Mirror any required
+bindings and vars inside those environments because Wrangler does not inherit them across
+environments. Production deploys use wrangler deploy --env production after human approval.
 If the project includes vanilla UI files under public/, configure Workers Static Assets in
 Wrangler with assets.directory = "./public" and binding = "ASSETS" so the UI deploys with
 the Worker instead of requiring Pages or a frontend build.
@@ -240,6 +243,7 @@ Cloudflare architecture defaults:
 - Use Pages Functions only when the existing repo or spec explicitly requires Pages.
 - Do not introduce Node HTTP servers, Express-style servers, generic server/ directories, or filesystem-backed runtime state.
 - For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml or the task explicitly owns TOML.
+- New Worker config must define Wrangler env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments. Production deploys use wrangler deploy --env production after human approval.
 - Use Cloudflare Worker runtime APIs and bindings: D1, KV, R2, Queues, Durable Objects, Workflows, service bindings, and scheduled handlers when appropriate.
 - If the task or existing repo uses Workers AI, configure it as a real Wrangler binding with [ai] binding = "AI"; when TypeScript Env declarations exist, make Env.AI required at the Worker boundary.
 - Keep the deployment model consistent: do not split a cohesive feature set between standalone Workers and Pages Functions.

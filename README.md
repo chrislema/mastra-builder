@@ -103,6 +103,11 @@ and TypeScript Worker source are explicit exceptions, not the default. The deliv
 should not introduce React, JSX/TSX, frontend frameworks, preprocessors, generic
 Node/Express servers, filesystem-backed runtime state, or a new frontend build step.
 
+New Worker config should define Wrangler `env.staging` and `env.production`.
+Bindings and vars required by the Worker must be mirrored inside those environments because
+Wrangler does not inherit them across environments. Production approval runs the native
+Wrangler path with `wrangler deploy --env production`.
+
 When a target project does use TypeScript Worker source, the scaffold should use Wrangler's
 generated types instead of hand-written Worker runtime types: `scripts.generate-types` runs
 `wrangler types`, `scripts.typecheck` runs `npm run generate-types && tsc --noEmit`, and
@@ -113,7 +118,7 @@ local D1 migrations, and local `wrangler dev` probes.
 Use local `git` for source-control checkpoints. Use the `gh` CLI only when an explicit
 human instruction calls for pushes, pull requests, or other remote GitHub actions. Do not
 use GitHub Actions as the deployment path. Production deployments should use Wrangler CLI
-directly.
+directly through `wrangler deploy --env production`.
 
 ## Request Context
 
