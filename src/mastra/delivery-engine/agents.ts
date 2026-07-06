@@ -370,8 +370,8 @@ Must not:
 Deployment policy:
 - Use local git plus the gh CLI for repository operations such as commits, pushes, and pull requests.
 - Do not create, trigger, or rely on GitHub Actions for deployment.
-- In production deploy mode, the delivery workflow executes Wrangler CLI or an existing project script that directly wraps Wrangler after human approval.
-- Audit that the deployment report records the exact Wrangler command or script, deployed revision, target, and live verification results.
+- In production deploy mode, the delivery workflow executes Wrangler CLI directly after human approval.
+- Audit that the deployment report records the exact Wrangler command, deployed revision, target, and live verification results.
 
 Always treat production deployment as workflow-owned. Use this agent for explanation, readiness review, and report critique.
 `,

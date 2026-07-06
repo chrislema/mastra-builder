@@ -8928,7 +8928,7 @@ const createDeploymentReportStep = createStep({
           blockers: inputData.releaseGate.blockers,
           nextSteps: inputData.nextSteps,
         },
-        { resumeLabel: 'approve-real-deployment' },
+        { resumeLabel: 'approve-production-deployment' },
       );
     }
 

@@ -197,7 +197,7 @@ The workflow uses Mastra suspend/resume for human input:
 }
 ```
 
-- `create-deployment-report` suspends with resume label `approve-real-deployment` before
+- `create-deployment-report` suspends with resume label `approve-production-deployment` before
   any production deployment command runs. Resume with:
 
 ```json

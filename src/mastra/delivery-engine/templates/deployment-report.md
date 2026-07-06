@@ -10,7 +10,7 @@
 
 ## Deploy Command
 
-- Wrangler command or project script that directly wraps Wrangler
+- Direct Wrangler command
 - Local git/gh CLI source-control action, if any
 - Confirmation that GitHub Actions was not used as the deployment path
 
