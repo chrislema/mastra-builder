@@ -1673,6 +1673,24 @@ test('release gate Wrangler commands prefer the installed local binary', () => {
   assert.equal(releaseGateWorkerDeployDryRunCommand(repoPath)?.command, './node_modules/.bin/wrangler deploy --dry-run');
   assert.equal(releaseGateWorkerStartupCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler check startup');
   assert.equal(releaseGateWorkerDevCommand(repoPath, 8787)?.command, './node_modules/.bin/wrangler dev --ip 127.0.0.1 --port 8787');
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      withWorkerDeploymentEnvironments({
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        d1_databases: [{ binding: 'DB', database_name: 'demo-db' }],
+      }),
+      null,
+      2,
+    ),
+  );
+
+  assert.equal(
+    releaseGateWorkerDevCommand(repoPath, 8787)?.command,
+    './node_modules/.bin/wrangler dev --env staging --ip 127.0.0.1 --port 8787',
+  );
 });
 
 test('release gate deterministic checks fail closed on failed required local evidence', () => {
@@ -1765,6 +1783,24 @@ test('release gate runtime probe planner uses Wrangler CLI directly', () => {
       { path: '/health', expectedStatus: 200, statusBelow: undefined },
     ],
   );
+});
+
+test('release gate runtime probe targets staging when the Worker config defines it', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-staging-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default { fetch: () => new Response("ok") };\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(withWorkerDeploymentEnvironments({ name: 'demo-worker', main: 'src/index.js' }), null, 2),
+  );
+
+  assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999, '/tmp/state'), {
+    command: 'npx wrangler dev --env staging --ip 127.0.0.1 --port 8999 --persist-to /tmp/state',
+    executable: 'npx',
+    args: ['wrangler', 'dev', '--env', 'staging', '--ip', '127.0.0.1', '--port', '8999', '--persist-to', '/tmp/state'],
+  });
+
+  assert.equal(releaseGateRuntimeProbePlan(repoPath)?.command.command, 'npx wrangler dev --env staging --ip 127.0.0.1 --port <port>');
 });
 
 test('release gate runtime probe planner verifies public Worker assets', () => {
@@ -2686,6 +2722,27 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
     ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', '*.cpuprofile', ''].join('\n'),
   );
 
+  const genericEnvironmentGaps = workerPackageScaffoldGaps(repoPath, jsTask);
+  assert.match(genericEnvironmentGaps.join('\n'), /wrangler dev --env staging/);
+  assert.match(genericEnvironmentGaps.join('\n'), /wrangler deploy --env production/);
+
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+        },
+        devDependencies: {
+          wrangler: '^4.0.0',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
   assert.deepEqual(workerPackageScaffoldGaps(repoPath, jsTask), []);
 
   writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
@@ -2703,8 +2760,8 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
     JSON.stringify(
       {
         scripts: {
-          dev: 'wrangler dev',
-          deploy: 'wrangler deploy',
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
           'generate-types': 'wrangler types',
           typecheck: 'npm run generate-types && tsc --noEmit',
         },

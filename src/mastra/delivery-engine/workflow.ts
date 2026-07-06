@@ -3069,12 +3069,33 @@ function dependencyRangeAllowsWranglerV4(version: string) {
   return major !== undefined && major >= 4;
 }
 
-function scriptUsesWranglerWithoutEntrypoint(script: unknown, command: 'dev' | 'deploy') {
-  if (typeof script !== 'string') return false;
+function wranglerScriptCommandTail(script: unknown, command: 'dev' | 'deploy') {
+  if (typeof script !== 'string') return undefined;
   const match = new RegExp(`\\bwrangler\\s+${command}\\b([^;&|\\n]*)`).exec(script);
-  if (!match) return false;
-  return !/(^|\s)(?:\.\/)?(?:(?:src|workers)\/\S+\.(?:js|mjs|cjs|ts|tsx|mts|cts)|worker\.(?:js|mjs|cjs|ts|tsx|mts|cts))(\s|$)/.test(
-    match[1] ?? '',
+  return match ? (match[1] ?? '') : undefined;
+}
+
+function commandTailUsesEnvironment(commandTail: string, environmentName: string) {
+  const escaped = environmentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|\\s)(?:--env(?:=|\\s+)|-e(?:=|\\s+))${escaped}(?:\\s|$)`).test(commandTail);
+}
+
+function commandTailHasEntrypoint(commandTail: string) {
+  return /(^|\s)(?:\.\/)?(?:(?:src|workers)\/\S+\.(?:js|mjs|cjs|ts|tsx|mts|cts)|worker\.(?:js|mjs|cjs|ts|tsx|mts|cts))(\s|$)/.test(
+    commandTail,
+  );
+}
+
+function scriptUsesWranglerEnvironmentWithoutEntrypoint(
+  script: unknown,
+  command: 'dev' | 'deploy',
+  environmentName: string,
+) {
+  const commandTail = wranglerScriptCommandTail(script, command);
+  return (
+    commandTail !== undefined &&
+    !commandTailHasEntrypoint(commandTail) &&
+    commandTailUsesEnvironment(commandTail, environmentName)
   );
 }
 
@@ -3253,11 +3274,15 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
   const gaps: string[] = [];
   const usesTypeScript = repoUsesTypeScriptWorkerSource(repoPath, task);
   const scripts = recordValue(packageJson.scripts) ?? {};
-  if (!scriptUsesWranglerWithoutEntrypoint(scripts.dev, 'dev')) {
-    gaps.push('package.json: scripts.dev should run "wrangler dev" through wrangler.jsonc, without passing a Worker source entrypoint argument.');
+  if (!scriptUsesWranglerEnvironmentWithoutEntrypoint(scripts.dev, 'dev', 'staging')) {
+    gaps.push(
+      'package.json: scripts.dev should run "wrangler dev --env staging" through wrangler.jsonc, without passing a Worker source entrypoint argument.',
+    );
   }
-  if (!scriptUsesWranglerWithoutEntrypoint(scripts.deploy, 'deploy')) {
-    gaps.push('package.json: scripts.deploy should run "wrangler deploy" through wrangler.jsonc, without passing a Worker source entrypoint argument.');
+  if (!scriptUsesWranglerEnvironmentWithoutEntrypoint(scripts.deploy, 'deploy', 'production')) {
+    gaps.push(
+      'package.json: scripts.deploy should run "wrangler deploy --env production" through wrangler.jsonc, without passing a Worker source entrypoint argument.',
+    );
   }
   if (usesTypeScript && !scriptRunsWranglerTypes(scripts['generate-types'])) {
     gaps.push(
@@ -4280,8 +4305,11 @@ export function releaseGateWorkerDevCommand(
   const portValue = String(port);
   const persistArgs = persistTo ? ['--persist-to', String(persistTo)] : [];
   const persistCommand = persistTo ? ` --persist-to ${String(persistTo)}` : '';
-  return wranglerProcessCommand(repoPath, `dev --ip 127.0.0.1 --port ${portValue}${persistCommand}`, [
+  const stagingEnvArgs = workerConfigHasEnvironment(repoPath, 'staging') ? ['--env', 'staging'] : [];
+  const stagingEnvCommand = stagingEnvArgs.length ? ' --env staging' : '';
+  return wranglerProcessCommand(repoPath, `dev${stagingEnvCommand} --ip 127.0.0.1 --port ${portValue}${persistCommand}`, [
     'dev',
+    ...stagingEnvArgs,
     '--ip',
     '127.0.0.1',
     '--port',
@@ -8124,7 +8152,7 @@ Execution rules:
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
 - When worker_config_policy is not null, use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, Workers Static Assets from worker_config_policy.static_assets when public/ UI files exist, worker_config_policy.deployment_environments with env.staging and env.production, worker_config_policy.generated_types for TypeScript source, and Wrangler binding names that exactly match generated Env binding property names.
-- For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, scripts.dev as "wrangler dev", and scripts.deploy as "wrangler deploy". For TypeScript Worker source, add scripts.generate-types as "wrangler types", scripts.typecheck as "npm run generate-types && tsc --noEmit", @types/node, and tsconfig.json. Do not add @cloudflare/workers-types; Wrangler generates Worker binding/runtime types from config.
+- For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, scripts.dev as "wrangler dev --env staging", and scripts.deploy as "wrangler deploy --env production". For TypeScript Worker source, add scripts.generate-types as "wrangler types", scripts.typecheck as "npm run generate-types && tsc --noEmit", @types/node, and tsconfig.json. Do not add @cloudflare/workers-types; Wrangler generates Worker binding/runtime types from config.
 - Do not add React, Vite, Next, Vue, Svelte, or frontend build dependencies/scripts. Chris's Worker frontends are vanilla HTML/CSS/JS served as static assets.
 - When TypeScript is used, configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes ./worker-configuration.d.ts and node, and strict is true.
 - .gitignore must exclude node_modules/, .wrangler/, .delivery/, .dev.vars, .env, and *.cpuprofile.

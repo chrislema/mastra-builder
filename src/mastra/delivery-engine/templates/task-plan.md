@@ -18,6 +18,8 @@ unless an existing repo or source document already uses `wrangler.toml`. UI work
 vanilla `public/*.html`, `public/*.css`, and `public/*.js` files, not React or framework files.
 New Worker config must define `env.staging` and `env.production`; mirror required bindings
 and vars inside both because Wrangler does not inherit them across environments.
+New Worker package scripts must target those environments through config: `scripts.dev`
+runs `wrangler dev --env staging`, and `scripts.deploy` runs `wrangler deploy --env production`.
 When TypeScript Worker source is explicitly required, the scaffold must use Wrangler's
 generated `worker-configuration.d.ts` types: `scripts.generate-types` runs `wrangler types`,
 `scripts.typecheck` runs `npm run generate-types && tsc --noEmit`, and `tsconfig.json`
