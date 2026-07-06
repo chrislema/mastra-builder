@@ -1582,7 +1582,15 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
   };
 }
 
-export function releaseGateEvidenceCommandPlan(repoPath: string): ReleaseGateEvidenceCommand[] {
+function createReleaseGateRuntimeStatePath(repoPath: string) {
+  const stateRoot = join(resolve(repoPath), '.delivery', 'tmp');
+  mkdirSync(stateRoot, { recursive: true });
+  const persistTo = join(stateRoot, `wrangler-state-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`);
+  mkdirSync(persistTo, { recursive: true });
+  return persistTo;
+}
+
+export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: string): ReleaseGateEvidenceCommand[] {
   const commands: ReleaseGateEvidenceCommand[] = [];
   const script = buildVerificationScript(repoPath);
   if (script) {
@@ -1598,11 +1606,13 @@ export function releaseGateEvidenceCommandPlan(repoPath: string): ReleaseGateEvi
 
   const databaseName = releaseGateLocalD1DatabaseName(repoPath);
   if (databaseName && existsSync(join(resolve(repoPath), 'migrations'))) {
+    const persistArgs = persistTo ? ['--persist-to', persistTo] : [];
+    const persistCommand = persistTo ? ` --persist-to ${persistTo}` : '';
     commands.push({
       tier: 'api',
-      command: `npx wrangler d1 migrations apply ${databaseName} --local`,
+      command: `npx wrangler d1 migrations apply ${databaseName} --local${persistCommand}`,
       executable: 'npx',
-      args: ['wrangler', 'd1', 'migrations', 'apply', databaseName, '--local'],
+      args: ['wrangler', 'd1', 'migrations', 'apply', databaseName, '--local', ...persistArgs],
       required: false,
       reason: 'wrangler.toml and migrations/ were present, so local D1 migration validation was available.',
     });
@@ -1894,20 +1904,18 @@ async function runReleaseGateRuntimeProbe({
   repoPath,
   mastra,
   stage,
+  persistTo,
 }: {
   repoPath: string;
   mastra: any;
   stage: string;
+  persistTo?: string;
 }): Promise<ReleaseGateEvidenceResult | undefined> {
   const plan = releaseGateRuntimeProbePlan(repoPath);
   if (!plan) return undefined;
 
   const port = await availableTcpPort();
-  const stateRoot = join(resolve(repoPath), '.delivery', 'tmp');
-  mkdirSync(stateRoot, { recursive: true });
-  const persistTo = join(stateRoot, `wrangler-state-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`);
-  mkdirSync(persistTo, { recursive: true });
-  const command = releaseGateWorkerDevCommand(repoPath, port, persistTo);
+  const command = releaseGateWorkerDevCommand(repoPath, port, persistTo ?? createReleaseGateRuntimeStatePath(repoPath));
   if (!command) return undefined;
 
   let output = '';
@@ -2019,8 +2027,9 @@ async function collectReleaseGateEvidence({
 }): Promise<ReleaseGateEvidence> {
   await ensureNodeDependencies({ repoPath, mastra, stage });
 
-  const plan = releaseGateEvidenceCommandPlan(repoPath);
   const runtimePlan = releaseGateRuntimeProbePlan(repoPath);
+  const runtimePersistTo = runtimePlan ? createReleaseGateRuntimeStatePath(repoPath) : undefined;
+  const plan = releaseGateEvidenceCommandPlan(repoPath, runtimePersistTo);
   const notes: string[] = [];
   if (!plan.some((command) => command.tier === 'smoke')) {
     notes.push('No package verification script was available; smoke tier must be marked not_required or blocked with a reason.');
@@ -2037,7 +2046,7 @@ async function collectReleaseGateEvidence({
   for (const command of plan) {
     commands.push(await runReleaseGateEvidenceCommand({ repoPath, mastra, stage, command }));
   }
-  const runtimeResult = await runReleaseGateRuntimeProbe({ repoPath, mastra, stage });
+  const runtimeResult = await runReleaseGateRuntimeProbe({ repoPath, mastra, stage, persistTo: runtimePersistTo });
   if (runtimeResult) commands.push(runtimeResult);
 
   return {

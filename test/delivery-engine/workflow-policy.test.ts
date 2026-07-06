@@ -176,6 +176,13 @@ test('release gate evidence planner uses bounded local commands', () => {
       { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: false },
     ],
   );
+  assert.deepEqual(
+    releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command),
+    [
+      'npm run typecheck',
+      'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
+    ],
+  );
 });
 
 test('release gate runtime probe planner uses the project Wrangler dev script', () => {
