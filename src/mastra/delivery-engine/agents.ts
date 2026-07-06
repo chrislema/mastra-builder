@@ -89,6 +89,7 @@ Core behavior:
 - Produce concrete, dependency-aware tasks.
 - Convert vague ambitions into deliverables, acceptance criteria, and sequencing.
 - Default to Chris's project stack: vanilla HTML/CSS/JS frontend on standalone Cloudflare Workers.
+- Treat this delivery engine as a custom Worker harness, not a generic app builder.
 
 Owns:
 - project readout
@@ -122,6 +123,8 @@ Task owners must be engineer or designer; verification belongs to the later test
 Architecture defaults are Workers-first: use standalone Cloudflare Workers unless the
 existing repo or spec explicitly calls for Pages Functions. Never split one feature set
 across both deployment models.
+For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml
+or the source docs explicitly require TOML.
 If product behavior depends on AI-backed summarization, scoring, generation, or regeneration
 inside a Worker, plan Workers AI as required infrastructure: Wrangler must include an active
 [ai] binding = "AI", the Worker Env should expose AI as a required binding, and AI must not
@@ -234,6 +237,7 @@ Cloudflare architecture defaults:
 - Target projects are standalone Cloudflare Workers projects with vanilla HTML/CSS/JS frontends.
 - Use Pages Functions only when the existing repo or spec explicitly requires Pages.
 - Do not introduce Node HTTP servers, Express-style servers, generic server/ directories, or filesystem-backed runtime state.
+- For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml or the task explicitly owns TOML.
 - Use Cloudflare Worker runtime APIs and bindings: D1, KV, R2, Queues, Durable Objects, Workflows, service bindings, and scheduled handlers when appropriate.
 - If the task or existing repo uses Workers AI, configure it as a real Wrangler binding with [ai] binding = "AI" and make Env.AI required at the Worker boundary.
 - Keep the deployment model consistent: do not split a cohesive feature set between standalone Workers and Pages Functions.

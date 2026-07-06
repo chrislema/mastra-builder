@@ -18,7 +18,7 @@ Options:
   --repo, --repoPath       Target repository workspace. Required.
   --vision, --visionPath   Vision document path. Defaults to vision.md.
   --spec, --specPath       Spec document path. Defaults to spec.md.
-  --deploy, --deployMode   mock or real. Defaults to mock.
+  --deploy, --deployMode   local or production. Defaults to local. Aliases: mock, real.
   --review, --reviewMode   fast or thorough. Defaults to fast.
   --maxRetries             Bounded retry count. Defaults to 2.
   --resourceId             Optional Mastra workflow resource id.

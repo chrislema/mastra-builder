@@ -10,12 +10,20 @@ import { deliveryWorkflow } from './workflow';
 
 export { createDeliveryRequestContext as createDeliveryWorkflowRequestContext } from './context';
 
+const deliveryDeployModeSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (['local', 'mock', 'preview'].includes(normalized)) return 'mock';
+  if (['production', 'prod', 'real'].includes(normalized)) return 'real';
+  return value;
+}, z.enum(['mock', 'real']).default('mock'));
+
 export const deliveryWorkflowRunInputSchema = z.object({
   repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
   visionPath: z.string().min(1).default('vision.md').describe('Path to vision.md inside repoPath.'),
   specPath: z.string().min(1).default('spec.md').describe('Path to spec.md inside repoPath.'),
   maxRetries: z.coerce.number().int().min(0).default(2),
-  deployMode: z.enum(['mock', 'real']).default('mock'),
+  deployMode: deliveryDeployModeSchema.describe('local/production target. mock/real remain supported aliases.'),
   reviewMode: z.enum(['fast', 'thorough']).default('fast'),
   resourceId: z.string().min(1).optional().describe('Optional resource id for filtering persisted workflow runs.'),
   runId: z.string().min(1).optional().describe('Optional workflow run id for repeatable external orchestration.'),

@@ -129,6 +129,34 @@ test('delivery workflow runner honors explicit resource and run ids', async () =
   });
 });
 
+test('delivery workflow runner accepts local and production deploy aliases', async () => {
+  const starts: Record<string, any>[] = [];
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => ({
+          runId: `alias-run-${starts.length + 1}`,
+          start: async (options: Record<string, any>) => {
+            starts.push(options.inputData);
+            return { status: 'success' };
+          },
+        }),
+      }) as any,
+  };
+
+  await startDeliveryWorkflowRunWithKey(host, {
+    repoPath: '/tmp/delivery-target',
+    deployMode: 'local',
+  });
+  await startDeliveryWorkflowRunWithKey(host, {
+    repoPath: '/tmp/delivery-target',
+    deployMode: 'production',
+  });
+
+  assert.equal(starts[0].deployMode, 'mock');
+  assert.equal(starts[1].deployMode, 'real');
+});
+
 test('delivery workflow runner closes initialized delivery state after a failed workflow result', async () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-runner-failed-'));
   writeFileSync(join(repoPath, 'vision.md'), '# Vision\n');

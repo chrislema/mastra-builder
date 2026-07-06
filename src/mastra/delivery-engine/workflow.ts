@@ -56,12 +56,20 @@ import { parseDeliveryStructuredOutput } from './structured-output';
 
 const execFileAsync = promisify(execFile);
 
+const deliveryDeployModeSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (['local', 'mock', 'preview'].includes(normalized)) return 'mock';
+  if (['production', 'prod', 'real'].includes(normalized)) return 'real';
+  return value;
+}, z.enum(['mock', 'real']).default('mock'));
+
 const workflowInputSchema = z.object({
   repoPath: z.string().describe('Absolute path to the target repo.'),
   visionPath: z.string().describe('Path to vision.md inside repoPath; relative paths are resolved under repoPath.'),
   specPath: z.string().describe('Path to spec.md inside repoPath; relative paths are resolved under repoPath.'),
   maxRetries: z.number().int().min(0).default(2),
-  deployMode: z.enum(['mock', 'real']).default('mock'),
+  deployMode: deliveryDeployModeSchema.describe('local/production target. mock/real remain supported aliases.'),
   reviewMode: z.enum(['fast', 'thorough']).default('fast'),
 });
 
@@ -213,7 +221,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'role-boundary-normalized-v11';
+const plannerPolicyVersion = 'worker-first-local-v12';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -4158,14 +4166,20 @@ const createPlannerArtifactsStep = createStep({
 
 Do not write code. Ask only blocking questions. Record safe assumptions in the readout.
 Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
+Project policy:
+- This harness is for Chris's standalone Cloudflare Worker projects. Do not plan desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages unless the source docs explicitly require them.
+- Default new projects to a Worker module entry, Wrangler config, TypeScript for Worker code, and vanilla HTML/CSS/JS under public/ when a UI is needed.
+- Prefer wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
+- Use wrangler CLI for deploy and local runtime validation; never use GitHub Actions as the deployment path.
+- Git/gh may support source-control steps, but production deployment is a separate Wrangler action after human approval.
 Every task must have checkable acceptance criteria and owned_surfaces.
 Owned-surface hygiene:
-- Every owned_surfaces entry must be a concrete repo path, for example wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
+- Every owned_surfaces entry must be a concrete repo path, for example wrangler.jsonc, wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
 - Do not use wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/**. Enumerate each expected file path.
 - Do not use conceptual labels such as "Worker Env types", "wrangler configuration", "Workflow binding registration", "API routes", or "UI assets".
 - If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
 Role-boundary hygiene:
-- Engineer tasks own Worker config/source/migration files such as package.json, tsconfig.json, wrangler.toml, src/**, and migrations/**.
+- Engineer tasks own Worker config/source/migration files such as package.json, tsconfig.json, wrangler.jsonc, wrangler.toml, src/**, and migrations/**.
 - Designer tasks own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
 - Do not put public/** files in engineer-owned tasks; create or reuse a designer task for vanilla HTML/CSS/JS UI work.
 Root scaffold hygiene:
@@ -4174,6 +4188,7 @@ Root scaffold hygiene:
 - Worker runtime/config/source/static asset/migration tasks must depend on that scaffold task unless they own package.json and tsconfig.json themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
+- Do not stop for preferences the harness already settles: Worker over Pages, vanilla UI over frameworks, Wrangler over GitHub Actions deploy, local validation before production, or Workers AI binding shape.
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
 - If an unknown is a non-blocking delivery concern, put it in taskPlan.risks.
 - Every open_decisions entry must be one string with this exact field shape:
