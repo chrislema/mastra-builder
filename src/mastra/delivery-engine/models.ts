@@ -1,4 +1,4 @@
-const defaultDeliveryModel = 'zai-coding-plan/glm-5.2';
+const defaultDeliveryModel = 'openai/gpt-5.5';
 
 const configuredModel = (env: NodeJS.ProcessEnv, name: string, fallback: string) => env[name]?.trim() || fallback;
 

@@ -13,32 +13,32 @@ import {
 } from '../../src/mastra/delivery-engine/runner.ts';
 import { initializeDeliveryRun, readDeliveryRun } from '../../src/mastra/delivery-engine/state.ts';
 
-const withZhipuKey = async <T>(value: string | undefined, fn: () => Promise<T>) => {
-  const previous = process.env.ZHIPU_API_KEY;
+const withOpenAiKey = async <T>(value: string | undefined, fn: () => Promise<T>) => {
+  const previous = process.env.OPENAI_API_KEY;
   if (value === undefined) {
-    delete process.env.ZHIPU_API_KEY;
+    delete process.env.OPENAI_API_KEY;
   } else {
-    process.env.ZHIPU_API_KEY = value;
+    process.env.OPENAI_API_KEY = value;
   }
 
   try {
     return await fn();
   } finally {
     if (previous === undefined) {
-      delete process.env.ZHIPU_API_KEY;
+      delete process.env.OPENAI_API_KEY;
     } else {
-      process.env.ZHIPU_API_KEY = previous;
+      process.env.OPENAI_API_KEY = previous;
     }
   }
 };
 
 const startDeliveryWorkflowRunWithKey = (host: Parameters<typeof startDeliveryWorkflowRun>[0], input: DeliveryWorkflowRunInput) =>
-  withZhipuKey('test-zhipu-key', () => startDeliveryWorkflowRun(host, input));
+  withOpenAiKey('test-openai-key', () => startDeliveryWorkflowRun(host, input));
 
 const startDeliveryWorkflowRunAsyncWithKey = (
   host: Parameters<typeof startDeliveryWorkflowRunAsync>[0],
   input: DeliveryWorkflowRunInput,
-) => withZhipuKey('test-zhipu-key', () => startDeliveryWorkflowRunAsync(host, input));
+) => withOpenAiKey('test-openai-key', () => startDeliveryWorkflowRunAsync(host, input));
 
 const readJson = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as Record<string, any>;
 
@@ -236,10 +236,10 @@ test('delivery workflow runner fails preflight before creating a run without mod
       }) as any,
   };
 
-  await withZhipuKey(undefined, async () => {
+  await withOpenAiKey(undefined, async () => {
     await assert.rejects(
       startDeliveryWorkflowRun(host, { repoPath: '/tmp/delivery-target' }),
-      /Delivery workflow requires ZHIPU_API_KEY/,
+      /Delivery workflow requires OPENAI_API_KEY/,
     );
   });
   assert.equal(createRunCalled, false);
