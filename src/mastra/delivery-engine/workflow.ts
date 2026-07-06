@@ -3525,6 +3525,123 @@ function latestArtifactPath(artifacts: string[], needle: string, fallback: strin
   return [...artifacts].reverse().find((path) => path.includes(needle) && !path.includes('/judgments/')) ?? fallback;
 }
 
+function latestReleaseGateEvidencePath(artifacts: string[]) {
+  const path = latestArtifactPath(artifacts, 'test-evidence', '');
+  return path || undefined;
+}
+
+function readReleaseGateEvidenceArtifact(repoPath: string, artifacts: string[]) {
+  const evidencePath = latestReleaseGateEvidencePath(artifacts);
+  if (!evidencePath) return undefined;
+
+  const evidence = readJsonArtifact(repoPath, evidencePath);
+  if (!evidence || typeof evidence !== 'object') return undefined;
+  if ((evidence as { artifact_type?: unknown }).artifact_type !== 'test-evidence') return undefined;
+  return evidence as ReleaseGateEvidence;
+}
+
+function releaseGateEvidenceVerification(evidence?: ReleaseGateEvidence) {
+  const commandRows =
+    evidence?.commands.map((command) => ({
+      check: command.command,
+      expected: command.reason,
+      actual: command.ok ? (command.output_summary ?? 'passed') : (command.error ?? 'failed'),
+      passed: command.ok,
+    })) ?? [];
+  const probeRows =
+    evidence?.commands.flatMap((command) =>
+      (command.probes ?? []).map((probe) => ({
+        check: `${probe.method} ${probe.path}`,
+        expected: probe.expected,
+        actual: probe.ok ? (probe.response_summary ?? 'passed') : (probe.error ?? 'failed'),
+        passed: probe.ok,
+      })),
+    ) ?? [];
+
+  return [...commandRows, ...probeRows];
+}
+
+function releaseGateEvidenceIssues(evidence?: ReleaseGateEvidence): DeploymentReport['issues'] {
+  const issues: DeploymentReport['issues'] = [];
+  for (const command of evidence?.commands ?? []) {
+    if (!command.ok) {
+      issues.push({
+        description: `Release-gate evidence command failed: ${command.command}`,
+        impact: command.required
+          ? 'Required local validation evidence is missing.'
+          : 'Optional local validation evidence is unavailable.',
+        action: command.required
+          ? 'Fix the failed evidence command before production approval.'
+          : 'Review whether this optional evidence should become required.',
+      });
+    }
+    for (const probe of command.probes ?? []) {
+      if (!probe.ok) {
+        issues.push({
+          description: `Local Worker probe failed: ${probe.method} ${probe.path}`,
+          impact: probe.expected,
+          action: probe.error ?? 'Fix the route or probe expectation before production approval.',
+        });
+      }
+    }
+  }
+  return issues;
+}
+
+export function localDeploymentReportFromReleaseGateEvidence({
+  runId,
+  releaseGate,
+  evidence,
+  releaseGatePath,
+  evidencePath,
+}: {
+  runId: string;
+  releaseGate: ReleaseGate;
+  evidence?: ReleaseGateEvidence;
+  releaseGatePath: string;
+  evidencePath?: string;
+}): DeploymentReport {
+  const verification = releaseGateEvidenceVerification(evidence);
+  const issues = releaseGateEvidenceIssues(evidence);
+  const migrationCommands =
+    evidence?.commands
+      .filter((command) => command.ok && /\bwrangler\s+d1\s+migrations\s+apply\b/.test(command.command))
+      .map((command) => command.command) ?? [];
+  const hasRequiredIssue = issues.some((issue) => /Required/.test(issue.impact));
+  const releaseGatePassed = releaseGate.decision === 'pass' && releaseGate.blockers.length === 0;
+
+  return {
+    artifact_type: 'deployment-report',
+    environment: 'local',
+    revision: `local:${runId}`,
+    migrations_applied: migrationCommands,
+    config_changes: [
+      'Production deployment not executed; local report synthesized from passing release-gate evidence.',
+      'GitHub Actions not used as the deployment path.',
+      `Release gate: ${releaseGatePath}`,
+      ...(evidencePath ? [`Evidence: ${evidencePath}`] : []),
+    ],
+    result: releaseGatePassed && !hasRequiredIssue ? 'success' : 'failure',
+    verification: verification.length
+      ? verification
+      : [
+          {
+            check: 'release gate',
+            expected: 'Passing pre-deployment release gate with zero blockers.',
+            actual: releaseGate.summary,
+            passed: releaseGatePassed,
+          },
+        ],
+    issues,
+    next_action: 'proceed',
+    rollback: {
+      prior_revision: 'none (local validation only)',
+      steps: 'No production rollback is required because no Wrangler production deploy command ran.',
+      data_caveats: 'Local Wrangler/D1/R2 state is validation-only and may live under .delivery/tmp.',
+    },
+  };
+}
+
 const requiredAgent = (mastra: any, id: string) => {
   const agent = mastra?.getAgentById(id);
   if (!agent) throw new Error(`${id} agent is not registered`);
@@ -6378,10 +6495,10 @@ const createDeploymentReportStep = createStep({
     if (inputData.status !== 'release_ready') return inputData;
     if (!inputData.releaseGate) throw new Error('release gate stage did not provide a gate for deployment');
 
-    const deployer = requiredAgent(mastra, 'deployer');
     const artifacts = [...inputData.artifacts];
     const stage = 'deploy';
     const releaseGatePath = latestArtifactPath(artifacts, 'release-gate', '.delivery/artifacts/release-gate.json');
+    const evidencePath = latestReleaseGateEvidencePath(artifacts);
 
     if (inputData.deployMode === 'real' && !resumeData) {
       await appendDeliveryEventState({
@@ -6460,6 +6577,74 @@ const createDeploymentReportStep = createStep({
       },
     });
 
+    if (inputData.deployMode === 'mock') {
+      const evidence = readReleaseGateEvidenceArtifact(inputData.repoPath, artifacts);
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'deploy',
+          stage,
+          target: 'local',
+          revision: `local:${inputData.runId}`,
+          command: 'local release gate accepted; no production Wrangler deploy executed',
+          ok: true,
+        },
+      });
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'live_verify',
+          stage,
+          target: 'local',
+          revision: `local:${inputData.runId}`,
+          artifact_type: 'test-evidence',
+          path: evidencePath,
+          ok: inputData.releaseGate.decision === 'pass' && inputData.releaseGate.blockers.length === 0,
+          output_summary: evidencePath
+            ? `Local verification reused passing release-gate evidence from ${evidencePath}.`
+            : 'Local verification reused the passing release gate; no separate evidence artifact was found.',
+        },
+      });
+
+      const report = localDeploymentReportFromReleaseGateEvidence({
+        runId: inputData.runId,
+        releaseGate: inputData.releaseGate,
+        evidence,
+        releaseGatePath,
+        evidencePath,
+      });
+      const reportPath = '.delivery/artifacts/deployment-report.json';
+      writeDeliveryArtifact({
+        repoPath: inputData.repoPath,
+        artifactPath: reportPath,
+        artifact: report,
+      });
+      await recordDeliveryArtifactState({
+        repoPath: inputData.repoPath,
+        type: 'deployment-report',
+        path: reportPath,
+        mastra,
+      });
+      artifacts.push(reportPath);
+
+      await endDeliveryStageState({
+        repoPath: inputData.repoPath,
+        stage,
+        reason: 'complete_stage',
+        mastra,
+      });
+
+      return {
+        ...inputData,
+        artifacts,
+        deploymentReport: report,
+        deploymentReportPath: reportPath,
+      };
+    }
+
+    const deployer = requiredAgent(mastra, 'deployer');
     const deployResponse = await runWithDeliveryStageTimeout({
       repoPath: inputData.repoPath,
       mastra,

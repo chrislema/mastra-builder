@@ -22,6 +22,7 @@ import {
   judgeUnavailableRemediation,
   latestSuccessfulWorkspaceWriteEventTimestamp,
   lifecycleStatusSchemaGaps,
+  localDeploymentReportFromReleaseGateEvidence,
   normalizeTaskPlanLargeStorageTasks,
   missingOwnedSurfacePaths,
   normalizeTaskPlanProfileContractDependencies,
@@ -765,6 +766,88 @@ test('invalid tester structured output becomes a fail-closed release gate', () =
   assert.equal(gate.tiers.some((tier) => tier.status === 'failed'), true);
   assert.equal(gate.critical_areas.every((area) => area.status === 'missing'), true);
   assert.match(gate.blockers.join('\n'), /invalid structured output/);
+});
+
+test('local deployment report reuses release-gate evidence without production deploy', () => {
+  const report = localDeploymentReportFromReleaseGateEvidence({
+    runId: 'run-local-1',
+    releaseGate: {
+      artifact_type: 'release-gate',
+      decision: 'pass',
+      event_type: 'pre_deployment',
+      tiers: [
+        { tier: 'smoke', status: 'passed', run_ref: 'npm run typecheck' },
+        { tier: 'api', status: 'passed', run_ref: 'wrangler dev probes' },
+        { tier: 'e2e', status: 'not_required', reason: 'No browser harness.' },
+        { tier: 'full_matrix', status: 'not_required', reason: 'No production deploy requested.' },
+      ],
+      critical_areas: [
+        { area: 'auth', status: 'not_applicable', reason: 'No auth surface.' },
+        { area: 'billing', status: 'not_applicable', reason: 'No billing surface.' },
+        { area: 'state_integrity', status: 'verified', evidence: 'D1 migration applied locally.' },
+        { area: 'data_safety', status: 'verified', evidence: 'Local probes passed.' },
+        { area: 'deployment_correctness', status: 'verified', evidence: 'wrangler dev probes passed.' },
+        { area: 'error_responses', status: 'verified', evidence: 'Invalid JSON probe returned 400.' },
+      ],
+      blockers: [],
+      cosmetic_issues: [],
+      summary: 'Local release gate passed.',
+    },
+    releaseGatePath: '.delivery/artifacts/release-gate.json',
+    evidencePath: '.delivery/artifacts/test-evidence.a1.json',
+    evidence: {
+      artifact_type: 'test-evidence',
+      stage: 'test:a1',
+      notes: [],
+      commands: [
+        {
+          tier: 'smoke',
+          command: 'npm run typecheck',
+          ok: true,
+          required: true,
+          reason: 'Project verification script "typecheck" was available.',
+          output_summary: 'typecheck passed',
+        },
+        {
+          tier: 'api',
+          command: 'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/state',
+          ok: true,
+          required: false,
+          reason: 'Local D1 migration validation was available.',
+          output_summary: 'migrations applied',
+        },
+        {
+          tier: 'api',
+          command: 'npm run dev -- --ip 127.0.0.1 --port 8787 --persist-to /tmp/state',
+          ok: true,
+          required: true,
+          reason: 'A Wrangler Worker config was present, so local runtime verification is required before deployment.',
+          output_summary: 'wrangler dev served all runtime probes.',
+          probes: [
+            {
+              method: 'GET',
+              path: '/health',
+              url: 'http://127.0.0.1:8787/health',
+              expected: 'GET /health returns HTTP 200 JSON with status "ok".',
+              ok: true,
+              status: 200,
+              response_summary: 'HTTP 200; body {"status":"ok"}',
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  assert.equal(report.environment, 'local');
+  assert.equal(report.result, 'success');
+  assert.equal(report.next_action, 'proceed');
+  assert.deepEqual(report.migrations_applied, ['npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/state']);
+  assert.equal(report.config_changes.some((change) => /GitHub Actions not used/.test(change)), true);
+  assert.equal(report.config_changes.some((change) => /Production deployment not executed/.test(change)), true);
+  assert.equal(report.verification.some((row) => row.check === 'npm run typecheck' && row.passed), true);
+  assert.equal(report.verification.some((row) => row.check === 'GET /health' && row.passed), true);
+  assert.match(report.rollback.steps, /No production rollback/);
 });
 
 test('release gate evidence planner uses bounded local commands', () => {
