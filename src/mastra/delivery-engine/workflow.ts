@@ -1394,7 +1394,13 @@ export const hasExecutableRootTask = (taskPlan: TaskPlan) =>
 export function isTrueBlockingAmbiguity(question: string) {
   if (looksLikeSettledDeliveryPolicy(question)) return false;
   if (looksLikeSafeAssumptionOrRisk(question)) return false;
-  return /\b(blocks?|blocked|cannot|prevents?|required before|must be resolved before|implementation impossible|missing required)\b/i.test(
+  const namesBlockingImpact =
+    /\b(blocks?|blocked|cannot|prevents?|required before|must be resolved before|implementation impossible|missing required)\b/i.test(
+      question,
+    );
+  if (!namesBlockingImpact) return false;
+
+  return /\b(?:vision|spec|source docs?|requirements?|explicitly|TBD|not specified|missing required|omits required|unprovided|unavailable)\b/i.test(
     question,
   );
 }

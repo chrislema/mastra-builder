@@ -125,13 +125,20 @@ test('planner questions are deferred when a task plan has an executable root tas
   );
 });
 
-test('planner questions suspend when no executable root task exists', () => {
+test('planner questions suspend only for source-document blockers when no executable root task exists', () => {
   assert.equal(
     shouldSuspendForPlannerQuestions(
       readout(['Implementation impossible: the spec explicitly marks the required upstream API contract TBD.']),
       taskPlan([]),
     ),
     true,
+  );
+  assert.equal(
+    shouldSuspendForPlannerQuestions(
+      readout(['Implementation impossible until the planner decides the first task shape.']),
+      taskPlan([]),
+    ),
+    false,
   );
 });
 

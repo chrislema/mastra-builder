@@ -184,8 +184,10 @@ The current scorer set covers:
 
 The workflow uses Mastra suspend/resume for human input:
 
-- `create-planner-artifacts` suspends with resume label `answer-planner-questions` when
-  planner readout finds blocking ambiguities. Resume with:
+- `create-planner-artifacts` suspends with resume label `answer-planner-questions` only when
+  the vision/spec/source docs contain a true blocker and no executable root task can be planned.
+  Malformed or overcautious plans continue into deterministic gate/repair instead of pausing.
+  Resume with:
 
 ```json
 {
