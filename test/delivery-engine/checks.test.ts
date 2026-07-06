@@ -183,6 +183,16 @@ test('ranCodeBeforeComplete evaluates the latest attempt for repeated stage name
   assert.equal(ranCodeBeforeComplete(events, { stage: 'build:T1' }).passed, true);
 });
 
+test('ranCodeBeforeComplete ignores run_code_start as completion evidence', () => {
+  const events = [
+    { type: 'stage_start', stage: 'build:T1', role: 'engineer' },
+    { type: 'run_code_start', stage: 'build:T1', command: 'npm run typecheck' },
+    { type: 'stage_end', stage: 'build:T1', reason: 'complete_stage' },
+  ];
+
+  assert.equal(ranCodeBeforeComplete(events, { stage: 'build:T1' }).passed, false);
+});
+
 test('harnessRunBeforeFindings fails when release evidence is written before running code', () => {
   assert.equal(
     harnessRunBeforeFindings(

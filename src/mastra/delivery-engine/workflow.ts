@@ -2069,6 +2069,7 @@ async function ensureNodeDependencies({
   if (existsSync(join(resolve(repoPath), 'node_modules'))) return;
 
   const command = 'npm install';
+  await recordRunCodeStart({ repoPath, mastra, stage, command, timeoutMs: 180_000 });
   try {
     const result = await execFileAsync('npm', ['install'], {
       cwd: resolve(repoPath),
@@ -2102,6 +2103,32 @@ async function ensureNodeDependencies({
   }
 }
 
+async function recordRunCodeStart({
+  repoPath,
+  mastra,
+  stage,
+  command,
+  timeoutMs,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+  command: string;
+  timeoutMs?: number;
+}) {
+  await appendDeliveryEventState({
+    repoPath,
+    mastra,
+    event: {
+      type: 'run_code_start',
+      stage,
+      command,
+      timeout_ms: timeoutMs,
+      output_summary: `Started ${command}.`,
+    },
+  });
+}
+
 async function runBuildVerification({
   repoPath,
   mastra,
@@ -2128,6 +2155,7 @@ async function runBuildVerification({
   await ensureNodeDependencies({ repoPath, mastra, stage });
 
   const command = `npm run ${script}`;
+  await recordRunCodeStart({ repoPath, mastra, stage, command, timeoutMs: 120_000 });
   try {
     const result = await execFileAsync('npm', ['run', script], {
       cwd: resolve(repoPath),
@@ -2659,6 +2687,13 @@ async function runReleaseGateEvidenceCommand({
   stage: string;
   command: ReleaseGateEvidenceCommand;
 }): Promise<ReleaseGateEvidenceResult> {
+  await recordRunCodeStart({
+    repoPath,
+    mastra,
+    stage,
+    command: command.command,
+    timeoutMs: command.tier === 'smoke' ? 120_000 : 180_000,
+  });
   try {
     const result = await execFileAsync(command.executable, command.args, {
       cwd: resolve(repoPath),
@@ -2949,6 +2984,7 @@ async function runReleaseGateRuntimeProbe({
   let processError: Error | undefined;
   let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   let probes: ReleaseGateHttpProbeResult[] = [];
+  await recordRunCodeStart({ repoPath, mastra, stage, command: command.command, timeoutMs: 75_000 });
   const child = spawn(command.executable, command.args, {
     cwd: resolve(repoPath),
     detached: process.platform !== 'win32',
