@@ -58,7 +58,15 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
             runId: 'workflow-run-1',
             start: async (options: Record<string, any>) => {
               captured.startOptions = options;
-              return { status: 'success' };
+              return {
+                status: 'success',
+                state: {
+                  status: 'complete',
+                  summary: 'Local validation complete.',
+                  deployMode: 'local',
+                  nextSteps: ['proceed'],
+                },
+              };
             },
           };
         },
@@ -98,8 +106,21 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
   assert.equal(response.resourceId, deliveryWorkflowResourceId(repoPath));
   assert.equal(response.reportPath, join(repoPath, '.delivery', 'runs', 'workflow-run-1.json'));
   assert.equal(existsSync(response.reportPath), true);
-  assert.equal(readJson(join(repoPath, '.delivery', 'runs', 'latest.json')).status, 'success');
-  assert.deepEqual(response.result, { status: 'success' });
+  const latest = readJson(join(repoPath, '.delivery', 'runs', 'latest.json'));
+  assert.equal(latest.status, 'success');
+  assert.equal(latest.deliveryStatus, 'complete');
+  assert.equal(latest.summary, 'Local validation complete.');
+  assert.equal(latest.deployMode, 'local');
+  assert.deepEqual(latest.nextSteps, ['proceed']);
+  assert.deepEqual(response.result, {
+    status: 'success',
+    state: {
+      status: 'complete',
+      summary: 'Local validation complete.',
+      deployMode: 'local',
+      nextSteps: ['proceed'],
+    },
+  });
 });
 
 test('delivery workflow runner honors explicit resource and run ids', async () => {

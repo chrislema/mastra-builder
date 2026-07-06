@@ -95,6 +95,8 @@ function writeDeliveryWorkflowRunReport({
   result?: unknown;
   error?: unknown;
 }) {
+  const resultRecord = result as { status?: unknown; state?: Record<string, unknown> } | undefined;
+  const deliveryState = resultRecord?.state;
   const runsDir = join(resolve(repoPath), '.delivery', 'runs');
   const reportPath = join(runsDir, `${runId}.json`);
   const report = {
@@ -103,7 +105,11 @@ function writeDeliveryWorkflowRunReport({
     runId,
     resourceId,
     repoPath: resolve(repoPath),
-    status: error ? 'threw' : (result as { status?: unknown } | undefined)?.status ?? 'unknown',
+    status: error ? 'threw' : resultRecord?.status ?? 'unknown',
+    ...(deliveryState?.status === undefined ? {} : { deliveryStatus: deliveryState.status }),
+    ...(deliveryState?.summary === undefined ? {} : { summary: deliveryState.summary }),
+    ...(deliveryState?.deployMode === undefined ? {} : { deployMode: deliveryState.deployMode }),
+    ...(deliveryState?.nextSteps === undefined ? {} : { nextSteps: deliveryState.nextSteps }),
     ...(result === undefined ? {} : { result }),
     ...(error === undefined ? {} : { error: serializeError(error) }),
   };
