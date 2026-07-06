@@ -12,9 +12,11 @@ import {
   implementationRetryMode,
   missingOwnedSurfacePaths,
   priorStoppedBuildTaskIds,
+  repairStaleDownstreamVerificationSurfaces,
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
+  staleDownstreamVerificationSurfacePaths,
   taskBoundarySurfaces,
   unreplacedPreflightStubPaths,
   verificationWithAcceptanceGaps,
@@ -129,6 +131,47 @@ test('preflight stub detector fails until generated stubs are replaced', async (
   writeFileSync(join(repoPath, 'src/routes/runs.ts'), 'export function routes() { return true; }\n');
 
   assert.deepEqual(unreplacedPreflightStubPaths(repoPath, task), []);
+});
+
+test('stale downstream verification repair resets only future failed task surfaces', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-stale-downstream-repair-'));
+  mkdirSync(join(repoPath, 'src/workflows/steps'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/workflows/steps/score-candidates.ts'), 'export const score = 1;\n');
+  writeFileSync(
+    join(repoPath, 'src/workflows/steps/generate-transcript.ts'),
+    'export const transcript = buildUsageStats();\n',
+  );
+  const plan = taskPlan([
+    { depends_on: [], owned_surfaces: ['src/workflows/steps/score-candidates.ts'] },
+    { depends_on: ['T1'], owned_surfaces: ['src/workflows/steps/generate-transcript.ts'] },
+  ]);
+  const failure = [
+    "src/workflows/steps/score-candidates.ts(1,1): error TS2322: Type 'number' is not assignable.",
+    "src/workflows/steps/generate-transcript.ts(1,27): error TS2304: Cannot find name 'buildUsageStats'.",
+  ].join('\n');
+
+  assert.deepEqual(
+    staleDownstreamVerificationSurfacePaths({
+      repoPath,
+      taskPlan: plan,
+      currentTaskIndex: 0,
+      failure,
+    }),
+    ['src/workflows/steps/generate-transcript.ts'],
+  );
+
+  assert.equal(
+    await repairStaleDownstreamVerificationSurfaces({
+      repoPath,
+      stage: 'build:T1',
+      taskPlan: plan,
+      currentTaskIndex: 0,
+      failure,
+    }),
+    true,
+  );
+  assert.equal(readFileSync(join(repoPath, 'src/workflows/steps/score-candidates.ts'), 'utf8'), 'export const score = 1;\n');
+  assert.match(readFileSync(join(repoPath, 'src/workflows/steps/generate-transcript.ts'), 'utf8'), /Delivery preflight stub/);
 });
 
 test('task boundaries include existing sibling TypeScript barrel files', () => {

@@ -748,6 +748,88 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
   return [...surfaces];
 }
 
+function verificationFailurePaths(failure: string) {
+  const paths = new Set<string>();
+  const pathPattern =
+    /(?:^|\n)([^\s:()]+(?:\/[^\s:()]+)*\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|json|css|html?))(?::\d+(?::\d+)?|\(\d+,\d+\))/g;
+  for (const match of failure.matchAll(pathPattern)) {
+    const path = normalizeDeliveryPathReference(match[1]);
+    if (!path.startsWith('.delivery/') && !path.startsWith('node_modules/')) paths.add(path);
+  }
+  return [...paths];
+}
+
+export function staleDownstreamVerificationSurfacePaths({
+  repoPath,
+  taskPlan,
+  currentTaskIndex,
+  failure,
+}: {
+  repoPath: string;
+  taskPlan: TaskPlan;
+  currentTaskIndex: number;
+  failure: string;
+}) {
+  const orderedTasks = topoOrderTasks(taskPlan.tasks);
+  const protectedSurfaces = orderedTasks
+    .slice(0, currentTaskIndex + 1)
+    .flatMap((task) => taskBoundarySurfaces(repoPath, task));
+  const downstreamTasks = orderedTasks.slice(currentTaskIndex + 1);
+
+  return verificationFailurePaths(failure).filter((path) => {
+    if (!existsSync(join(resolve(repoPath), path))) return false;
+    if (matchesAny(path, protectedSurfaces)) return false;
+
+    return downstreamTasks.some((task) => {
+      if (reusableImplementationArtifactForTask(repoPath, task)) return false;
+      return matchesAny(path, taskBoundarySurfaces(repoPath, task));
+    });
+  });
+}
+
+export async function repairStaleDownstreamVerificationSurfaces({
+  repoPath,
+  mastra,
+  stage,
+  taskPlan,
+  currentTaskIndex,
+  failure,
+}: {
+  repoPath: string;
+  mastra?: any;
+  stage: string;
+  taskPlan: TaskPlan;
+  currentTaskIndex: number;
+  failure: string;
+}) {
+  const paths = staleDownstreamVerificationSurfacePaths({
+    repoPath,
+    taskPlan,
+    currentTaskIndex,
+    failure,
+  });
+  if (!paths.length) return false;
+
+  for (const path of paths) {
+    writeFileSync(join(resolve(repoPath), path), compileSafeStubForSurface(path));
+  }
+
+  await appendDeliveryEventState({
+    repoPath,
+    mastra,
+    event: {
+      type: 'tool_use',
+      tool: 'auto_repair',
+      ok: true,
+      stage,
+      paths,
+      output_summary:
+        'Reset stale downstream task surfaces to compile-safe preflight stubs after repo-wide verification failed.',
+    },
+  }).catch(() => undefined);
+  return true;
+}
+
 function policyDeniedWriteEvents(events: DeliveryEvent[], stage: string) {
   return stageSlice(events, stage).filter(
     (event) =>
@@ -1113,11 +1195,15 @@ async function runBuildVerification({
   repoPath,
   mastra,
   stage,
+  taskPlan,
+  taskIndex,
   allowRepair = true,
 }: {
   repoPath: string;
   mastra: any;
   stage: string;
+  taskPlan?: TaskPlan;
+  taskIndex?: number;
   allowRepair?: boolean;
 }) {
   const script = buildVerificationScript(repoPath);
@@ -1167,8 +1253,8 @@ async function runBuildVerification({
       },
     });
 
-    if (allowRepair && (await applyBuildVerificationRepair({ repoPath, mastra, stage, failure }))) {
-      return runBuildVerification({ repoPath, mastra, stage, allowRepair: false });
+    if (allowRepair && (await applyBuildVerificationRepair({ repoPath, mastra, stage, taskPlan, taskIndex, failure }))) {
+      return runBuildVerification({ repoPath, mastra, stage, taskPlan, taskIndex, allowRepair: false });
     }
 
     return {
@@ -1222,13 +1308,32 @@ async function applyBuildVerificationRepair({
   repoPath,
   mastra,
   stage,
+  taskPlan,
+  taskIndex,
   failure,
 }: {
   repoPath: string;
   mastra: any;
   stage: string;
+  taskPlan?: TaskPlan;
+  taskIndex?: number;
   failure: string;
 }) {
+  if (
+    taskPlan &&
+    typeof taskIndex === 'number' &&
+    (await repairStaleDownstreamVerificationSurfaces({
+      repoPath,
+      mastra,
+      stage,
+      taskPlan,
+      currentTaskIndex: taskIndex,
+      failure,
+    }))
+  ) {
+    return true;
+  }
+
   if (!/Cannot find name 'WorkflowEvent'/.test(failure)) return false;
 
   const path = 'src/workflows/weekly.ts';
@@ -3048,7 +3153,13 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
     });
     artifacts.push(buildTracePath);
 
-    const verification = await runBuildVerification({ repoPath: inputData.repoPath, mastra, stage });
+    const verification = await runBuildVerification({
+      repoPath: inputData.repoPath,
+      mastra,
+      stage,
+      taskPlan,
+      taskIndex: inputData.taskIndex,
+    });
     const buildEvents = await readDeliveryEventsState({ repoPath: inputData.repoPath, mastra });
     const note = synthesizeImplementationNote({
       repoPath: inputData.repoPath,
