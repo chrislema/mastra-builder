@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'scaffold-dependency-normalized-v7';
+const plannerPolicyVersion = 'role-boundary-normalized-v8';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -249,6 +249,7 @@ function readCachedPlannerOutput({
   if (cache.success && cache.data.policyVersion !== plannerPolicyVersion) return undefined;
   if (!openDecisionHygiene(taskPlan.data).passed) return undefined;
   if (!ownedSurfaceHygiene(taskPlan.data).passed) return undefined;
+  if (!taskOwnedSurfaceRoleHygiene(taskPlan.data).passed) return undefined;
   if (!projectScaffoldHygiene(repoPath, taskPlan.data).passed) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
@@ -657,6 +658,74 @@ export function normalizeTaskPlanScaffoldDependencies(repoPath: string, taskPlan
   return changed ? { ...taskPlan, tasks } : taskPlan;
 }
 
+function taskOwnedBoundaryPaths(task: Task) {
+  return normalizedOwnedSurfaces(task).map(concreteOwnedSurfacePath).filter((path): path is string => Boolean(path));
+}
+
+export function taskOwnedSurfaceRoleHygiene(taskPlan: TaskPlan) {
+  for (const task of taskPlan.tasks) {
+    const paths = taskOwnedBoundaryPaths(task);
+    if (!paths.length) continue;
+
+    const ownership = fileOwnership({ role: task.owner, paths });
+    if (!ownership.passed) {
+      return {
+        passed: false,
+        reason: `${task.id} owner ${task.owner} cannot own one or more surfaces: ${ownership.reason}`,
+      };
+    }
+  }
+
+  return { passed: true, reason: 'ok' };
+}
+
+function designerCanOwnSurface(path: string) {
+  return fileOwnership({ role: 'designer', paths: [path] }).passed;
+}
+
+function engineerCanOwnSurface(path: string) {
+  return fileOwnership({ role: 'engineer', paths: [path] }).passed;
+}
+
+export function normalizeTaskPlanRoleBoundaries(taskPlan: TaskPlan): TaskPlan {
+  const designerOwnedPaths = new Set(
+    taskPlan.tasks
+      .filter((task) => task.owner === 'designer')
+      .flatMap(taskOwnedBoundaryPaths),
+  );
+
+  let changed = false;
+  const tasks = taskPlan.tasks.map((task) => {
+    if (task.owner !== 'engineer') return task;
+
+    const misplacedPaths = new Set(
+      taskOwnedBoundaryPaths(task).filter(
+        (path) => !engineerCanOwnSurface(path) && designerCanOwnSurface(path) && designerOwnedPaths.has(path),
+      ),
+    );
+    if (!misplacedPaths.size) return task;
+
+    const owned_surfaces = task.owned_surfaces.filter((surface) => {
+      const path = concreteOwnedSurfacePath(surface);
+      return !path || !misplacedPaths.has(path);
+    });
+    if (!owned_surfaces.length) return task;
+
+    const acceptance_criteria = task.acceptance_criteria.filter(
+      (criterion) => !Array.from(misplacedPaths).some((path) => criterion.includes(path)),
+    );
+
+    changed = true;
+    return {
+      ...task,
+      owned_surfaces,
+      acceptance_criteria: acceptance_criteria.length ? acceptance_criteria : task.acceptance_criteria,
+    };
+  });
+
+  return changed ? { ...taskPlan, tasks } : taskPlan;
+}
+
 export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
   if (existsSync(join(repoPath, 'package.json'))) return { passed: true, reason: 'ok' };
 
@@ -702,6 +771,7 @@ const taskPlanDeterministicResults = ({
   { id: 'no_circular_dependencies', check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(taskPlan) },
   { id: 'open_decisions_hygiene', check: 'open_decision_hygiene', ...openDecisionHygiene(taskPlan) },
   { id: 'owned_surfaces_concrete', check: 'owned_surface_hygiene', ...ownedSurfaceHygiene(taskPlan) },
+  { id: 'owned_surfaces_match_roles', check: 'task_owned_surfaces_in_role_boundary', ...taskOwnedSurfaceRoleHygiene(taskPlan) },
   { id: 'root_project_scaffolded', check: 'project_scaffold_hygiene', ...projectScaffoldHygiene(repoPath, taskPlan) },
 ];
 
@@ -3576,6 +3646,10 @@ Owned-surface hygiene:
 - Do not use wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/**. Enumerate each expected file path.
 - Do not use conceptual labels such as "Worker Env types", "wrangler configuration", "Workflow binding registration", "API routes", or "UI assets".
 - If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
+Role-boundary hygiene:
+- Engineer tasks own Worker config/source/migration files such as package.json, tsconfig.json, wrangler.toml, src/**, and migrations/**.
+- Designer tasks own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
+- Do not put public/** files in engineer-owned tasks; create or reuse a designer task for vanilla HTML/CSS/JS UI work.
 Root scaffold hygiene:
 - Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
 - If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, tsconfig.json, and at least one TypeScript source input such as src/index.ts or src/env.ts.
@@ -3605,7 +3679,9 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
           }),
           'planner',
         );
-    output.taskPlan = normalizeTaskPlanScaffoldDependencies(inputData.repoPath, output.taskPlan);
+    output.taskPlan = normalizeTaskPlanRoleBoundaries(
+      normalizeTaskPlanScaffoldDependencies(inputData.repoPath, output.taskPlan),
+    );
 
     if (cachedOutput) {
       await appendDeliveryEventState({

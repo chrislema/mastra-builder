@@ -15,7 +15,10 @@
         "required": ["id", "owner", "deliverable", "depends_on", "acceptance_criteria", "owned_surfaces"],
         "properties": {
           "id": { "type": "string", "pattern": "^T[0-9]+$" },
-          "owner": { "enum": ["engineer", "designer"] },
+          "owner": {
+            "enum": ["engineer", "designer"],
+            "description": "engineer owns Worker config/source/migration files like package.json, tsconfig.json, wrangler.toml, src/**, and migrations/**. designer owns static UI files like public/index.html, public/styles.css, public/app.js, and assets/**."
+          },
           "deliverable": { "type": "string", "minLength": 1 },
           "depends_on": { "type": "array", "items": { "type": "string", "pattern": "^T[0-9]+$" } },
           "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },

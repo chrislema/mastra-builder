@@ -19,6 +19,7 @@ import {
   lifecycleStatusSchemaGaps,
   missingOwnedSurfacePaths,
   normalizeTaskPlanScaffoldDependencies,
+  normalizeTaskPlanRoleBoundaries,
   openDecisionHygiene,
   ownedSurfaceHygiene,
   outOfPlanVerificationFailurePaths,
@@ -35,6 +36,7 @@ import {
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
   staleDownstreamVerificationSurfacePaths,
+  taskOwnedSurfaceRoleHygiene,
   taskBoundarySurfaces,
   unreplacedPreflightStubPaths,
   verificationWithAcceptanceGaps,
@@ -213,6 +215,44 @@ test('bare Worker project plans normalize root static assets behind the package 
 
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
   assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
+});
+
+test('task plan role normalization strips designer-owned public surfaces from engineer scaffolds', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'tsconfig.json', 'wrangler.toml', 'src/index.ts', 'public/index.html'],
+      acceptance_criteria: [
+        'package.json exists with useful scripts.',
+        'public/index.html can be served as the app shell.',
+      ],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['public/index.html', 'public/styles.css', 'public/app.js'],
+    },
+  ]);
+  plan.tasks[1].owner = 'designer';
+
+  const normalized = normalizeTaskPlanRoleBoundaries(plan);
+
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'tsconfig.json', 'wrangler.toml', 'src/index.ts']);
+  assert.deepEqual(normalized.tasks[0].acceptance_criteria, ['package.json exists with useful scripts.']);
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('task plan role hygiene rejects engineer-owned public surfaces without a designer owner', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts', 'public/index.html'],
+    },
+  ]);
+
+  const result = taskOwnedSurfaceRoleHygiene(normalizeTaskPlanRoleBoundaries(plan));
+
+  assert.equal(result.passed, false);
+  assert.match(result.reason, /public\/index\.html|forbidden glob/);
 });
 
 test('existing package scaffold satisfies Worker runtime plan hygiene', () => {
