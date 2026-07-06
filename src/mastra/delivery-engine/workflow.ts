@@ -2037,6 +2037,12 @@ export function workerConfigTaskPacketPolicy() {
       enabled: true,
       head_sampling_rate: 1,
     },
+    static_assets: {
+      when_public_directory_exists: {
+        directory: './public',
+        binding: 'ASSETS',
+      },
+    },
   };
 }
 
@@ -2166,7 +2172,18 @@ function repoLooksLikeWorkerProject(repoPath: string) {
   );
 }
 
-type WorkerBindingKind = 'ai' | 'd1' | 'durable_object' | 'hyperdrive' | 'kv' | 'queue' | 'r2' | 'service' | 'vectorize' | 'workflow';
+type WorkerBindingKind =
+  | 'ai'
+  | 'assets'
+  | 'd1'
+  | 'durable_object'
+  | 'hyperdrive'
+  | 'kv'
+  | 'queue'
+  | 'r2'
+  | 'service'
+  | 'vectorize'
+  | 'workflow';
 
 interface WorkerBindingDeclaration {
   name: string;
@@ -2174,8 +2191,9 @@ interface WorkerBindingDeclaration {
   source: string;
 }
 
-function workerEnvBindingKind(typeText: string): WorkerBindingKind | undefined {
+function workerEnvBindingKind(name: string, typeText: string): WorkerBindingKind | undefined {
   if (/\bAi\b/.test(typeText)) return 'ai';
+  if (name === 'ASSETS' && /\bFetcher\b/.test(typeText)) return 'assets';
   if (/\bD1Database\b/.test(typeText)) return 'd1';
   if (/\bDurableObjectNamespace\b/.test(typeText)) return 'durable_object';
   if (/\bFetcher\b|\bService\b/.test(typeText)) return 'service';
@@ -2203,7 +2221,7 @@ function workerEnvBindingDeclarations(repoPath: string): WorkerBindingDeclaratio
   return Array.from(body.matchAll(/^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)\??\s*:\s*([^;]+);/gm)).flatMap(
     (match) => {
       const name = match[1];
-      const kind = workerEnvBindingKind(match[2]);
+      const kind = workerEnvBindingKind(name, match[2]);
       return kind ? [{ name, kind, source: relativeWorkerConfigPath(repoPath, envPath) }] : [];
     },
   );
@@ -2231,6 +2249,11 @@ function workerJsonConfigBindingDeclarations(config: Record<string, unknown>): W
   const ai = recordValue(config.ai);
   if (typeof ai?.binding === 'string' && ai.binding.trim()) {
     declarations.push({ name: ai.binding, kind: 'ai', source: 'wrangler config' });
+  }
+
+  const assets = recordValue(config.assets);
+  if (typeof assets?.binding === 'string' && assets.binding.trim()) {
+    declarations.push({ name: assets.binding, kind: 'assets', source: 'wrangler config' });
   }
 
   pushJsonBinding(declarations, config.d1_databases, 'd1');
@@ -2290,6 +2313,10 @@ function workerTomlConfigBindingDeclarations(text: string): WorkerBindingDeclara
   const aiBinding = aiBody ? firstTomlStringValue(aiBody, 'binding') : undefined;
   if (aiBinding) declarations.push({ name: aiBinding, kind: 'ai', source: 'wrangler config' });
 
+  const assetsBody = tomlSectionBody(text, 'assets');
+  const assetsBinding = assetsBody ? firstTomlStringValue(assetsBody, 'binding') : undefined;
+  if (assetsBinding) declarations.push({ name: assetsBinding, kind: 'assets', source: 'wrangler config' });
+
   pushTomlBindings(declarations, text, 'd1_databases', 'd1');
   pushTomlBindings(declarations, text, 'durable_objects.bindings', 'durable_object', 'name');
   pushTomlBindings(declarations, text, 'hyperdrive', 'hyperdrive');
@@ -2340,6 +2367,58 @@ export function workerEnvBindingAlignmentGaps(repoPath: string) {
   return gaps;
 }
 
+function directoryHasNonIgnoredFiles(directory: string): boolean {
+  if (!existsSync(directory)) return false;
+
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+
+  for (const entry of entries) {
+    if (entry.name === '.DS_Store') continue;
+    const entryPath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (directoryHasNonIgnoredFiles(entryPath)) return true;
+      continue;
+    }
+    if (entry.isFile()) return true;
+  }
+
+  return false;
+}
+
+function repoHasPublicStaticAssets(repoPath: string) {
+  return directoryHasNonIgnoredFiles(join(resolve(repoPath), 'public'));
+}
+
+function assetDirectoryIsPublic(value: unknown) {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().replaceAll('\\', '/').replace(/\/+$/, '').replace(/^\.\//, '');
+  return normalized === 'public';
+}
+
+function workerStaticAssetsGaps(repoPath: string, assetsConfig: Record<string, unknown> | undefined) {
+  if (!repoHasPublicStaticAssets(repoPath)) return [];
+  if (!assetsConfig) {
+    return [
+      'assets is missing; public/ UI files must be deployed through Workers Static Assets with assets.directory="./public" and binding="ASSETS".',
+    ];
+  }
+
+  const gaps: string[] = [];
+  if (!assetDirectoryIsPublic(assetsConfig.directory)) {
+    gaps.push('assets.directory must be "./public" so Wrangler uploads the vanilla public/ UI with the Worker.');
+  }
+  if (assetsConfig.binding !== 'ASSETS') {
+    gaps.push('assets.binding must be "ASSETS" so Worker code can fall back to env.ASSETS.fetch(request) when needed.');
+  }
+
+  return gaps;
+}
+
 export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
   if (task && !taskBoundaryCanConfigureWorkerConfig(repoPath, task)) return [];
 
@@ -2375,6 +2454,18 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
       );
     }
 
+    const assets = tomlSectionBody(text, 'assets');
+    gaps.push(
+      ...workerStaticAssetsGaps(
+        repoPath,
+        assets
+          ? {
+              directory: firstTomlStringValue(assets, 'directory'),
+              binding: firstTomlStringValue(assets, 'binding'),
+            }
+          : undefined,
+      ),
+    );
     gaps.push(...workerEnvBindingAlignmentGaps(repoPath));
 
     return gaps.map((gap) => `${configName}: ${gap}`);
@@ -2396,6 +2487,7 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
   }
 
   gaps.push(...observabilityConfigGaps(recordValue(config.observability)));
+  gaps.push(...workerStaticAssetsGaps(repoPath, recordValue(config.assets)));
   gaps.push(...workerEnvBindingAlignmentGaps(repoPath));
 
   return gaps.map((gap) => `${configName}: ${gap}`);
@@ -6429,6 +6521,7 @@ Project policy:
 - Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require TypeScript.
 - Prefer wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - Use wrangler CLI for deploy and local runtime validation; never use GitHub Actions as the deployment path.
+- If vanilla UI files are planned under public/, configure Workers Static Assets in Wrangler with assets.directory "./public" and binding "ASSETS"; do not use Pages or a frontend build to serve them.
 - Git/gh may support source-control steps, but production deployment is a separate Wrangler action after human approval.
 - New Worker config must use compatibility_date "${todayIsoDate()}" unless the source docs explicitly require a different recent date.
 Every task must have checkable acceptance criteria and owned_surfaces.
@@ -6670,6 +6763,7 @@ Project policy:
 - Use wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - Use Wrangler CLI for local validation and deployment; never make GitHub Actions the deployment path.
 - If AI is used in the target Worker, plan an active Workers AI binding and an internal adapter around it.
+- If vanilla UI files are planned under public/, configure Workers Static Assets in Wrangler with assets.directory "./public" and binding "ASSETS"; do not use Pages or a frontend build to serve them.
 - New Worker config must use compatibility_date "${todayIsoDate()}" unless the source docs explicitly require a different recent date.
 
 Task-plan quality requirements:
@@ -7740,7 +7834,7 @@ Execution rules:
 - For TS18046 on unknown values, narrow with typeof/asRecord/Array.isArray before property access or numeric comparison. Number.isInteger(value) alone does not narrow unknown to number.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
-- When worker_config_policy is not null, read src/env.ts if it exists and use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, and Wrangler binding names that exactly match Env binding property names.
+- When worker_config_policy is not null, read src/env.ts if it exists and use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, Workers Static Assets from worker_config_policy.static_assets when public/ UI files exist, and Wrangler binding names that exactly match Env binding property names.
 - For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, scripts.dev as "wrangler dev", and scripts.deploy as "wrangler deploy". Add @cloudflare/workers-types, scripts.typecheck as "tsc --noEmit", and tsconfig.json only when the Worker source is TypeScript.
 - Do not add React, Vite, Next, Vue, Svelte, or frontend build dependencies/scripts. Chris's Worker frontends are vanilla HTML/CSS/JS served as static assets.
 - When TypeScript is used, configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes @cloudflare/workers-types, and strict is true.

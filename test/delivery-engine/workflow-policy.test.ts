@@ -2201,6 +2201,92 @@ test('Worker config hygiene aligns Cloudflare binding names with Env declaration
   assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
 });
 
+test('Worker config hygiene requires Workers Static Assets for public UI files', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-static-assets-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, 'public'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
+  writeFileSync(join(repoPath, 'public/index.html'), '<!doctype html><div id="app"></div>\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc'] }]).tasks;
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.match(workerConfigHygieneGaps(repoPath, task).join('\n'), /assets is missing/);
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        assets: { directory: './dist', binding: 'ASSETS' },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.match(workerConfigHygieneGaps(repoPath, task).join('\n'), /assets\.directory/);
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        assets: { directory: './public' },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.match(workerConfigHygieneGaps(repoPath, task).join('\n'), /assets\.binding/);
+
+  writeFileSync(join(repoPath, 'src/env.ts'), ['export interface Env {', '  ASSETS: Fetcher;', '}'].join('\n'));
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        assets: { directory: './public', binding: 'ASSETS' },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(workerEnvBindingAlignmentGaps(repoPath), []);
+  assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
+});
+
 test('Worker config task packet policy carries the exact current compatibility date', () => {
   const policy = workerConfigTaskPacketPolicy();
 
@@ -2208,6 +2294,12 @@ test('Worker config task packet policy carries the exact current compatibility d
   assert.equal(policy.compatibility_date, currentCompatibilityDate());
   assert.deepEqual(policy.compatibility_flags, ['nodejs_compat']);
   assert.deepEqual(policy.observability, { enabled: true, head_sampling_rate: 1 });
+  assert.deepEqual(policy.static_assets, {
+    when_public_directory_exists: {
+      directory: './public',
+      binding: 'ASSETS',
+    },
+  });
 });
 
 test('Worker package scaffold hygiene requires current Wrangler tooling and config-based scripts', () => {

@@ -124,6 +124,9 @@ existing repo or spec explicitly calls for Pages Functions. Never split one feat
 across both deployment models.
 For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml
 or the source docs explicitly require TOML.
+If the project includes vanilla UI files under public/, configure Workers Static Assets in
+Wrangler with assets.directory = "./public" and binding = "ASSETS" so the UI deploys with
+the Worker instead of requiring Pages or a frontend build.
 If product behavior depends on AI-backed summarization, scoring, generation, or regeneration
 inside a Worker, plan Workers AI as required infrastructure: Wrangler must include an active
 [ai] binding = "AI", the Worker Env should expose AI as a required binding, and AI must not
