@@ -20,7 +20,7 @@
           "depends_on": { "type": "array", "items": { "type": "string", "pattern": "^T[0-9]+$" } },
           "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
           "owned_surfaces": {
-            "description": "Concrete repo paths this task will change, for example package.json, tsconfig.json, wrangler.toml, src/index.ts, public/settings.html, migrations/0001_schema.sql. Wildcards such as src/**/*.ts or src/storage/*.ts are not allowed. Use ['unknown: <reason>'] only when genuinely unknown; conceptual labels are not allowed. In a bare Worker folder, root scaffold ownership must include package.json, tsconfig.json, and at least one src/*.ts input before runtime/source tasks.",
+            "description": "Concrete repo paths this task will change, for example package.json, tsconfig.json, wrangler.toml, src/index.ts, public/settings.html, migrations/0001_schema.sql. Wildcards such as src/**/*.ts or src/storage/*.ts are not allowed. Use ['unknown: <reason>'] only when genuinely unknown; conceptual labels are not allowed. In a bare Worker folder, root scaffold ownership must include package.json, tsconfig.json, and at least one src/*.ts input before runtime/source/static asset/migration tasks.",
             "type": "array",
             "minItems": 1,
             "items": { "type": "string", "minLength": 1 }

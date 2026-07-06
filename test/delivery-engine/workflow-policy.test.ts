@@ -18,6 +18,7 @@ import {
   judgeUnavailableRemediation,
   lifecycleStatusSchemaGaps,
   missingOwnedSurfacePaths,
+  normalizeTaskPlanScaffoldDependencies,
   openDecisionHygiene,
   ownedSurfaceHygiene,
   outOfPlanVerificationFailurePaths,
@@ -189,6 +190,29 @@ test('bare Worker project plans require package scaffold before runtime surfaces
     },
   ]);
   assert.deepEqual(projectScaffoldHygiene(repoPath, goodPlan), { passed: true, reason: 'ok' });
+});
+
+test('bare Worker project plans normalize root static assets behind the package scaffold', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-project-scaffold-normalize-'));
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['wrangler.toml'],
+    },
+    {
+      depends_on: [],
+      owned_surfaces: ['public/index.html', 'public/styles.css'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanScaffoldDependencies(repoPath, plan);
+
+  assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
+  assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
 });
 
 test('existing package scaffold satisfies Worker runtime plan hygiene', () => {

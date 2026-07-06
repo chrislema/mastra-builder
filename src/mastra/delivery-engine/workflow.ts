@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'explicit-owned-surfaces-v6';
+const plannerPolicyVersion = 'scaffold-dependency-normalized-v7';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -631,6 +631,30 @@ function ownsWorkerRuntimeSurface(task: Task) {
       surface.startsWith('public/') ||
       surface.startsWith('migrations/'),
   );
+}
+
+export function normalizeTaskPlanScaffoldDependencies(repoPath: string, taskPlan: TaskPlan): TaskPlan {
+  if (existsSync(join(repoPath, 'package.json'))) return taskPlan;
+  if (!taskPlan.tasks.some(ownsWorkerRuntimeSurface)) return taskPlan;
+
+  const rootTasks = taskPlan.tasks.filter((task) => task.depends_on.length === 0);
+  const scaffoldRootTask = rootTasks.find((task) => ownsPackageScaffold(task) && ownsTypeScriptInputSurface(task));
+  if (!scaffoldRootTask) return taskPlan;
+
+  let changed = false;
+  const tasks = taskPlan.tasks.map((task) => {
+    if (task.id === scaffoldRootTask.id || task.depends_on.length > 0 || !ownsWorkerRuntimeSurface(task) || ownsPackageScaffold(task)) {
+      return task;
+    }
+
+    changed = true;
+    return {
+      ...task,
+      depends_on: [scaffoldRootTask.id],
+    };
+  });
+
+  return changed ? { ...taskPlan, tasks } : taskPlan;
 }
 
 export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
@@ -3555,7 +3579,7 @@ Owned-surface hygiene:
 Root scaffold hygiene:
 - Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
 - If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, tsconfig.json, and at least one TypeScript source input such as src/index.ts or src/env.ts.
-- Worker runtime/config/source tasks must depend on that scaffold task unless they own package.json and tsconfig.json themselves.
+- Worker runtime/config/source/static asset/migration tasks must depend on that scaffold task unless they own package.json and tsconfig.json themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
@@ -3581,6 +3605,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
           }),
           'planner',
         );
+    output.taskPlan = normalizeTaskPlanScaffoldDependencies(inputData.repoPath, output.taskPlan);
 
     if (cachedOutput) {
       await appendDeliveryEventState({

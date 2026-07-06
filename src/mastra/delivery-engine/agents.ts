@@ -112,7 +112,7 @@ Enumerate files instead of using patterns like src/**/*.ts or src/storage/*.ts. 
 only when a file truly cannot be known.
 When the target folder has no package.json, the root scaffold must be explicit and typecheckable:
 a first root engineer task owns package.json, tsconfig.json, and at least one src/*.ts input such
-as src/index.ts or src/env.ts. Worker runtime/config/source tasks depend on it unless they own those
+as src/index.ts or src/env.ts. Worker runtime/config/source/static asset/migration tasks depend on it unless they own those
 scaffold files themselves.
 Task owners must be engineer or designer; verification belongs to the later tester stage.
 Architecture defaults are Workers-first: use standalone Cloudflare Workers unless the
