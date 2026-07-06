@@ -13,6 +13,7 @@ export const roleBoundaries = {
     maxTurns: 40,
     owned: [
       '.gitignore',
+      'README.md',
       'package.json',
       'package-lock.json',
       'pnpm-lock.yaml',

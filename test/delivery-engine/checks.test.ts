@@ -129,6 +129,7 @@ test('tierOrderCheck enforces required tiers for pre-deployment', () => {
 test('fileOwnership follows delivery role boundaries', () => {
   assert.equal(fileOwnership({ role: 'engineer', paths: ['workers/auth.js'] }).passed, true);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['.gitignore'] }).passed, true);
+  assert.equal(fileOwnership({ role: 'engineer', paths: ['README.md'] }).passed, true);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['package.json', 'src/app.js'] }).passed, true);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['migrations/0001_links.sql'] }).passed, true);
   assert.equal(fileOwnership({ role: 'engineer', paths: ['wrangler.jsonc'] }).passed, true);
