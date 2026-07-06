@@ -10,6 +10,7 @@ import {
   implementationEnginePolicyMismatch,
   implementationFailureClass,
   implementationRetryMode,
+  implementationWeakDimensionRemediation,
   missingOwnedSurfacePaths,
   priorStoppedBuildTaskIds,
   repairStaleDownstreamVerificationSurfaces,
@@ -355,7 +356,7 @@ const implementationJudgment = {
   gates_failed: [],
   dimensions_scored: [
     { id: 'smallest_coherent_change', score: 4, weight: 8, evidence: 'ok' },
-    { id: 'implementation_note_quality', score: 3, weight: 5, evidence: 'honest but thin' },
+    { id: 'implementation_note_quality', score: 4, weight: 5, evidence: 'honest and complete' },
   ],
   dimensions_not_scored: [],
   dimensions_missing: [],
@@ -385,6 +386,33 @@ test('actionable implementation remediation still blocks the fast path', () => {
     }),
     false,
   );
+});
+
+test('weak implementation dimensions synthesize actionable remediation', () => {
+  const judgment = {
+    ...implementationJudgment,
+    dimensions_scored: [
+      { id: 'smallest_coherent_change', score: 4, weight: 8, evidence: 'ok' },
+      {
+        id: 'state_explicitness',
+        score: 3,
+        weight: 7,
+        evidence: 'candidate_scores does not carry run_id; selected candidate behavior is hard to audit.',
+      },
+    ],
+  };
+
+  assert.equal(
+    shouldProceedAfterNonActionableImplementationJudgment({
+      judgment,
+      deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
+      note: implementationNote,
+    }),
+    false,
+  );
+  assert.deepEqual(implementationWeakDimensionRemediation(judgment), [
+    'DIMENSION state_explicitness scored 3/5. Improve this before continuing: candidate_scores does not carry run_id; selected candidate behavior is hard to audit.',
+  ]);
 });
 
 test('missing owned surfaces block the non-actionable implementation fast path', () => {

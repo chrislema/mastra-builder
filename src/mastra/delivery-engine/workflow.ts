@@ -534,8 +534,22 @@ export const hasExecutableRootTask = (taskPlan: TaskPlan) =>
 export const shouldSuspendForPlannerQuestions = (readout: z.infer<typeof readoutSchema>, taskPlan: TaskPlan) =>
   readout.blocking_ambiguities.length > 0 && !hasExecutableRootTask(taskPlan);
 
-const implementationFindingSteps = (taskId: string, remediation: string[]) =>
-  remediation.length ? remediation : [`${taskId} did not produce a passing implementation judgment`];
+export function implementationWeakDimensionRemediation(judgment: AggregatedJudgment) {
+  return judgment.dimensions_scored
+    .filter((dimension) => dimension.score <= 3)
+    .map(
+      (dimension) =>
+        `DIMENSION ${dimension.id} scored ${dimension.score}/5. Improve this before continuing: ${compactDiagnostic(
+          dimension.evidence,
+          500,
+        )}`,
+    );
+}
+
+function implementationFindingSteps(taskId: string, judgment: AggregatedJudgment) {
+  const remediation = [...judgment.remediation, ...implementationWeakDimensionRemediation(judgment)];
+  return remediation.length ? remediation : [`${taskId} did not produce a passing implementation judgment`];
+}
 
 export function shouldProceedAfterNonActionableImplementationJudgment({
   judgment,
@@ -548,6 +562,7 @@ export function shouldProceedAfterNonActionableImplementationJudgment({
 }) {
   if (judgment.passed) return false;
   if (judgment.gates_failed.length || judgment.dimensions_missing.length || judgment.remediation.length) return false;
+  if (implementationWeakDimensionRemediation(judgment).length) return false;
   if (!deterministicResults.every((result) => result.passed)) return false;
   if (!note.verification.performed.length) return false;
   if (note.verification.missing.some((item) => /\bfailed:/i.test(item))) return false;
@@ -4016,7 +4031,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
       };
     }
 
-    const remediation = implementationFindingSteps(task.id, implementationJudge.judgment.remediation);
+    const remediation = implementationFindingSteps(task.id, implementationJudge.judgment);
     if (attempt >= inputData.maxRetries) {
       if (!judgeRepairAlreadyAttempted(inputData.remediation)) {
         const judgeRepairRemediation = implementationJudgeRepairRemediation(
@@ -4070,7 +4085,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
         checks,
         judgments,
         questions: [],
-        nextSteps: implementationFindingSteps(task.id, remediation),
+        nextSteps: remediation,
         taskId: task.id,
         taskStatus: 'stuck' as const,
         task,
