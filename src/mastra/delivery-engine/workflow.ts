@@ -3563,6 +3563,28 @@ function writeReleaseGateTranscriptFixtureFile(repoPath: string) {
   return '.delivery/tmp/release-gate-transcript-fixture.sql';
 }
 
+function localWranglerExecutable(repoPath: string) {
+  const executable = join(resolve(repoPath), 'node_modules', '.bin', process.platform === 'win32' ? 'wrangler.cmd' : 'wrangler');
+  return existsSync(executable) ? executable : undefined;
+}
+
+function wranglerProcessCommand(repoPath: string, displayTail: string, args: string[]): ReleaseGateProcessCommand {
+  const localWrangler = localWranglerExecutable(repoPath);
+  if (localWrangler) {
+    return {
+      command: `./node_modules/.bin/wrangler ${displayTail}`,
+      executable: localWrangler,
+      args,
+    };
+  }
+
+  return {
+    command: `npx wrangler ${displayTail}`,
+    executable: 'npx',
+    args: ['wrangler', ...args],
+  };
+}
+
 export function releaseGateWorkerDevCommand(
   repoPath: string,
   port: number | '<port>' = '<port>',
@@ -3583,11 +3605,14 @@ export function releaseGateWorkerDevCommand(
     } satisfies ReleaseGateProcessCommand;
   }
 
-  return {
-    command: `npx wrangler dev --ip 127.0.0.1 --port ${portValue}${persistCommand}`,
-    executable: 'npx',
-    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', portValue, ...persistArgs],
-  } satisfies ReleaseGateProcessCommand;
+  return wranglerProcessCommand(repoPath, `dev --ip 127.0.0.1 --port ${portValue}${persistCommand}`, [
+    'dev',
+    '--ip',
+    '127.0.0.1',
+    '--port',
+    portValue,
+    ...persistArgs,
+  ]);
 }
 
 export function releaseGateRuntimeProbePlan(
@@ -3786,11 +3811,16 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
   if (databaseName && existsSync(join(resolve(repoPath), 'migrations'))) {
     const persistArgs = persistTo ? ['--persist-to', persistTo] : [];
     const persistCommand = persistTo ? ` --persist-to ${persistTo}` : '';
+    const migrationCommand = wranglerProcessCommand(
+      repoPath,
+      `d1 migrations apply ${databaseName} --local${persistCommand}`,
+      ['d1', 'migrations', 'apply', databaseName, '--local', ...persistArgs],
+    );
     commands.push({
       tier: 'api',
-      command: `npx wrangler d1 migrations apply ${databaseName} --local${persistCommand}`,
-      executable: 'npx',
-      args: ['wrangler', 'd1', 'migrations', 'apply', databaseName, '--local', ...persistArgs],
+      command: migrationCommand.command,
+      executable: migrationCommand.executable,
+      args: migrationCommand.args,
       required: true,
       reason: 'Wrangler D1 config and migrations/ were present, so local D1 migration validation is required before deployment.',
     });
@@ -3802,18 +3832,22 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
       commands.push(
         {
           tier: 'api',
-          command: `npx wrangler d1 execute ${databaseName} --local${persistCommand} --file ${fixturePath} --json`,
-          executable: 'npx',
-          args: ['wrangler', 'd1', 'execute', databaseName, '--local', ...persistArgs, '--file', fixturePath, '--json'],
+          ...wranglerProcessCommand(
+            repoPath,
+            `d1 execute ${databaseName} --local${persistCommand} --file ${fixturePath} --json`,
+            ['d1', 'execute', databaseName, '--local', ...persistArgs, '--file', fixturePath, '--json'],
+          ),
           required: true,
           reason:
             'A latest transcript route and transcript schema were present, so release gate seeds a completed run with original and regenerated transcript versions.',
         },
         {
           tier: 'api',
-          command: `npx wrangler d1 execute ${databaseName} --local${persistCommand} --command "${versionAuditSql}" --json`,
-          executable: 'npx',
-          args: ['wrangler', 'd1', 'execute', databaseName, '--local', ...persistArgs, '--command', versionAuditSql, '--json'],
+          ...wranglerProcessCommand(
+            repoPath,
+            `d1 execute ${databaseName} --local${persistCommand} --command "${versionAuditSql}" --json`,
+            ['d1', 'execute', databaseName, '--local', ...persistArgs, '--command', versionAuditSql, '--json'],
+          ),
           required: true,
           reason:
             'Transcript regeneration data-safety evidence: expected transcript_versions=2, preserved_original_versions=1, regenerated_versions=1, and active_transcript_id=release-gate-transcript-v2.',

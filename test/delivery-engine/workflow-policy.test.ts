@@ -1333,6 +1333,32 @@ test('release gate evidence planner uses wrangler.jsonc D1 config for required l
   );
 });
 
+test('release gate Wrangler commands prefer the installed local binary', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-local-wrangler-'));
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  mkdirSync(join(repoPath, 'node_modules/.bin'), { recursive: true });
+  writeFileSync(join(repoPath, 'node_modules/.bin/wrangler'), '#!/usr/bin/env node\n');
+  writeFileSync(join(repoPath, 'migrations/0001_schema.sql'), 'CREATE TABLE runs (id TEXT PRIMARY KEY);\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        d1_databases: [{ binding: 'DB', database_name: 'demo-db' }],
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.equal(
+    releaseGateEvidenceCommandPlan(repoPath)[0].command,
+    './node_modules/.bin/wrangler d1 migrations apply demo-db --local',
+  );
+  assert.equal(releaseGateWorkerDevCommand(repoPath, 8787)?.command, './node_modules/.bin/wrangler dev --ip 127.0.0.1 --port 8787');
+});
+
 test('release gate deterministic checks fail closed on failed required local evidence', () => {
   assert.deepEqual(
     releaseGateRequiredEvidencePassed({
