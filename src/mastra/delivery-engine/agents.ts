@@ -112,8 +112,9 @@ Every task owned surface must be a concrete repo path, not a conceptual label or
 Enumerate files instead of using patterns like src/**/*.ts, src/storage/*.ts, or public/**. Use "unknown: <why>"
 only when a file truly cannot be known.
 Task owners must match file boundaries: engineer tasks own Worker config/source/migration files
-such as package.json, tsconfig.json when TypeScript is used, wrangler.toml, src/**, workers/**, and migrations/**; designer tasks
-own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
+such as package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml when existing or source-required,
+src/**, workers/**, and migrations/**; designer tasks own static UI files such as public/index.html,
+public/styles.css, public/app.js, and assets/**.
 Do not put public/** files in engineer-owned tasks.
 When the target folder has no package.json, the root scaffold must be explicit and runnable:
 a first root engineer task owns package.json, .gitignore, wrangler.jsonc, and at least one concrete Worker source input such
@@ -134,8 +135,9 @@ Wrangler with assets.directory = "./public" and binding = "ASSETS" so the UI dep
 the Worker instead of requiring Pages or a frontend build.
 If product behavior depends on AI-backed summarization, scoring, generation, or regeneration
 inside a Worker, plan Workers AI as required infrastructure: Wrangler must include an active
-[ai] binding = "AI", the Worker Env should expose AI as a required binding, and AI must not
-be left as an optional/commented binding.
+AI binding named "AI" ("ai": { "binding": "AI" } in wrangler.jsonc or [ai] binding = "AI"
+in TOML), the Worker Env should expose AI as a required binding, and AI must not be left
+as an optional/commented binding.
 When schema, repository, validation, and route tasks share domain values, sequence the contract
 producer first. For profile management, validation/domain profile kinds must be available before
 D1 schema/profile storage/profile routes so kinds like speaker, audience, or style do not drift
@@ -196,7 +198,8 @@ Review checklist:
 
 Return either an approved plan with conditions, or blocking findings with required task changes.
 For Workers AI projects, block any plan that treats the AI binding as optional when AI-backed
-product behavior is acceptance-critical. The required Wrangler shape is [ai] binding = "AI".
+product behavior is acceptance-critical. The required Wrangler binding is named "AI" in the
+repo's config format.
 Block plans where schema/storage/route tasks can define shared profile, status, or lifecycle
 enums before the validation/domain contract they later consume.
 `,
@@ -249,7 +252,7 @@ Cloudflare architecture defaults:
 - For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml or the task explicitly owns TOML.
 - New Worker config must define Wrangler env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments. Production deploys use wrangler deploy --env production after human approval.
 - Use Cloudflare Worker runtime APIs and bindings: D1, KV, R2, Queues, Durable Objects, Workflows, service bindings, and scheduled handlers when appropriate.
-- If the task or existing repo uses Workers AI, configure it as a real Wrangler binding with [ai] binding = "AI"; when TypeScript Env declarations exist, make Env.AI required at the Worker boundary.
+- If the task or existing repo uses Workers AI, configure it as a real Wrangler AI binding named "AI"; when TypeScript Env declarations exist, make Env.AI required at the Worker boundary.
 - Keep the deployment model consistent: do not split a cohesive feature set between standalone Workers and Pages Functions.
 - Worker API surfaces and proxy handlers stay thin: extract request, route/forward, log usage, return responses with enriched context on errors.
 - Worker entry/router creates request context; auth guards handle identity; API guards handle subscription/usage/limits when those concepts exist.

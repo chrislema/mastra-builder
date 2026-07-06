@@ -2466,7 +2466,7 @@ test('Workers AI projects require an active Wrangler AI binding and required Env
 
   assert.equal(wranglerConfigHasWorkersAiBinding(repoPath), false);
   assert.deepEqual(workersAiBindingGaps(repoPath, task), [
-    'Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section.',
+    'Workers AI source is present, but the Wrangler config does not contain an active AI binding named "AI" (`"ai": { "binding": "AI" }` in wrangler.jsonc or `[ai] binding = "AI"` in TOML).',
     'Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.',
   ]);
   assert.deepEqual(
@@ -2481,7 +2481,7 @@ test('Workers AI projects require an active Wrangler AI binding and required Env
       ok: false,
       required: true,
       error:
-        'Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section. Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.',
+        'Workers AI source is present, but the Wrangler config does not contain an active AI binding named "AI" (`"ai": { "binding": "AI" }` in wrangler.jsonc or `[ai] binding = "AI"` in TOML). Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.',
     },
   );
 
@@ -2548,7 +2548,7 @@ test('Workers AI binding checks support vanilla JS Worker source', () => {
     releaseGateStaticEvidenceResults(repoPath).find((result) => result.command === 'static check: Workers AI binding configured');
 
   assert.deepEqual(workersAiBindingGaps(repoPath, task), [
-    'Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section.',
+    'Workers AI source is present, but the Wrangler config does not contain an active AI binding named "AI" (`"ai": { "binding": "AI" }` in wrangler.jsonc or `[ai] binding = "AI"` in TOML).',
   ]);
   assert.equal(workersAiEvidence()?.ok, false);
 
