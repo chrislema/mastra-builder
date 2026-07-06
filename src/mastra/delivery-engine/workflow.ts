@@ -1542,7 +1542,7 @@ function effectiveOwnedSurfaces(task: Task) {
   return [...surfaces];
 }
 
-function implementationFilesTouched({
+export function implementationFilesTouched({
   repoPath,
   stage,
   task,
@@ -1554,11 +1554,11 @@ function implementationFilesTouched({
   events: DeliveryEvent[];
 }) {
   const written = stageSlice(events, stage)
-    .filter((event) => implementationWriteTools.has(String(event.tool)))
+    .filter((event) => event.ok !== false && implementationWriteTools.has(String(event.tool)))
     .flatMap((event) => event.paths ?? [])
     .filter((path) => path && !path.startsWith('.delivery/'));
 
-  return Array.from(new Set([...written, ...existingOwnedFiles(repoPath, task)]));
+  return Array.from(new Set(written.length ? written : existingOwnedFiles(repoPath, task)));
 }
 
 function packageScripts(repoPath: string) {

@@ -8,6 +8,7 @@ import {
   deliveryBuildResumePlan,
   implementationDeterministicRemediation,
   implementationEnginePolicyMismatch,
+  implementationFilesTouched,
   implementationFailureClass,
   implementationJudgmentCanComplete,
   implementationRetryMode,
@@ -277,6 +278,29 @@ test('implementation notes list acceptance criteria that workflow verification d
     'Acceptance criterion not verified by automated checks: wrangler dev starts the Worker locally without errors.',
     'Acceptance criterion not verified by automated checks: Worker entry point returns HTTP 200 on GET /health.',
   ]);
+});
+
+test('implementation touched files prefer successful write events over context surfaces', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-files-touched-'));
+  mkdirSync(join(repoPath, 'src'));
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default {};\n');
+  writeFileSync(join(repoPath, 'src/env.ts'), 'export interface Env {}\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/env.ts'] }]).tasks;
+
+  assert.deepEqual(
+    implementationFilesTouched({
+      repoPath,
+      stage: 'build:T1',
+      task,
+      events: [
+        { type: 'stage_start', stage: 'build:T1' },
+        { type: 'tool_use', stage: 'build:T1', tool: 'mastra_workspace_read_file', ok: true, paths: ['src/index.ts'] },
+        { type: 'tool_use', stage: 'build:T1', tool: 'mastra_workspace_write_file', ok: true, paths: ['src/env.ts'] },
+        { type: 'stage_end', stage: 'build:T1' },
+      ],
+    }),
+    ['src/env.ts'],
+  );
 });
 
 test('owned surface presence normalizes annotated paths and ignores globs', () => {
