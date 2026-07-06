@@ -25,11 +25,15 @@ import {
   latestSuccessfulWorkspaceWriteEventTimestamp,
   lifecycleStatusSchemaGaps,
   localDeploymentReportFromReleaseGateEvidence,
+  configSchemaTaskSplitHygiene,
   normalizeTaskPlanLargeStorageTasks,
+  normalizeTaskPlanConfigSchemaTasks,
+  normalizeTaskPlanOperatorDocumentation,
   missingOwnedSurfacePaths,
   normalizeTaskPlanProfileContractDependencies,
   normalizeTaskPlanScaffoldDependencies,
   normalizeTaskPlanRoleBoundaries,
+  operatorDocumentationHygiene,
   openDecisionHygiene,
   ownedSurfaceHygiene,
   profileContractDependencyHygiene,
@@ -486,6 +490,74 @@ test('task plan normalization splits oversized storage-only tasks and rewires do
   assert.deepEqual(normalized.tasks[3].owned_surfaces, ['src/storage/candidates.ts', 'src/storage/transcripts.ts']);
   assert.deepEqual(normalized.tasks[4].depends_on, ['T1-part-4']);
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('task plan normalization splits Worker config and D1 schema tasks', () => {
+  const plan = taskPlan([
+    {
+      depends_on: ['T0'],
+      acceptance_criteria: [
+        'wrangler.jsonc registers DB and AI bindings.',
+        'migrations/0001_schema.sql creates the D1 profile tables.',
+        'src/index.ts reads the Env bindings.',
+      ],
+      owned_surfaces: ['wrangler.jsonc', 'migrations/0001_schema.sql', 'src/index.ts'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['src/storage/profiles.ts'],
+    },
+  ]);
+
+  assert.deepEqual(configSchemaTaskSplitHygiene(plan), {
+    passed: false,
+    reason:
+      'T1 owns both Wrangler config and D1 migration files. Split Worker config and migrations into separate engineer tasks so config hygiene, SQL review, and Wrangler validation can repair independently.',
+  });
+
+  const normalized = normalizeTaskPlanConfigSchemaTasks(plan);
+
+  assert.deepEqual(
+    normalized.tasks.map((task) => task.id),
+    ['T1', 'T1-d1-schema', 'T2'],
+  );
+  assert.deepEqual(normalized.tasks[0].depends_on, ['T0']);
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['wrangler.jsonc', 'src/index.ts']);
+  assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
+  assert.deepEqual(normalized.tasks[1].owned_surfaces, ['migrations/0001_schema.sql']);
+  assert.deepEqual(normalized.tasks[2].depends_on, ['T1-d1-schema']);
+  assert.deepEqual(configSchemaTaskSplitHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('task plan normalization appends operator documentation task', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['wrangler.jsonc'],
+    },
+  ]);
+
+  assert.deepEqual(operatorDocumentationHygiene(plan), {
+    passed: false,
+    reason:
+      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, git/gh source control, and human-approved wrangler deploy.',
+  });
+
+  const normalized = normalizeTaskPlanOperatorDocumentation(plan);
+  const documentationTask = normalized.tasks.at(-1);
+
+  assert.ok(documentationTask);
+  assert.equal(documentationTask.id, 'E99-operator-documentation');
+  assert.equal(documentationTask.owner, 'engineer');
+  assert.deepEqual(documentationTask.depends_on, ['T1', 'T2']);
+  assert.deepEqual(documentationTask.owned_surfaces, ['README.md']);
+  assert.match(documentationTask.acceptance_criteria.join('\n'), /Wrangler CLI/);
+  assert.match(documentationTask.acceptance_criteria.join('\n'), /human approval/);
+  assert.deepEqual(operatorDocumentationHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
 test('task plan normalization splits oversized repository implementation tasks', () => {

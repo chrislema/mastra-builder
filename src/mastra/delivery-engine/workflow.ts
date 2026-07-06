@@ -221,7 +221,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'worker-first-local-v12';
+const plannerPolicyVersion = 'worker-first-local-v13';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -259,6 +259,8 @@ function readCachedPlannerOutput({
   if (!ownedSurfaceHygiene(taskPlan.data).passed) return undefined;
   if (!taskOwnedSurfaceRoleHygiene(taskPlan.data).passed) return undefined;
   if (!projectScaffoldHygiene(repoPath, taskPlan.data).passed) return undefined;
+  if (!configSchemaTaskSplitHygiene(taskPlan.data).passed) return undefined;
+  if (!operatorDocumentationHygiene(taskPlan.data).passed) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
 }
@@ -923,6 +925,183 @@ export function normalizeTaskPlanLargeStorageTasks(taskPlan: TaskPlan): TaskPlan
   return { ...taskPlan, tasks };
 }
 
+const workerConfigSurfacePaths = ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml'];
+
+function taskOwnsWorkerConfigFile(task: Task) {
+  return taskOwnedBoundaryPaths(task).some((path) => workerConfigSurfacePaths.includes(path));
+}
+
+function taskOwnsD1MigrationFile(task: Task) {
+  return taskOwnedBoundaryPaths(task).some((path) => path.startsWith('migrations/') && path.endsWith('.sql'));
+}
+
+function criterionMentionsAny(criterion: string, patterns: RegExp[]) {
+  return patterns.some((pattern) => pattern.test(criterion));
+}
+
+const workerConfigCriterionPatterns = [
+  /\bwrangler(?:\.(?:jsonc|json|toml))?\b/i,
+  /\bcompatibility_(?:date|flags?)\b/i,
+  /\bnodejs_compat\b/i,
+  /\bobservability\b/i,
+  /\b(?:binding|bindings|vars|secrets?)\b/i,
+  /\bWorkers AI\b/i,
+];
+
+const d1SchemaCriterionPatterns = [
+  /\bmigrations?\b/i,
+  /\bD1\b/i,
+  /\bSQL\b/i,
+  /\bschema\b/i,
+  /\btables?\b/i,
+  /\bindexes?\b/i,
+];
+
+function splitConfigSchemaAcceptanceCriteria(task: Task, kind: 'config' | 'schema') {
+  const defaults =
+    kind === 'config'
+      ? [
+          'Configure Wrangler separately from D1 schema migrations so bindings, compatibility, and observability can be validated without touching SQL.',
+          'Keep Worker config aligned with current Worker policy: wrangler.jsonc for new projects, current compatibility_date, nodejs_compat, observability, and required bindings.',
+        ]
+      : [
+          'Define D1 schema migrations separately from Worker config so SQL can be reviewed, applied, and repaired on its own.',
+          'Keep migrations compatible with the Worker code and explicit D1 binding planned in Wrangler config.',
+        ];
+  const patterns = kind === 'config' ? workerConfigCriterionPatterns : d1SchemaCriterionPatterns;
+  const matching = task.acceptance_criteria.filter((criterion) => criterionMentionsAny(criterion, patterns));
+  return Array.from(new Set([...defaults, ...matching]));
+}
+
+function splitWorkerConfigAndD1SchemaTask(task: Task) {
+  if (!taskOwnsWorkerConfigFile(task) || !taskOwnsD1MigrationFile(task)) return [task];
+
+  const configSurfaces: string[] = [];
+  const schemaSurfaces: string[] = [];
+  const otherSurfaces: string[] = [];
+
+  for (const surface of task.owned_surfaces) {
+    const path = concreteOwnedSurfacePath(surface);
+    if (path && workerConfigSurfacePaths.includes(path)) {
+      configSurfaces.push(surface);
+    } else if (path && path.startsWith('migrations/') && path.endsWith('.sql')) {
+      schemaSurfaces.push(surface);
+    } else {
+      otherSurfaces.push(surface);
+    }
+  }
+
+  const schemaTaskId = `${task.id}-d1-schema`;
+  return [
+    {
+      ...task,
+      deliverable: `${task.deliverable} (Worker configuration slice)`,
+      acceptance_criteria: splitConfigSchemaAcceptanceCriteria(task, 'config'),
+      owned_surfaces: [...configSurfaces, ...otherSurfaces],
+    },
+    {
+      ...task,
+      id: schemaTaskId,
+      deliverable: `${task.deliverable} (D1 schema slice)`,
+      depends_on: [task.id],
+      acceptance_criteria: splitConfigSchemaAcceptanceCriteria(task, 'schema'),
+      owned_surfaces: schemaSurfaces,
+    },
+  ];
+}
+
+export function normalizeTaskPlanConfigSchemaTasks(taskPlan: TaskPlan): TaskPlan {
+  const expandedTasks: Task[] = [];
+  const splitLastTaskId = new Map<string, string>();
+  const splitTaskIds = new Set<string>();
+  let changed = false;
+
+  for (const task of taskPlan.tasks) {
+    const slices = splitWorkerConfigAndD1SchemaTask(task);
+    expandedTasks.push(...slices);
+    if (slices.length > 1) {
+      changed = true;
+      splitLastTaskId.set(task.id, slices[slices.length - 1].id);
+      for (const slice of slices) splitTaskIds.add(slice.id);
+    }
+  }
+
+  if (!changed) return taskPlan;
+
+  const tasks = expandedTasks.map((task) => {
+    if (splitTaskIds.has(task.id)) return task;
+
+    const depends_on = Array.from(new Set(task.depends_on.map((dependency) => splitLastTaskId.get(dependency) ?? dependency)));
+    if (
+      depends_on.length === task.depends_on.length &&
+      depends_on.every((dependency, index) => dependency === task.depends_on[index])
+    ) {
+      return task;
+    }
+
+    return { ...task, depends_on };
+  });
+
+  return { ...taskPlan, tasks };
+}
+
+export function configSchemaTaskSplitHygiene(taskPlan: TaskPlan) {
+  const combinedTask = taskPlan.tasks.find((task) => taskOwnsWorkerConfigFile(task) && taskOwnsD1MigrationFile(task));
+  if (!combinedTask) return { passed: true, reason: 'ok' };
+
+  return {
+    passed: false,
+    reason: `${combinedTask.id} owns both Wrangler config and D1 migration files. Split Worker config and migrations into separate engineer tasks so config hygiene, SQL review, and Wrangler validation can repair independently.`,
+  };
+}
+
+function taskPlanHasOperatorDocumentation(taskPlan: TaskPlan) {
+  return taskPlan.tasks.some((task) => taskOwnedBoundaryPaths(task).includes('README.md'));
+}
+
+function uniqueTaskId(taskPlan: TaskPlan, baseId: string) {
+  const existingIds = new Set(taskPlan.tasks.map((task) => task.id));
+  if (!existingIds.has(baseId)) return baseId;
+
+  let suffix = 2;
+  while (existingIds.has(`${baseId}-${suffix}`)) suffix += 1;
+  return `${baseId}-${suffix}`;
+}
+
+export function normalizeTaskPlanOperatorDocumentation(taskPlan: TaskPlan): TaskPlan {
+  if (taskPlanHasOperatorDocumentation(taskPlan)) return taskPlan;
+
+  const id = uniqueTaskId(taskPlan, 'E99-operator-documentation');
+  return {
+    ...taskPlan,
+    tasks: [
+      ...taskPlan.tasks,
+      {
+        id,
+        owner: 'engineer',
+        deliverable: "Document local Worker validation, required Cloudflare resources, and Chris's human-approved Wrangler deployment flow.",
+        depends_on: taskPlan.tasks.map((task) => task.id),
+        acceptance_criteria: [
+          'README.md documents local development and validation with Wrangler CLI, including npm scripts and expected ports.',
+          'README.md lists required Cloudflare resources, bindings, secrets, and Workers AI binding expectations.',
+          'README.md explains source-control expectations with git/gh and states production deploy waits for human approval before running wrangler deploy.',
+        ],
+        owned_surfaces: ['README.md'],
+      },
+    ],
+  };
+}
+
+export function operatorDocumentationHygiene(taskPlan: TaskPlan) {
+  if (taskPlanHasOperatorDocumentation(taskPlan)) return { passed: true, reason: 'ok' };
+
+  return {
+    passed: false,
+    reason:
+      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, git/gh source control, and human-approved wrangler deploy.',
+  };
+}
+
 export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
   if (existsSync(join(repoPath, 'package.json'))) return { passed: true, reason: 'ok' };
 
@@ -958,9 +1137,13 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
 }
 
 function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
-  return normalizeTaskPlanLargeStorageTasks(
-    normalizeTaskPlanRoleBoundaries(
-      normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+  return normalizeTaskPlanOperatorDocumentation(
+    normalizeTaskPlanLargeStorageTasks(
+      normalizeTaskPlanConfigSchemaTasks(
+        normalizeTaskPlanRoleBoundaries(
+          normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+        ),
+      ),
     ),
   );
 }
@@ -978,6 +1161,8 @@ const taskPlanDeterministicResults = ({
   { id: 'owned_surfaces_concrete', check: 'owned_surface_hygiene', ...ownedSurfaceHygiene(taskPlan) },
   { id: 'owned_surfaces_match_roles', check: 'task_owned_surfaces_in_role_boundary', ...taskOwnedSurfaceRoleHygiene(taskPlan) },
   { id: 'root_project_scaffolded', check: 'project_scaffold_hygiene', ...projectScaffoldHygiene(repoPath, taskPlan) },
+  { id: 'config_schema_tasks_split', check: 'config_schema_task_split_hygiene', ...configSchemaTaskSplitHygiene(taskPlan) },
+  { id: 'operator_documentation_planned', check: 'operator_documentation_hygiene', ...operatorDocumentationHygiene(taskPlan) },
   {
     id: 'profile_contract_dependency_order',
     check: 'profile_contract_dependency_order',
@@ -4820,6 +5005,9 @@ Project policy:
 - Use wrangler CLI for deploy and local runtime validation; never use GitHub Actions as the deployment path.
 - Git/gh may support source-control steps, but production deployment is a separate Wrangler action after human approval.
 Every task must have checkable acceptance criteria and owned_surfaces.
+Worker task slicing:
+- Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml belongs in one task, and migrations/*.sql belongs in a later task.
+- Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, git/gh source control, and human-approved wrangler deploy for production.
 Owned-surface hygiene:
 - Every owned_surfaces entry must be a concrete repo path, for example wrangler.jsonc, wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
 - Do not use wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/**. Enumerate each expected file path.
@@ -5054,6 +5242,8 @@ Project policy:
 - If AI is used in the target Worker, plan an active Workers AI binding and an internal adapter around it.
 
 Task-plan quality requirements:
+- Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml in one task, migrations/*.sql in a later task.
+- Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, git/gh source control, and human-approved wrangler deploy.
 - Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.
 - Every consumes-output relation must be declared by task ID. If a later task uses storage, prompts, routes, services, generated types, bindings, or workflow steps from an earlier slice, add the dependency edge explicitly.
 - Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
