@@ -9,6 +9,7 @@ import {
   implementationDeterministicRemediation,
   implementationEnginePolicyMismatch,
   implementationFailureClass,
+  implementationJudgmentCanComplete,
   implementationRetryMode,
   implementationWeakDimensionRemediation,
   judgeProviderErrorDetails,
@@ -758,6 +759,32 @@ test('weak implementation dimensions synthesize actionable remediation', () => {
   assert.deepEqual(implementationWeakDimensionRemediation(judgment), [
     'DIMENSION state_explicitness scored 3/5. Improve this before continuing: candidate_scores does not carry run_id; selected candidate behavior is hard to audit.',
   ]);
+});
+
+test('passing implementation judgments with weak dimensions still require repair', () => {
+  const judgment = {
+    ...implementationJudgment,
+    overall: 0.82,
+    passed: true,
+    dimensions_scored: [
+      { id: 'smallest_coherent_change', score: 5, weight: 8, evidence: 'ok' },
+      {
+        id: 'state_explicitness',
+        score: 3,
+        weight: 7,
+        evidence: 'status columns are free text without CHECK constraints.',
+      },
+    ],
+  };
+
+  assert.equal(
+    implementationJudgmentCanComplete({
+      judgment,
+      deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
+      note: implementationNote,
+    }),
+    false,
+  );
 });
 
 test('missing owned surfaces block the non-actionable implementation fast path', () => {

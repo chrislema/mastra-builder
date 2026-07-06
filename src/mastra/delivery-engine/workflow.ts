@@ -666,6 +666,19 @@ export function shouldProceedAfterNonActionableImplementationJudgment({
   return true;
 }
 
+export function implementationJudgmentCanComplete({
+  judgment,
+  deterministicResults,
+  note,
+}: {
+  judgment: AggregatedJudgment;
+  deterministicResults: DeterministicGateResult[];
+  note: ImplementationNote;
+}) {
+  if (judgment.passed && !implementationWeakDimensionRemediation(judgment).length) return true;
+  return shouldProceedAfterNonActionableImplementationJudgment({ judgment, deterministicResults, note });
+}
+
 function repoFileContents(repoPath: string, paths: string[]) {
   return paths
     .map((path) => {
@@ -4458,6 +4471,7 @@ Execution rules:
 - Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
+- For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
 - If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.
 - Do not inspect node_modules; rely on project types and workflow verification.
 - If timeout recovery is active, do not investigate. Create the missing owned surfaces immediately.
@@ -4901,8 +4915,7 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
     judgments.push(implementationJudge.ref);
 
     if (
-      implementationJudge.judgment.passed ||
-      shouldProceedAfterNonActionableImplementationJudgment({
+      implementationJudgmentCanComplete({
         judgment: implementationJudge.judgment,
         deterministicResults,
         note,
