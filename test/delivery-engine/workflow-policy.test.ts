@@ -20,6 +20,7 @@ import {
   judgeProviderErrorDetails,
   judgeUnavailableOutputForRubric,
   judgeUnavailableRemediation,
+  latestSuccessfulWorkspaceWriteEventTimestamp,
   lifecycleStatusSchemaGaps,
   normalizeTaskPlanLargeStorageTasks,
   missingOwnedSurfacePaths,
@@ -1736,6 +1737,36 @@ test('build no-tool remediation preserves prior judge findings during repair', (
   assert.match(remediation[0], /repair attempt made no tool calls/);
   assert.match(remediation.join('\n'), /no_silent_degradation/);
   assert.match(remediation.join('\n'), /error_response_quality/);
+});
+
+test('latestSuccessfulWorkspaceWriteEventTimestamp tracks writes in the latest stage attempt', () => {
+  const timestamp = latestSuccessfulWorkspaceWriteEventTimestamp(
+    [
+      { type: 'stage_start', stage: 'build:T1', role: 'engineer', ts: '2026-07-06T10:00:00.000Z' },
+      { type: 'tool_use', stage: 'build:T1', tool: 'mastra_workspace_write_file', ok: true, ts: '2026-07-06T10:01:00.000Z' },
+      { type: 'stage_end', stage: 'build:T1', reason: 'max_turns', ts: '2026-07-06T10:02:00.000Z' },
+      { type: 'stage_start', stage: 'build:T1', role: 'engineer', ts: '2026-07-06T10:03:00.000Z' },
+      { type: 'tool_use', stage: 'build:T1', tool: 'mastra_workspace_read_file', ok: true, ts: '2026-07-06T10:04:00.000Z' },
+      { type: 'tool_use', stage: 'build:T1', tool: 'mastra_workspace_edit_file', ok: false, ts: '2026-07-06T10:05:00.000Z' },
+      { type: 'tool_use', stage: 'build:T1', tool: 'mastra_workspace_edit_file', ok: true, ts: '2026-07-06T10:06:00.000Z' },
+    ],
+    { stage: 'build:T1' },
+  );
+
+  assert.equal(timestamp, Date.parse('2026-07-06T10:06:00.000Z'));
+});
+
+test('latestSuccessfulWorkspaceWriteEventTimestamp ignores read-only stages', () => {
+  const timestamp = latestSuccessfulWorkspaceWriteEventTimestamp(
+    [
+      { type: 'stage_start', stage: 'build:T2', role: 'engineer', ts: '2026-07-06T10:00:00.000Z' },
+      { type: 'tool_use', stage: 'build:T2', tool: 'mastra_workspace_list_files', ok: true, ts: '2026-07-06T10:01:00.000Z' },
+      { type: 'tool_use', stage: 'build:T2', tool: 'mastra_workspace_read_file', ok: true, ts: '2026-07-06T10:02:00.000Z' },
+    ],
+    { stage: 'build:T2' },
+  );
+
+  assert.equal(timestamp, undefined);
 });
 
 test('implementation retry mode classifies deterministic failure families', () => {

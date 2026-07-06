@@ -3559,6 +3559,7 @@ const deliveryAgentTimeouts = {
   standard: envTimeoutMs('DELIVERY_AGENT_CALL_TIMEOUT_MS', 300_000),
   build: envTimeoutMs('DELIVERY_BUILD_CALL_TIMEOUT_MS', 180_000),
   buildNoTool: envTimeoutMs('DELIVERY_BUILD_NO_TOOL_TIMEOUT_MS', 60_000),
+  buildPostWriteQuiet: envTimeoutMs('DELIVERY_BUILD_POST_WRITE_QUIET_TIMEOUT_MS', 90_000),
   judge: envTimeoutMs('DELIVERY_JUDGE_CALL_TIMEOUT_MS', 300_000),
 };
 
@@ -3577,6 +3578,13 @@ class DeliveryNoToolCallTimeoutError extends DeliveryStageTimeoutError {
   constructor(stage: string, timeoutMs: number) {
     super(stage, timeoutMs, `Delivery stage "${stage}" made no tool calls after ${timeoutMs}ms`);
     this.name = 'DeliveryNoToolCallTimeoutError';
+  }
+}
+
+class DeliveryPostWriteQuietTimeoutError extends DeliveryStageTimeoutError {
+  constructor(stage: string, timeoutMs: number) {
+    super(stage, timeoutMs, `Delivery stage "${stage}" made no progress for ${timeoutMs}ms after a workspace write`);
+    this.name = 'DeliveryPostWriteQuietTimeoutError';
   }
 }
 
@@ -3690,6 +3698,44 @@ async function stageHasToolUse({
   return stageSlice(events, stage).some((event) => event.type === 'tool_use');
 }
 
+const writeToolNames = new Set<string>([
+  WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE,
+  WORKSPACE_TOOLS.FILESYSTEM.MKDIR,
+]);
+
+export function latestSuccessfulWorkspaceWriteEventTimestamp(events: DeliveryEvent[], { stage }: { stage?: string } = {}) {
+  const scoped = stageSlice(events, stage);
+  for (let index = scoped.length - 1; index >= 0; index -= 1) {
+    const event = scoped[index];
+    if (event.type !== 'tool_use' || event.ok !== true || typeof event.tool !== 'string') continue;
+    if (!writeToolNames.has(event.tool)) continue;
+
+    const timestamp = typeof event.ts === 'string' ? Date.parse(event.ts) : NaN;
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  return undefined;
+}
+
+async function latestStageSuccessfulWriteTimestamp({
+  repoPath,
+  mastra,
+  stage,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+}) {
+  try {
+    return latestSuccessfulWorkspaceWriteEventTimestamp(readDeliveryEvents(repoPath), { stage });
+  } catch {
+    // Fall back to the Mastra-backed state reader only if the local projection cannot be read.
+  }
+
+  const events = await readDeliveryEventsState({ repoPath, mastra }).catch(() => []);
+  return latestSuccessfulWorkspaceWriteEventTimestamp(events, { stage });
+}
+
 async function runWithDeliveryStageTimeout<T>({
   repoPath,
   mastra,
@@ -3697,6 +3743,8 @@ async function runWithDeliveryStageTimeout<T>({
   timeoutMs,
   firstToolTimeoutMs,
   firstToolCheck,
+  postWriteQuietTimeoutMs,
+  latestWriteCheck,
   operation,
 }: {
   repoPath: string;
@@ -3705,11 +3753,14 @@ async function runWithDeliveryStageTimeout<T>({
   timeoutMs: number;
   firstToolTimeoutMs?: number;
   firstToolCheck?: () => Promise<boolean>;
+  postWriteQuietTimeoutMs?: number;
+  latestWriteCheck?: () => Promise<number | undefined>;
   operation: (abortSignal: AbortSignal) => Promise<T>;
 }) {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let firstToolTimer: ReturnType<typeof setTimeout> | undefined;
+  let postWriteQuietTimer: ReturnType<typeof setInterval> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort(`Delivery stage "${stage}" timed out after ${timeoutMs}ms`);
@@ -3732,12 +3783,37 @@ async function runWithDeliveryStageTimeout<T>({
           firstToolTimer.unref?.();
         })
       : undefined;
+  const postWriteQuietTimeout =
+    postWriteQuietTimeoutMs && latestWriteCheck
+      ? new Promise<never>((_, reject) => {
+          const pollMs = Math.min(5_000, postWriteQuietTimeoutMs);
+          postWriteQuietTimer = setInterval(() => {
+            latestWriteCheck()
+              .then((latestWriteAt) => {
+                if (!latestWriteAt) return;
+                if (Date.now() - latestWriteAt < postWriteQuietTimeoutMs) return;
+
+                controller.abort(
+                  `Delivery stage "${stage}" made no progress for ${postWriteQuietTimeoutMs}ms after a workspace write`,
+                );
+                reject(new DeliveryPostWriteQuietTimeoutError(stage, postWriteQuietTimeoutMs));
+              })
+              .catch(() => undefined);
+          }, pollMs);
+          postWriteQuietTimer.unref?.();
+        })
+      : undefined;
 
   const work = operation(controller.signal);
   work.catch(() => undefined);
 
   try {
-    return await Promise.race([work, timeout, ...(firstToolTimeout ? [firstToolTimeout] : [])]);
+    return await Promise.race([
+      work,
+      timeout,
+      ...(firstToolTimeout ? [firstToolTimeout] : []),
+      ...(postWriteQuietTimeout ? [postWriteQuietTimeout] : []),
+    ]);
   } catch (error) {
     if (error instanceof DeliveryStageTimeoutError) {
       await appendDeliveryEventState({
@@ -3746,6 +3822,8 @@ async function runWithDeliveryStageTimeout<T>({
         event:
           error instanceof DeliveryNoToolCallTimeoutError
             ? { type: 'stage_no_tool_timeout', stage, timeout_ms: error.timeoutMs }
+            : error instanceof DeliveryPostWriteQuietTimeoutError
+              ? { type: 'stage_post_write_quiet_timeout', stage, timeout_ms: error.timeoutMs }
             : { type: 'stage_timeout', stage, timeout_ms: error.timeoutMs },
       }).catch(() => undefined);
       await endDeliveryStageState({ repoPath, stage, reason: 'max_turns', mastra }).catch(() => undefined);
@@ -3754,6 +3832,7 @@ async function runWithDeliveryStageTimeout<T>({
   } finally {
     if (timer) clearTimeout(timer);
     if (firstToolTimer) clearTimeout(firstToolTimer);
+    if (postWriteQuietTimer) clearInterval(postWriteQuietTimer);
   }
 }
 
@@ -5217,6 +5296,8 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
         timeoutMs: deliveryAgentTimeouts.build,
         firstToolTimeoutMs: deliveryAgentTimeouts.buildNoTool,
         firstToolCheck: () => stageHasToolUse({ repoPath: inputData.repoPath, mastra, stage }),
+        postWriteQuietTimeoutMs: deliveryAgentTimeouts.buildPostWriteQuiet,
+        latestWriteCheck: () => latestStageSuccessfulWriteTimestamp({ repoPath: inputData.repoPath, mastra, stage }),
         operation: (abortSignal) =>
           agent.generate(
             finalBuildPrompt,
