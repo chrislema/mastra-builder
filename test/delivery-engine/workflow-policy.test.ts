@@ -55,6 +55,7 @@ import {
   releaseGateRuntimeProbePlan,
   releaseGateRequiredEvidencePassed,
   releaseGateStaticEvidenceResults,
+  releaseGateTranscriptFixtureSchemaGaps,
   releaseGateWorkerDevCommand,
   routeMiddlewareBypassGaps,
   reusableImplementationArtifactForTask,
@@ -1489,9 +1490,52 @@ test('release gate evidence planner seeds latest transcript and version audit fi
   writeFileSync(
     join(repoPath, 'migrations/0001_init.sql'),
     [
-      'CREATE TABLE runs (id TEXT PRIMARY KEY);',
-      'CREATE TABLE candidates (id TEXT PRIMARY KEY);',
-      'CREATE TABLE transcripts (id TEXT PRIMARY KEY);',
+      'CREATE TABLE runs (',
+      '  id TEXT PRIMARY KEY,',
+      '  status TEXT NOT NULL,',
+      '  window_start TEXT NOT NULL,',
+      '  window_end TEXT NOT NULL,',
+      '  audience_profile_id TEXT NOT NULL,',
+      '  voice_profile_id TEXT NOT NULL,',
+      '  selected_candidate_id TEXT,',
+      '  transcript_id TEXT,',
+      '  error_message TEXT,',
+      '  created_at TEXT NOT NULL,',
+      '  updated_at TEXT NOT NULL',
+      ');',
+      'CREATE TABLE candidates (',
+      '  id TEXT PRIMARY KEY,',
+      '  run_id TEXT NOT NULL,',
+      '  bookmark_id TEXT,',
+      '  link_id TEXT,',
+      '  source_url TEXT NOT NULL,',
+      '  title TEXT NOT NULL,',
+      '  author TEXT,',
+      '  published_at TEXT,',
+      '  summary TEXT NOT NULL,',
+      '  core_idea TEXT NOT NULL,',
+      '  suggested_angle TEXT NOT NULL,',
+      '  primary_segment TEXT NOT NULL,',
+      '  segment_fit_json TEXT NOT NULL,',
+      '  created_at TEXT NOT NULL',
+      ');',
+      'CREATE TABLE transcripts (',
+      '  id TEXT PRIMARY KEY,',
+      '  run_id TEXT NOT NULL,',
+      '  candidate_id TEXT NOT NULL,',
+      '  audience_profile_id TEXT NOT NULL,',
+      '  voice_profile_id TEXT NOT NULL,',
+      '  title TEXT NOT NULL,',
+      '  hook TEXT NOT NULL,',
+      '  transcript TEXT NOT NULL,',
+      '  captions_json TEXT NOT NULL,',
+      '  source_urls_json TEXT NOT NULL,',
+      '  why_this_was_picked TEXT NOT NULL,',
+      '  primary_segment TEXT NOT NULL,',
+      '  alternate_angles_json TEXT NOT NULL,',
+      '  word_count INTEGER NOT NULL,',
+      '  created_at TEXT NOT NULL',
+      ');',
     ].join('\n'),
   );
 
@@ -1514,6 +1558,33 @@ test('release gate evidence planner seeds latest transcript and version audit fi
     primarySegment: 'operators',
     whyThisWasPicked: 'Regenerated selection rationale.',
   });
+});
+
+test('release gate latest transcript fixture schema check catches incomplete migrations', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-transcript-schema-gaps-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), "if (pathname === '/latest') {}\n");
+  writeFileSync(
+    join(repoPath, 'migrations/0001_init.sql'),
+    [
+      'CREATE TABLE runs (id TEXT PRIMARY KEY);',
+      'CREATE TABLE candidates (id TEXT PRIMARY KEY);',
+      'CREATE TABLE transcripts (id TEXT PRIMARY KEY, title TEXT NOT NULL);',
+    ].join('\n'),
+  );
+
+  const gaps = releaseGateTranscriptFixtureSchemaGaps(repoPath);
+  assert.match(gaps.join('\n'), /runs\.status/);
+  assert.match(gaps.join('\n'), /candidates\.source_url/);
+  assert.match(gaps.join('\n'), /transcripts\.hook/);
+
+  const staticResult = releaseGateStaticEvidenceResults(repoPath).find(
+    (result) => result.command === 'static check: Latest transcript fixture schema',
+  );
+  assert.equal(staticResult?.required, true);
+  assert.equal(staticResult?.ok, false);
+  assert.match(staticResult?.error ?? '', /seeded GET \/latest/);
 });
 
 test('release gate runtime probe planner falls back to npx wrangler for Worker configs', () => {

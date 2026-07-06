@@ -3432,6 +3432,105 @@ function releaseGateMigrationText(repoPath: string) {
     .join('\n');
 }
 
+function releaseGateTableColumns(schema: string, tableName: string) {
+  const columns = new Set<string>();
+  const escapedTable = tableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tableMatch = new RegExp(
+    `CREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+${escapedTable}\\s*\\(([\\s\\S]*?)\\)\\s*;`,
+    'i',
+  ).exec(schema);
+  if (!tableMatch) return columns;
+
+  for (const segment of tableMatch[1].split(/,|\r?\n/)) {
+    const match = segment.match(/^\s*([A-Za-z_][\w]*)\s+/);
+    if (!match) continue;
+    const column = match[1].toLowerCase();
+    if (['constraint', 'primary', 'foreign', 'unique', 'check'].includes(column)) continue;
+    columns.add(column);
+  }
+
+  return columns;
+}
+
+function releaseGateMissingTableColumns(schema: string, tableName: string, requiredColumns: string[]) {
+  const columns = releaseGateTableColumns(schema, tableName);
+  if (!columns.size) return [`${tableName} table is missing`];
+  return requiredColumns.filter((column) => !columns.has(column));
+}
+
+export function releaseGateTranscriptFixtureSchemaGaps(repoPath: string) {
+  if (!releaseGateRepoHasRoute(repoPath, '/latest')) return [];
+
+  const schema = releaseGateMigrationText(repoPath);
+  if (!schema.trim()) return ['GET /latest route is present but migrations/ contains no SQL schema.'];
+
+  const checks = [
+    {
+      table: 'runs',
+      columns: [
+        'id',
+        'status',
+        'window_start',
+        'window_end',
+        'audience_profile_id',
+        'voice_profile_id',
+        'selected_candidate_id',
+        'transcript_id',
+        'error_message',
+        'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'candidates',
+      columns: [
+        'id',
+        'run_id',
+        'bookmark_id',
+        'link_id',
+        'source_url',
+        'title',
+        'author',
+        'published_at',
+        'summary',
+        'core_idea',
+        'suggested_angle',
+        'primary_segment',
+        'segment_fit_json',
+        'created_at',
+      ],
+    },
+    {
+      table: 'transcripts',
+      columns: [
+        'id',
+        'run_id',
+        'candidate_id',
+        'audience_profile_id',
+        'voice_profile_id',
+        'title',
+        'hook',
+        'transcript',
+        'captions_json',
+        'source_urls_json',
+        'why_this_was_picked',
+        'primary_segment',
+        'alternate_angles_json',
+        'word_count',
+        'created_at',
+      ],
+    },
+  ];
+
+  return checks.flatMap(({ table, columns }) =>
+    releaseGateMissingTableColumns(schema, table, columns).map((missing) =>
+      missing.endsWith('table is missing')
+        ? missing
+        : `${table}.${missing} is required for seeded GET /latest release-gate validation`,
+    ),
+  );
+}
+
 function releaseGateTranscriptFixtureAvailable(repoPath: string) {
   const schema = releaseGateMigrationText(repoPath);
   return (
@@ -3439,17 +3538,20 @@ function releaseGateTranscriptFixtureAvailable(repoPath: string) {
     releaseGateRepoHasRoute(repoPath, '/latest') &&
     /\bCREATE\s+TABLE\s+runs\b/i.test(schema) &&
     /\bCREATE\s+TABLE\s+candidates\b/i.test(schema) &&
-    /\bCREATE\s+TABLE\s+transcripts\b/i.test(schema)
+    /\bCREATE\s+TABLE\s+transcripts\b/i.test(schema) &&
+    releaseGateTranscriptFixtureSchemaGaps(repoPath).length === 0
   );
 }
 
 function releaseGateTranscriptFixtureSql() {
   return [
     '-- Release-gate fixture: completed run plus original and regenerated transcript versions.',
+    'PRAGMA foreign_keys = OFF;',
     "INSERT OR REPLACE INTO candidates (id, run_id, bookmark_id, link_id, source_url, title, author, published_at, summary, core_idea, suggested_angle, primary_segment, segment_fit_json, created_at) VALUES ('release-gate-candidate', 'release-gate-run', 'release-gate-bookmark', NULL, 'https://example.com/release-gate-source', 'Release Gate Candidate', 'Release Gate', '2026-01-01T00:00:00.000Z', 'Fixture candidate for release-gate transcript persistence.', 'Prove completed transcript persistence through GET /latest.', 'Show that the latest transcript is served from D1.', 'operators', '[{\"segmentName\":\"operators\",\"relevance\":5}]', '2026-01-01T00:00:00.000Z');",
     "INSERT OR REPLACE INTO transcripts (id, run_id, candidate_id, audience_profile_id, voice_profile_id, title, hook, transcript, captions_json, source_urls_json, why_this_was_picked, primary_segment, alternate_angles_json, word_count, created_at) VALUES ('release-gate-transcript-v1', 'release-gate-run', 'release-gate-candidate', 'release-gate-audience', 'release-gate-voice', 'Release Gate Original Transcript', 'Original hook.', 'Original transcript retained for audit.', '[\"Original caption\"]', '[\"https://example.com/release-gate-source\"]', 'Original selection rationale.', 'operators', '[\"Original alternate angle\"]', 5, '2026-01-01T00:05:00.000Z');",
     "INSERT OR REPLACE INTO transcripts (id, run_id, candidate_id, audience_profile_id, voice_profile_id, title, hook, transcript, captions_json, source_urls_json, why_this_was_picked, primary_segment, alternate_angles_json, word_count, created_at) VALUES ('release-gate-transcript-v2', 'release-gate-run', 'release-gate-candidate', 'release-gate-audience', 'release-gate-voice', 'Release Gate Regenerated Transcript', 'Regenerated hook.', 'Regenerated transcript served as latest while the original remains stored.', '[\"Regenerated caption\"]', '[\"https://example.com/release-gate-source\"]', 'Regenerated selection rationale.', 'operators', '[\"Regenerated alternate angle\"]', 9, '2026-01-01T00:10:00.000Z');",
     "INSERT OR REPLACE INTO runs (id, status, window_start, window_end, audience_profile_id, voice_profile_id, selected_candidate_id, transcript_id, error_message, created_at, updated_at) VALUES ('release-gate-run', 'completed', '2025-12-25T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'release-gate-audience', 'release-gate-voice', 'release-gate-candidate', 'release-gate-transcript-v2', NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:15:00.000Z');",
+    'PRAGMA foreign_keys = ON;',
     '',
   ].join('\n');
 }
@@ -3726,6 +3828,7 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
 export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateEvidenceResult[] {
   const aiGaps = workersAiBindingGaps(repoPath);
   const workerConfigGaps = workerConfigHygieneGaps(repoPath);
+  const transcriptFixtureGaps = releaseGateTranscriptFixtureSchemaGaps(repoPath);
   const results: ReleaseGateEvidenceResult[] = [];
 
   if (repoSourceUsesWorkersAi(repoPath) || aiGaps.length) {
@@ -3738,6 +3841,20 @@ export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateE
       reason: 'Source uses Workers AI, so the Worker must expose a real AI binding before AI-backed routes or workflows can be accepted.',
       output_summary: ok ? 'Wrangler config contains active Workers AI binding and Env.AI is required.' : undefined,
       error: ok ? undefined : aiGaps.join(' '),
+    });
+  }
+
+  if (releaseGateRepoHasRoute(repoPath, '/latest') && releaseGateMigrationText(repoPath).trim()) {
+    const ok = transcriptFixtureGaps.length === 0;
+    results.push({
+      tier: 'api',
+      command: 'static check: Latest transcript fixture schema',
+      ok,
+      required: true,
+      reason:
+        'GET /latest is present, so the local release gate must be able to seed and verify a completed regenerated transcript through D1.',
+      output_summary: ok ? 'D1 schema supports seeded latest-transcript release-gate validation.' : undefined,
+      error: ok ? undefined : transcriptFixtureGaps.join(' '),
     });
   }
 
