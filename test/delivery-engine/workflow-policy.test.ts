@@ -19,6 +19,7 @@ import {
   implementationToolChoiceForRetryMode,
   implementationWeakDimensionRemediation,
   isTrueBlockingAmbiguity,
+  generatedSliceDependencyHygiene,
   judgeProviderErrorDetails,
   judgeUnavailableOutputForRubric,
   judgeUnavailableRemediation,
@@ -28,6 +29,7 @@ import {
   configSchemaTaskSplitHygiene,
   normalizeTaskPlanLargeStorageTasks,
   normalizeTaskPlanConfigSchemaTasks,
+  normalizeTaskPlanGeneratedSliceDependencies,
   normalizeTaskPlanOperatorDocumentation,
   missingOwnedSurfacePaths,
   normalizeTaskPlanProfileContractDependencies,
@@ -77,12 +79,20 @@ const readout = (blocking_ambiguities: string[]) => ({
   recommended_next_step: 'next',
 });
 
-const taskPlan = (tasks: Array<{ depends_on: string[]; acceptance_criteria?: string[]; owned_surfaces?: string[] }>) => ({
+const taskPlan = (
+  tasks: Array<{
+    id?: string;
+    owner?: 'engineer' | 'designer';
+    depends_on: string[];
+    acceptance_criteria?: string[];
+    owned_surfaces?: string[];
+  }>,
+) => ({
   artifact_type: 'task-plan' as const,
   scope: 'scope',
   tasks: tasks.map((task, index) => ({
-    id: `T${index + 1}`,
-    owner: 'engineer' as const,
+    id: task.id ?? `T${index + 1}`,
+    owner: task.owner ?? ('engineer' as const),
     deliverable: 'deliverable',
     depends_on: task.depends_on,
     acceptance_criteria: task.acceptance_criteria ?? ['verified'],
@@ -558,6 +568,50 @@ test('task plan normalization appends operator documentation task', () => {
   assert.match(documentationTask.acceptance_criteria.join('\n'), /Wrangler CLI/);
   assert.match(documentationTask.acceptance_criteria.join('\n'), /human approval/);
   assert.deepEqual(operatorDocumentationHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('task plan normalization rewires external dependencies to final generated slices', () => {
+  const plan = taskPlan([
+    {
+      id: 'T05-persistence-repositories',
+      depends_on: ['T04-d1-schema'],
+      owned_surfaces: ['src/db.ts', 'src/artifactStore.ts'],
+    },
+    {
+      id: 'T05-persistence-repositories-part-2',
+      depends_on: ['T05-persistence-repositories'],
+      owned_surfaces: ['src/profileRepository.ts', 'src/runRepository.ts'],
+    },
+    {
+      id: 'T05-persistence-repositories-part-3',
+      depends_on: ['T05-persistence-repositories-part-2'],
+      owned_surfaces: ['src/bookmarkRepository.ts', 'src/linkRepository.ts'],
+    },
+    {
+      id: 'T06-profile-service',
+      depends_on: ['T05-persistence-repositories'],
+      owned_surfaces: ['src/profileService.ts'],
+    },
+    {
+      id: 'T07-run-service',
+      depends_on: ['T05-persistence-repositories-part-2'],
+      owned_surfaces: ['src/runService.ts'],
+    },
+  ]);
+
+  assert.deepEqual(generatedSliceDependencyHygiene(plan), {
+    passed: false,
+    reason:
+      'T06-profile-service depends_on T05-persistence-repositories, but T05-persistence-repositories is an intermediate generated slice. Depend on T05-persistence-repositories-part-3 so downstream work waits for the complete slice family before consuming it.',
+  });
+
+  const normalized = normalizeTaskPlanGeneratedSliceDependencies(plan);
+
+  assert.deepEqual(normalized.tasks[1].depends_on, ['T05-persistence-repositories']);
+  assert.deepEqual(normalized.tasks[2].depends_on, ['T05-persistence-repositories-part-2']);
+  assert.deepEqual(normalized.tasks[3].depends_on, ['T05-persistence-repositories-part-3']);
+  assert.deepEqual(normalized.tasks[4].depends_on, ['T05-persistence-repositories-part-3']);
+  assert.deepEqual(generatedSliceDependencyHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
 test('task plan normalization splits oversized repository implementation tasks', () => {

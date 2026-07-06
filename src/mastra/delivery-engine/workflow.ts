@@ -261,6 +261,7 @@ function readCachedPlannerOutput({
   if (!projectScaffoldHygiene(repoPath, taskPlan.data).passed) return undefined;
   if (!configSchemaTaskSplitHygiene(taskPlan.data).passed) return undefined;
   if (!operatorDocumentationHygiene(taskPlan.data).passed) return undefined;
+  if (!generatedSliceDependencyHygiene(taskPlan.data).passed) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
 }
@@ -1102,6 +1103,91 @@ export function operatorDocumentationHygiene(taskPlan: TaskPlan) {
   };
 }
 
+function generatedSliceFamilyId(taskId: string) {
+  return taskId.replace(/-part-\d+$/, '');
+}
+
+function generatedSliceRank(taskId: string) {
+  const match = taskId.match(/-part-(\d+)$/);
+  return match ? Number(match[1]) : 1;
+}
+
+function generatedSliceFinalByMember(taskPlan: TaskPlan) {
+  const families = new Map<string, Task[]>();
+  for (const task of taskPlan.tasks) {
+    const familyId = generatedSliceFamilyId(task.id);
+    const tasks = families.get(familyId) ?? [];
+    tasks.push(task);
+    families.set(familyId, tasks);
+  }
+
+  const finalByMember = new Map<string, string>();
+  for (const [familyId, tasks] of families.entries()) {
+    if (!tasks.some((task) => task.id !== familyId)) continue;
+    const finalTask = [...tasks].sort((left, right) => generatedSliceRank(right.id) - generatedSliceRank(left.id))[0];
+    if (!finalTask) continue;
+    for (const task of tasks) finalByMember.set(task.id, finalTask.id);
+  }
+
+  return finalByMember;
+}
+
+export function normalizeTaskPlanGeneratedSliceDependencies(taskPlan: TaskPlan): TaskPlan {
+  const finalByMember = generatedSliceFinalByMember(taskPlan);
+  if (!finalByMember.size) return taskPlan;
+
+  let changed = false;
+  const tasks = taskPlan.tasks.map((task) => {
+    const taskFamilyId = generatedSliceFamilyId(task.id);
+    const depends_on = Array.from(
+      new Set(
+        task.depends_on.map((dependency) => {
+          const finalDependency = finalByMember.get(dependency);
+          if (!finalDependency || finalDependency === dependency) return dependency;
+          if (generatedSliceFamilyId(dependency) === taskFamilyId) return dependency;
+          if (!taskCanSafelyDependOn(taskPlan, task.id, finalDependency)) return dependency;
+
+          changed = true;
+          return finalDependency;
+        }),
+      ),
+    );
+
+    if (
+      depends_on.length === task.depends_on.length &&
+      depends_on.every((dependency, index) => dependency === task.depends_on[index])
+    ) {
+      return task;
+    }
+
+    return { ...task, depends_on };
+  });
+
+  return changed ? { ...taskPlan, tasks } : taskPlan;
+}
+
+export function generatedSliceDependencyHygiene(taskPlan: TaskPlan) {
+  const finalByMember = generatedSliceFinalByMember(taskPlan);
+  if (!finalByMember.size) return { passed: true, reason: 'ok' };
+
+  for (const task of taskPlan.tasks) {
+    const taskFamilyId = generatedSliceFamilyId(task.id);
+    for (const dependency of task.depends_on) {
+      const finalDependency = finalByMember.get(dependency);
+      if (!finalDependency || finalDependency === dependency) continue;
+      if (generatedSliceFamilyId(dependency) === taskFamilyId) continue;
+      if (!taskCanSafelyDependOn(taskPlan, task.id, finalDependency)) continue;
+
+      return {
+        passed: false,
+        reason: `${task.id} depends_on ${dependency}, but ${dependency} is an intermediate generated slice. Depend on ${finalDependency} so downstream work waits for the complete slice family before consuming it.`,
+      };
+    }
+  }
+
+  return { passed: true, reason: 'ok' };
+}
+
 export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
   if (existsSync(join(repoPath, 'package.json'))) return { passed: true, reason: 'ok' };
 
@@ -1138,10 +1224,12 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
 
 function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
   return normalizeTaskPlanOperatorDocumentation(
-    normalizeTaskPlanLargeStorageTasks(
-      normalizeTaskPlanConfigSchemaTasks(
-        normalizeTaskPlanRoleBoundaries(
-          normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+    normalizeTaskPlanGeneratedSliceDependencies(
+      normalizeTaskPlanLargeStorageTasks(
+        normalizeTaskPlanConfigSchemaTasks(
+          normalizeTaskPlanRoleBoundaries(
+            normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+          ),
         ),
       ),
     ),
@@ -1163,6 +1251,11 @@ const taskPlanDeterministicResults = ({
   { id: 'root_project_scaffolded', check: 'project_scaffold_hygiene', ...projectScaffoldHygiene(repoPath, taskPlan) },
   { id: 'config_schema_tasks_split', check: 'config_schema_task_split_hygiene', ...configSchemaTaskSplitHygiene(taskPlan) },
   { id: 'operator_documentation_planned', check: 'operator_documentation_hygiene', ...operatorDocumentationHygiene(taskPlan) },
+  {
+    id: 'generated_slice_dependencies_finalized',
+    check: 'generated_slice_dependency_hygiene',
+    ...generatedSliceDependencyHygiene(taskPlan),
+  },
   {
     id: 'profile_contract_dependency_order',
     check: 'profile_contract_dependency_order',
@@ -5008,6 +5101,7 @@ Every task must have checkable acceptance criteria and owned_surfaces.
 Worker task slicing:
 - Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml belongs in one task, and migrations/*.sql belongs in a later task.
 - Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, git/gh source control, and human-approved wrangler deploy for production.
+- When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 Owned-surface hygiene:
 - Every owned_surfaces entry must be a concrete repo path, for example wrangler.jsonc, wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
 - Do not use wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/**. Enumerate each expected file path.
@@ -5244,6 +5338,7 @@ Project policy:
 Task-plan quality requirements:
 - Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml in one task, migrations/*.sql in a later task.
 - Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, git/gh source control, and human-approved wrangler deploy.
+- When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 - Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.
 - Every consumes-output relation must be declared by task ID. If a later task uses storage, prompts, routes, services, generated types, bindings, or workflow steps from an earlier slice, add the dependency edge explicitly.
 - Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
