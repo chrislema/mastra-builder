@@ -667,7 +667,7 @@ function taskOwnsAnyExactSurface(task: Task, paths: readonly string[]) {
 }
 
 function ownsPackageScaffold(task: Task) {
-  return ownsExactSurface(task, 'package.json') && ownsExactSurface(task, 'tsconfig.json');
+  return ownsExactSurface(task, 'package.json');
 }
 
 function normalizeScaffoldRootTask(task: Task) {
@@ -685,9 +685,36 @@ function normalizeScaffoldRootTask(task: Task) {
   };
 }
 
+function workerSourceSurfaceIsTypeScript(surface: string) {
+  const normalized = surface.toLowerCase();
+  if (/\.d\.(?:ts|mts|cts)$/.test(normalized)) return false;
+  return /\.(?:ts|tsx|mts|cts)$/.test(normalized);
+}
+
+function workerSourceSurfaceIsJavaScriptOrTypeScript(surface: string) {
+  return /\.(?:js|mjs|cjs|ts|tsx|mts|cts)$/.test(surface);
+}
+
+function workerSourceSurfaceIsConcrete(surface: string) {
+  if (surface === 'src/**' || surface === 'workers/**') return true;
+  if (surface === 'worker.js' || surface === 'worker.mjs' || surface === 'worker.ts') return true;
+  return (
+    (surface.startsWith('src/') || surface.startsWith('workers/')) &&
+    workerSourceSurfaceIsJavaScriptOrTypeScript(surface)
+  );
+}
+
+function ownsWorkerSourceInputSurface(task: Task) {
+  return normalizedOwnedSurfaces(task).some(workerSourceSurfaceIsConcrete);
+}
+
 function ownsTypeScriptInputSurface(task: Task) {
   return normalizedOwnedSurfaces(task).some(
-    (surface) => surface === 'src/**' || (surface.startsWith('src/') && /\.(?:ts|mts|cts)$/.test(surface)),
+    (surface) =>
+      surface === 'src/**' ||
+      surface === 'workers/**' ||
+      (surface.startsWith('src/') || surface.startsWith('workers/') || surface.startsWith('worker.')) &&
+        workerSourceSurfaceIsTypeScript(surface),
   );
 }
 
@@ -697,10 +724,13 @@ function ownsWorkerRuntimeSurface(task: Task) {
       surface === 'wrangler.toml' ||
       surface === 'wrangler.json' ||
       surface === 'wrangler.jsonc' ||
-      surface === 'src/index.ts' ||
-      surface === 'src/env.ts' ||
       surface === 'src/**' ||
+      surface === 'workers/**' ||
+      surface === 'worker.js' ||
+      surface === 'worker.mjs' ||
+      surface === 'worker.ts' ||
       surface.startsWith('src/') ||
+      surface.startsWith('workers/') ||
       surface.startsWith('public/') ||
       surface.startsWith('migrations/'),
   );
@@ -711,7 +741,7 @@ export function normalizeTaskPlanScaffoldDependencies(repoPath: string, taskPlan
   if (!taskPlan.tasks.some(ownsWorkerRuntimeSurface)) return taskPlan;
 
   const rootTasks = taskPlan.tasks.filter((task) => task.depends_on.length === 0);
-  const scaffoldRootTask = rootTasks.find((task) => ownsPackageScaffold(task) && ownsTypeScriptInputSurface(task));
+  const scaffoldRootTask = rootTasks.find((task) => ownsPackageScaffold(task) && ownsWorkerSourceInputSurface(task));
   if (!scaffoldRootTask) return taskPlan;
 
   let changed = false;
@@ -1253,14 +1283,21 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
     return {
       passed: false,
       reason:
-        'Target repo has no package.json. The task plan needs a root scaffold task that owns package.json and tsconfig.json before Worker runtime files so automated verification can run.',
+        'Target repo has no package.json. The task plan needs a root scaffold task that owns package.json, .gitignore, and a concrete Worker source entry before Worker runtime files so automated verification can run.',
     };
   }
 
-  if (!ownsTypeScriptInputSurface(scaffoldRootTask)) {
+  if (!ownsWorkerSourceInputSurface(scaffoldRootTask)) {
     return {
       passed: false,
-      reason: `${scaffoldRootTask.id} owns package.json and tsconfig.json but no TypeScript source input. Bare Worker scaffolds need an owned src/*.ts surface such as src/index.ts or src/env.ts so npm run typecheck can pass before later tasks.`,
+      reason: `${scaffoldRootTask.id} owns package.json but no Worker source input. Bare Worker scaffolds need an owned source surface such as src/index.js, workers/app.js, or src/index.ts before later tasks.`,
+    };
+  }
+
+  if (ownsTypeScriptInputSurface(scaffoldRootTask) && !ownsExactSurface(scaffoldRootTask, 'tsconfig.json')) {
+    return {
+      passed: false,
+      reason: `${scaffoldRootTask.id} owns TypeScript Worker source but not tsconfig.json. TypeScript Worker scaffolds need tsconfig.json so npm run typecheck can pass before later tasks.`,
     };
   }
 
@@ -1268,7 +1305,7 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
   if (unscaffoldedRootRuntimeTask) {
     return {
       passed: false,
-      reason: `${unscaffoldedRootRuntimeTask.id} owns Worker/runtime surfaces before the package scaffold. Make it depend_on ${scaffoldRootTask.id}, or include package.json and tsconfig.json in the same root scaffold task.`,
+      reason: `${unscaffoldedRootRuntimeTask.id} owns Worker/runtime surfaces before the package scaffold. Make it depend_on ${scaffoldRootTask.id}, or include package.json and the Worker source entry in the same root scaffold task.`,
     };
   }
 
@@ -2078,9 +2115,14 @@ function repoLooksLikeWorkerProject(repoPath: string) {
   const scripts = recordValue(packageJson?.scripts) ?? {};
   return (
     existsSync(join(root, 'src', 'index.ts')) ||
+    existsSync(join(root, 'src', 'index.js')) ||
+    existsSync(join(root, 'src', 'index.mjs')) ||
     existsSync(join(root, 'src', 'env.ts')) ||
+    existsSync(join(root, 'worker.js')) ||
+    existsSync(join(root, 'worker.mjs')) ||
+    existsSync(join(root, 'workers')) ||
     existsSync(join(root, 'worker-configuration.d.ts')) ||
-    typeof scripts.dev === 'string' && /\bwrangler\s+dev\b/.test(scripts.dev) ||
+    (typeof scripts.dev === 'string' && /\bwrangler\s+dev\b/.test(scripts.dev)) ||
     packageDependencyNames(repoPath).includes('wrangler')
   );
 }
@@ -2697,7 +2739,9 @@ function scriptUsesWranglerWithoutEntrypoint(script: unknown, command: 'dev' | '
   if (typeof script !== 'string') return false;
   const match = new RegExp(`\\bwrangler\\s+${command}\\b([^;&|\\n]*)`).exec(script);
   if (!match) return false;
-  return !/(^|\s)(?:\.\/)?src\/index\.ts(\s|$)/.test(match[1] ?? '');
+  return !/(^|\s)(?:\.\/)?(?:(?:src|workers)\/\S+\.(?:js|mjs|cjs|ts|tsx|mts|cts)|worker\.(?:js|mjs|cjs|ts|tsx|mts|cts))(\s|$)/.test(
+    match[1] ?? '',
+  );
 }
 
 const forbiddenFrontendPackageNames = [
@@ -2734,14 +2778,14 @@ function frontendBuildScriptGaps(scripts: Record<string, unknown>) {
   if (!/\b(vite|next|react-scripts|webpack|rollup|parcel|astro|svelte-kit)\b/i.test(buildScript)) return [];
 
   return [
-    `package.json: scripts.build uses a frontend framework/bundler command ("${buildScript}"); Worker projects should validate with tsc/test/Wrangler and serve vanilla public assets without a frontend build step.`,
+    `package.json: scripts.build uses a frontend framework/bundler command ("${buildScript}"); Worker projects should validate with tests/Wrangler, add tsc only for TypeScript source, and serve vanilla public assets without a frontend build step.`,
   ];
 }
 
 function tsconfigWorkerScaffoldGaps(repoPath: string) {
   const tsconfigPath = join(resolve(repoPath), 'tsconfig.json');
   if (!existsSync(tsconfigPath)) {
-    return ['tsconfig.json: missing; new Worker scaffolds need a Worker-runtime TypeScript config for deterministic typecheck.'];
+    return ['tsconfig.json: missing; TypeScript Worker scaffolds need a Worker-runtime TypeScript config for deterministic typecheck.'];
   }
 
   const config = parseWranglerJsonConfig(readFileSync(tsconfigPath, 'utf8'));
@@ -2787,6 +2831,43 @@ function tsconfigWorkerScaffoldGaps(repoPath: string) {
   return gaps;
 }
 
+function directoryContainsTypeScriptWorkerSource(directory: string): boolean {
+  if (!existsSync(directory)) return false;
+
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+
+  for (const entry of entries) {
+    const entryPath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (['.delivery', '.git', '.wrangler', 'node_modules'].includes(entry.name)) continue;
+      if (directoryContainsTypeScriptWorkerSource(entryPath)) return true;
+      continue;
+    }
+
+    if (entry.isFile() && workerSourceSurfaceIsTypeScript(entry.name)) return true;
+  }
+
+  return false;
+}
+
+function repoUsesTypeScriptWorkerSource(repoPath: string, task?: Task) {
+  const root = resolve(repoPath);
+  return (
+    (task !== undefined && (ownsTypeScriptInputSurface(task) || ownsExactSurface(task, 'tsconfig.json'))) ||
+    existsSync(join(root, 'tsconfig.json')) ||
+    directoryContainsTypeScriptWorkerSource(join(root, 'src')) ||
+    directoryContainsTypeScriptWorkerSource(join(root, 'workers')) ||
+    existsSync(join(root, 'worker.ts')) ||
+    existsSync(join(root, 'worker.mts')) ||
+    existsSync(join(root, 'worker.cts'))
+  );
+}
+
 const workerScaffoldRequiredGitignorePatterns = ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env'];
 
 function gitignorePatternPresent(text: string, pattern: string) {
@@ -2822,14 +2903,15 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
   if (!packageJson) return task ? ['package.json is owned but is not valid JSON.'] : [];
 
   const gaps: string[] = [];
+  const usesTypeScript = repoUsesTypeScriptWorkerSource(repoPath, task);
   const scripts = recordValue(packageJson.scripts) ?? {};
   if (!scriptUsesWranglerWithoutEntrypoint(scripts.dev, 'dev')) {
-    gaps.push('package.json: scripts.dev should run "wrangler dev" through wrangler.jsonc, without passing src/index.ts as an entrypoint argument.');
+    gaps.push('package.json: scripts.dev should run "wrangler dev" through wrangler.jsonc, without passing a Worker source entrypoint argument.');
   }
   if (!scriptUsesWranglerWithoutEntrypoint(scripts.deploy, 'deploy')) {
-    gaps.push('package.json: scripts.deploy should run "wrangler deploy" through wrangler.jsonc, without passing src/index.ts as an entrypoint argument.');
+    gaps.push('package.json: scripts.deploy should run "wrangler deploy" through wrangler.jsonc, without passing a Worker source entrypoint argument.');
   }
-  if (typeof scripts.typecheck !== 'string' || !/\btsc\s+--noEmit\b/.test(scripts.typecheck)) {
+  if (usesTypeScript && (typeof scripts.typecheck !== 'string' || !/\btsc\s+--noEmit\b/.test(scripts.typecheck))) {
     gaps.push('package.json: scripts.typecheck should run "tsc --noEmit" for deterministic workflow verification.');
   }
   gaps.push(...frontendBuildScriptGaps(scripts));
@@ -2841,21 +2923,23 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
     gaps.push(`package.json: devDependencies.wrangler is "${wranglerVersion}", but new Worker scaffolds should use "latest" or a v4+ range.`);
   }
 
-  const workersTypesVersion = packageDependencyVersion(packageJson, '@cloudflare/workers-types');
-  if (!workersTypesVersion) {
-    gaps.push(
-      'package.json: devDependencies["@cloudflare/workers-types"] is missing; Worker TypeScript projects need current Cloudflare runtime types.',
-    );
-  } else if (!workersTypesVersionIsCurrent(workersTypesVersion)) {
-    gaps.push(
-      `package.json: devDependencies["@cloudflare/workers-types"] is "${workersTypesVersion}", but new Worker scaffolds should use "latest" or a Workers types release from the last 90 days.`,
-    );
+  if (usesTypeScript) {
+    const workersTypesVersion = packageDependencyVersion(packageJson, '@cloudflare/workers-types');
+    if (!workersTypesVersion) {
+      gaps.push(
+        'package.json: devDependencies["@cloudflare/workers-types"] is missing; Worker TypeScript projects need current Cloudflare runtime types.',
+      );
+    } else if (!workersTypesVersionIsCurrent(workersTypesVersion)) {
+      gaps.push(
+        `package.json: devDependencies["@cloudflare/workers-types"] is "${workersTypesVersion}", but TypeScript Worker scaffolds should use "latest" or a Workers types release from the last 90 days.`,
+      );
+    }
   }
 
   return [
     ...gaps,
     ...frontendFrameworkDependencyGaps(repoPath),
-    ...tsconfigWorkerScaffoldGaps(repoPath),
+    ...(usesTypeScript ? tsconfigWorkerScaffoldGaps(repoPath) : []),
     ...workerScaffoldGitignoreGaps(repoPath),
   ];
 }
@@ -6268,7 +6352,7 @@ Do not write code. Ask only blocking questions. Record safe assumptions in the r
 Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
 Project policy:
 - This harness is for Chris's standalone Cloudflare Worker projects. Do not plan desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages unless the source docs explicitly require them.
-- Default new projects to a Worker module entry, Wrangler config, TypeScript for Worker code, and vanilla HTML/CSS/JS under public/ when a UI is needed.
+- Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require TypeScript.
 - Prefer wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - Use wrangler CLI for deploy and local runtime validation; never use GitHub Actions as the deployment path.
 - Git/gh may support source-control steps, but production deployment is a separate Wrangler action after human approval.
@@ -6279,18 +6363,18 @@ Worker task slicing:
 - Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, git/gh source control, and human-approved wrangler deploy for production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 Owned-surface hygiene:
-- Every owned_surfaces entry must be a concrete repo path, for example wrangler.jsonc, wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
+- Every owned_surfaces entry must be a concrete repo path, for example wrangler.jsonc, wrangler.toml, src/index.js, workers/tally.js, public/settings.html, migrations/0001_schema.sql.
 - Do not use wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/**. Enumerate each expected file path.
 - Do not use conceptual labels such as "Worker Env types", "wrangler configuration", "Workflow binding registration", "API routes", or "UI assets".
 - If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
 Role-boundary hygiene:
-- Engineer tasks own Worker config/source/migration files such as package.json, tsconfig.json, wrangler.jsonc, wrangler.toml, src/**, and migrations/**.
+- Engineer tasks own Worker config/source/migration files such as package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml, src/**, workers/**, and migrations/**.
 - Designer tasks own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
 - Do not put public/** files in engineer-owned tasks; create or reuse a designer task for vanilla HTML/CSS/JS UI work.
 Root scaffold hygiene:
 - Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
-- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, tsconfig.json, .gitignore, and at least one TypeScript source input such as src/index.ts or src/env.ts.
-- Worker runtime/config/source/static asset/migration tasks must depend on that scaffold task unless they own package.json and tsconfig.json themselves.
+- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, .gitignore, and at least one concrete Worker source entry such as src/index.js or workers/app.js. Include tsconfig.json only when the Worker source is TypeScript.
+- Worker runtime/config/source/static asset/migration tasks must depend on that scaffold task unless they own package.json and the Worker source entry themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
 - Do not stop for preferences the harness already settles: Worker over Pages, vanilla UI over frameworks, Wrangler over GitHub Actions deploy, local validation before production, or Workers AI binding shape.
@@ -6508,7 +6592,7 @@ Return a full replacement taskPlan object. Do not write implementation code. Do 
 
 Project policy:
 - This harness is for Chris's standalone Cloudflare Worker projects, not desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages.
-- Default new projects to a Worker module entry, Wrangler config, TypeScript Worker source, and vanilla HTML/CSS/JS under public/ when a UI is needed.
+- Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require it.
 - Use wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - Use Wrangler CLI for local validation and deployment; never make GitHub Actions the deployment path.
 - If AI is used in the target Worker, plan an active Workers AI binding and an internal adapter around it.
@@ -7568,9 +7652,9 @@ Execution rules:
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
 - When worker_config_policy is not null, read src/env.ts if it exists and use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, and Wrangler binding names that exactly match Env binding property names.
-- For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, @cloudflare/workers-types "latest" or a recent dated v4 release, scripts.dev as "wrangler dev", scripts.deploy as "wrangler deploy", and scripts.typecheck as "tsc --noEmit".
+- For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, scripts.dev as "wrangler dev", and scripts.deploy as "wrangler deploy". Add @cloudflare/workers-types, scripts.typecheck as "tsc --noEmit", and tsconfig.json only when the Worker source is TypeScript.
 - Do not add React, Vite, Next, Vue, Svelte, or frontend build dependencies/scripts. Chris's Worker frontends are vanilla HTML/CSS/JS served as static assets.
-- Configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes @cloudflare/workers-types, and strict is true.
+- When TypeScript is used, configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes @cloudflare/workers-types, and strict is true.
 - .gitignore must exclude node_modules/, .wrangler/, .delivery/, .dev.vars, and .env.
 - For placeholder Worker route/error responses, include actionable next steps such as available route expectations, pending setup, or the next implementation surface instead of only returning "not found".
 - When profile_kind_policy is not null, use it exactly: PROFILE_KINDS must include audience_segments and voice_profile as the persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.

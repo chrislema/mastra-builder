@@ -260,25 +260,35 @@ test('bare Worker project plans require package scaffold before runtime surfaces
   const packageOnlyPlan = taskPlan([
     {
       depends_on: [],
-      owned_surfaces: ['package.json', 'tsconfig.json'],
+      owned_surfaces: ['package.json'],
     },
     {
       depends_on: ['T1'],
-      owned_surfaces: ['wrangler.toml', 'src/env.ts', 'src/index.ts'],
+      owned_surfaces: ['wrangler.toml', 'src/index.js'],
     },
   ]);
   const packageOnlyResult = projectScaffoldHygiene(repoPath, packageOnlyPlan);
   assert.equal(packageOnlyResult.passed, false);
-  assert.match(packageOnlyResult.reason, /no TypeScript source input/);
+  assert.match(packageOnlyResult.reason, /no Worker source input/);
+
+  const tsWithoutTsconfigPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'src/index.ts'],
+    },
+  ]);
+  const tsWithoutTsconfigResult = projectScaffoldHygiene(repoPath, tsWithoutTsconfigPlan);
+  assert.equal(tsWithoutTsconfigResult.passed, false);
+  assert.match(tsWithoutTsconfigResult.reason, /TypeScript Worker source but not tsconfig\.json/);
 
   const goodPlan = taskPlan([
     {
       depends_on: [],
-      owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'],
+      owned_surfaces: ['package.json', 'src/index.js'],
     },
     {
       depends_on: ['T1'],
-      owned_surfaces: ['wrangler.toml', 'src/env.ts'],
+      owned_surfaces: ['wrangler.toml'],
     },
   ]);
   assert.deepEqual(projectScaffoldHygiene(repoPath, goodPlan), { passed: true, reason: 'ok' });
@@ -289,7 +299,7 @@ test('bare Worker project plans normalize root static assets behind the package 
   const plan = taskPlan([
     {
       depends_on: [],
-      owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'],
+      owned_surfaces: ['package.json', 'src/index.js'],
     },
     {
       depends_on: ['T1'],
@@ -303,7 +313,7 @@ test('bare Worker project plans normalize root static assets behind the package 
 
   const normalized = normalizeTaskPlanScaffoldDependencies(repoPath, plan);
 
-  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'tsconfig.json', 'src/index.ts', '.gitignore']);
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'src/index.js', '.gitignore']);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\.delivery/);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
   assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
@@ -2069,16 +2079,17 @@ test('Worker config task packet policy carries the exact current compatibility d
 
 test('Worker package scaffold hygiene requires current Wrangler tooling and config-based scripts', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-package-hygiene-'));
-  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'] }]).tasks;
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default { fetch: () => new Response("ok") };\n');
+  const [jsTask] = taskPlan([{ depends_on: [], owned_surfaces: ['package.json', 'src/index.js'] }]).tasks;
 
   writeFileSync(
     join(repoPath, 'package.json'),
     JSON.stringify(
       {
         scripts: {
-          dev: 'wrangler dev src/index.ts',
-          deploy: 'wrangler deploy src/index.ts',
-          typecheck: 'tsc --noEmit',
+          dev: 'wrangler dev src/index.js',
+          deploy: 'wrangler deploy src/index.js',
           build: 'vite build',
         },
         dependencies: {
@@ -2095,15 +2106,15 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
     ),
   );
 
-  const gaps = workerPackageScaffoldGaps(repoPath, task);
+  const gaps = workerPackageScaffoldGaps(repoPath, jsTask);
   assert.match(gaps.join('\n'), /scripts\.dev/);
   assert.match(gaps.join('\n'), /scripts\.deploy/);
   assert.match(gaps.join('\n'), /wrangler.*v4\+/);
-  assert.match(gaps.join('\n'), /workers-types.*last 90 days/);
   assert.match(gaps.join('\n'), /frontend framework\/build dependencies.*react.*vite/);
   assert.match(gaps.join('\n'), /scripts\.build uses a frontend framework\/bundler/);
-  assert.match(gaps.join('\n'), /tsconfig\.json: missing/);
   assert.match(gaps.join('\n'), /\.gitignore is missing/);
+  assert.doesNotMatch(gaps.join('\n'), /workers-types/);
+  assert.doesNotMatch(gaps.join('\n'), /tsconfig\.json/);
 
   const remediation = [`DETERMINISTIC worker_package_scaffold_current failed: ${gaps.join('; ')}`];
   assert.equal(implementationFailureClass(remediation), 'worker_package');
@@ -2114,6 +2125,34 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
     }),
     'focused-repair',
   );
+
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev',
+          deploy: 'wrangler deploy',
+        },
+        devDependencies: {
+          wrangler: '^4.0.0',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(join(repoPath, '.gitignore'), ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', ''].join('\n'));
+
+  assert.deepEqual(workerPackageScaffoldGaps(repoPath, jsTask), []);
+
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
+  const [tsTask] = taskPlan([{ depends_on: [], owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'] }]).tasks;
+
+  const missingTypeScriptGaps = workerPackageScaffoldGaps(repoPath, tsTask);
+  assert.match(missingTypeScriptGaps.join('\n'), /scripts\.typecheck/);
+  assert.match(missingTypeScriptGaps.join('\n'), /workers-types.*missing/);
+  assert.match(missingTypeScriptGaps.join('\n'), /tsconfig\.json: missing/);
 
   writeFileSync(
     join(repoPath, 'package.json'),
@@ -2151,9 +2190,8 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
       2,
     ),
   );
-  writeFileSync(join(repoPath, '.gitignore'), ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', ''].join('\n'));
 
-  assert.deepEqual(workerPackageScaffoldGaps(repoPath, task), []);
+  assert.deepEqual(workerPackageScaffoldGaps(repoPath, tsTask), []);
   assert.deepEqual(workerPackageScaffoldGaps(repoPath), []);
 });
 

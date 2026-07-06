@@ -109,16 +109,15 @@ Only put genuine blockers in taskPlan.open_decisions. If a question can be handl
 record it as a safe assumption. If it is non-blocking delivery uncertainty, record it as a risk.
 Every open decision must be decision-shaped: Topic, Why it matters, Options considered, Follow-up impact.
 Every task owned surface must be a concrete repo path, not a conceptual label or wildcard.
-Enumerate files instead of using patterns like src/**/*.ts or src/storage/*.ts. Use "unknown: <why>"
+Enumerate files instead of using patterns like src/**/*.ts, src/storage/*.ts, or public/**. Use "unknown: <why>"
 only when a file truly cannot be known.
 Task owners must match file boundaries: engineer tasks own Worker config/source/migration files
-such as package.json, tsconfig.json, wrangler.toml, src/**, and migrations/**; designer tasks
+such as package.json, tsconfig.json when TypeScript is used, wrangler.toml, src/**, workers/**, and migrations/**; designer tasks
 own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
 Do not put public/** files in engineer-owned tasks.
-When the target folder has no package.json, the root scaffold must be explicit and typecheckable:
-a first root engineer task owns package.json, tsconfig.json, .gitignore, and at least one src/*.ts input such
-as src/index.ts or src/env.ts. Worker runtime/config/source/static asset/migration tasks depend on it unless they own those
-scaffold files themselves.
+When the target folder has no package.json, the root scaffold must be explicit and runnable:
+a first root engineer task owns package.json, .gitignore, and at least one concrete Worker source input such
+as src/index.js or workers/app.js. Include tsconfig.json only when the Worker source is TypeScript. Worker runtime/config/source/static asset/migration tasks depend on it unless they own those scaffold files themselves.
 Task owners must be engineer or designer; verification belongs to the later tester stage.
 Architecture defaults are Workers-first: use standalone Cloudflare Workers unless the
 existing repo or spec explicitly calls for Pages Functions. Never split one feature set

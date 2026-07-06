@@ -97,10 +97,10 @@ legacy aliases `mock` and `real` are still accepted, but the harness is designed
 local Wrangler validation first and human approval before production deploy.
 
 Target projects are assumed to be standalone Cloudflare Workers projects with vanilla
-HTML, CSS, and JavaScript frontends. Pages Functions are an explicit exception, not the
-default. The delivery agents should not introduce React, JSX/TSX, frontend frameworks,
-preprocessors, generic Node/Express servers, filesystem-backed runtime state, or a new
-frontend build step.
+JavaScript Worker modules and vanilla HTML, CSS, and JavaScript frontends. Pages Functions
+and TypeScript Worker source are explicit exceptions, not the default. The delivery agents
+should not introduce React, JSX/TSX, frontend frameworks, preprocessors, generic
+Node/Express servers, filesystem-backed runtime state, or a new frontend build step.
 
 Use local `git` plus the `gh` CLI for repository operations such as commits, pushes,
 and pull requests. Do not use GitHub Actions as the deployment path. Production deployments

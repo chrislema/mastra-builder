@@ -32,7 +32,7 @@
     },
     {
       "id": "required_evidence_passed",
-      "description": "Every required local evidence command passed, including typecheck, required Wrangler D1 migration validation, static Worker config checks, and local Wrangler runtime probes. A PASS decision cannot override failed required evidence.",
+      "description": "Every required local evidence command passed, including TypeScript typecheck when TypeScript is used, required Wrangler D1 migration validation, static Worker config checks, and local Wrangler runtime probes. A PASS decision cannot override failed required evidence.",
       "severity": "critical",
       "on_fail": "cap",
       "cap_value": 0.0,
