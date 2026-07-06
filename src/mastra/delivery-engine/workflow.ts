@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'role-boundary-normalized-v8';
+const plannerPolicyVersion = 'role-boundary-normalized-v9';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -802,6 +802,94 @@ export function normalizeTaskPlanRoleBoundaries(taskPlan: TaskPlan): TaskPlan {
   return changed ? { ...taskPlan, tasks } : taskPlan;
 }
 
+const maxStorageOwnedSurfacesPerTask = 3;
+const minStorageOwnedSurfacesToSplit = 5;
+
+function storageRepositorySurfacePath(surface: string) {
+  const path = concreteOwnedSurfacePath(surface);
+  if (!path?.startsWith('src/storage/')) return undefined;
+  if (!/\.[cm]?[jt]s$/.test(path)) return undefined;
+  return path;
+}
+
+function chunkItems<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+function taskIsLargeStorageOnlyTask(task: Task) {
+  const surfaces = task.owned_surfaces.map(storageRepositorySurfacePath);
+  return (
+    task.owner === 'engineer' &&
+    surfaces.length >= minStorageOwnedSurfacesToSplit &&
+    surfaces.every(Boolean)
+  );
+}
+
+function storageSliceAcceptanceCriteria(task: Task, surfaces: string[], sliceNumber: number, sliceCount: number) {
+  const paths = surfaces.map((surface) => storageRepositorySurfacePath(surface) ?? normalizeDeliveryPathReference(surface));
+  return [
+    `Implement storage slice ${sliceNumber}/${sliceCount}: ${paths.join(', ')}.`,
+    `Replace any preflight stubs for this slice with real repository code before returning.`,
+    `Keep this slice compatible with previously completed storage slices and npm run typecheck.`,
+    ...task.acceptance_criteria.filter((criterion) => paths.some((path) => criterion.includes(path))),
+  ];
+}
+
+function splitLargeStorageTask(task: Task) {
+  if (!taskIsLargeStorageOnlyTask(task)) return [task];
+
+  const chunks = chunkItems(task.owned_surfaces, maxStorageOwnedSurfacesPerTask);
+  return chunks.map((surfaces, index) => {
+    const sliceNumber = index + 1;
+    const previousSliceId = index === 1 ? task.id : `${task.id}-part-${index}`;
+    return {
+      ...task,
+      id: index === 0 ? task.id : `${task.id}-part-${sliceNumber}`,
+      deliverable: `${task.deliverable} (storage slice ${sliceNumber}/${chunks.length})`,
+      depends_on: index === 0 ? task.depends_on : [previousSliceId],
+      acceptance_criteria: storageSliceAcceptanceCriteria(task, surfaces, sliceNumber, chunks.length),
+      owned_surfaces: surfaces,
+    };
+  });
+}
+
+export function normalizeTaskPlanLargeStorageTasks(taskPlan: TaskPlan): TaskPlan {
+  const expandedTasks: Task[] = [];
+  const splitLastTaskId = new Map<string, string>();
+  const splitTaskIds = new Set<string>();
+  let changed = false;
+
+  for (const task of taskPlan.tasks) {
+    const slices = splitLargeStorageTask(task);
+    expandedTasks.push(...slices);
+    if (slices.length > 1) {
+      changed = true;
+      splitLastTaskId.set(task.id, slices[slices.length - 1].id);
+      for (const slice of slices) splitTaskIds.add(slice.id);
+    }
+  }
+
+  if (!changed) return taskPlan;
+
+  const tasks = expandedTasks.map((task) => {
+    if (splitTaskIds.has(task.id)) return task;
+
+    const depends_on = Array.from(new Set(task.depends_on.map((dependency) => splitLastTaskId.get(dependency) ?? dependency)));
+    if (
+      depends_on.length === task.depends_on.length &&
+      depends_on.every((dependency, index) => dependency === task.depends_on[index])
+    ) {
+      return task;
+    }
+
+    return { ...task, depends_on };
+  });
+
+  return { ...taskPlan, tasks };
+}
+
 export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
   if (existsSync(join(repoPath, 'package.json'))) return { passed: true, reason: 'ok' };
 
@@ -837,8 +925,10 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
 }
 
 function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
-  return normalizeTaskPlanRoleBoundaries(
-    normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+  return normalizeTaskPlanLargeStorageTasks(
+    normalizeTaskPlanRoleBoundaries(
+      normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+    ),
   );
 }
 
@@ -907,6 +997,7 @@ function weakDimensionIsNonActionableForTask(
   dimension: AggregatedJudgment['dimensions_scored'][number],
   task?: Task,
 ) {
+  if (dimension.id === 'implementation_note_quality') return true;
   if (dimension.id !== 'state_explicitness') return false;
   if (taskOwnsStatePersistenceSurface(task)) return false;
   return /\b(database|db|d1|sql|schema|table|check constraints?|indexes?|indices)\b/i.test(dimension.evidence);

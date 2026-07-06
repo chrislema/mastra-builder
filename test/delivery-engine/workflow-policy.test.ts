@@ -19,6 +19,7 @@ import {
   judgeUnavailableOutputForRubric,
   judgeUnavailableRemediation,
   lifecycleStatusSchemaGaps,
+  normalizeTaskPlanLargeStorageTasks,
   missingOwnedSurfacePaths,
   normalizeTaskPlanProfileContractDependencies,
   normalizeTaskPlanScaffoldDependencies,
@@ -405,6 +406,50 @@ test('task plan role hygiene rejects engineer-owned public surfaces without a de
 
   assert.equal(result.passed, false);
   assert.match(result.reason, /public\/index\.html|forbidden glob/);
+});
+
+test('task plan normalization splits oversized storage-only tasks and rewires downstream dependencies', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: [
+        'src/storage/d1.ts',
+        'src/storage/artifacts.ts',
+        'src/storage/profiles.ts',
+        'src/storage/runs.ts',
+        'src/storage/bookmarks.ts',
+        'src/storage/links.ts',
+        'src/storage/candidates.ts',
+        'src/storage/transcripts.ts',
+      ],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['src/routes/profiles.ts'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanLargeStorageTasks(plan);
+
+  assert.deepEqual(
+    normalized.tasks.map((task) => task.id),
+    ['T1', 'T1-part-2', 'T1-part-3', 'T2'],
+  );
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, [
+    'src/storage/d1.ts',
+    'src/storage/artifacts.ts',
+    'src/storage/profiles.ts',
+  ]);
+  assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
+  assert.deepEqual(normalized.tasks[1].owned_surfaces, [
+    'src/storage/runs.ts',
+    'src/storage/bookmarks.ts',
+    'src/storage/links.ts',
+  ]);
+  assert.deepEqual(normalized.tasks[2].depends_on, ['T1-part-2']);
+  assert.deepEqual(normalized.tasks[2].owned_surfaces, ['src/storage/candidates.ts', 'src/storage/transcripts.ts']);
+  assert.deepEqual(normalized.tasks[3].depends_on, ['T1-part-3']);
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
 test('existing package scaffold satisfies Worker runtime plan hygiene', () => {
@@ -1241,6 +1286,33 @@ test('passing implementation judgments with weak dimensions still require repair
       note: implementationNote,
     }),
     false,
+  );
+});
+
+test('passing implementation judgments ignore weak note quality as non-code repair', () => {
+  const judgment = {
+    ...implementationJudgment,
+    overall: 0.78,
+    passed: true,
+    dimensions_scored: [
+      { id: 'smallest_coherent_change', score: 5, weight: 8, evidence: 'ok' },
+      {
+        id: 'implementation_note_quality',
+        score: 3,
+        weight: 5,
+        evidence: 'The implementation note has an inconsistent files-touched summary.',
+      },
+    ],
+  };
+
+  assert.deepEqual(implementationWeakDimensionRemediation(judgment), []);
+  assert.equal(
+    implementationJudgmentCanComplete({
+      judgment,
+      deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
+      note: implementationNote,
+    }),
+    true,
   );
 });
 
