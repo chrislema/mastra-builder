@@ -1439,7 +1439,7 @@ test('release gate runtime probe planner covers common Worker API state and erro
     ].join('\n'),
   );
 
-  const probes = releaseGateRuntimeProbePlan(repoPath)?.probes ?? [];
+  const probes = releaseGateRuntimeProbePlan(repoPath, 'test-admin-token')?.probes ?? [];
   assert.deepEqual(
     probes.map((probe) => `${probe.method} ${probe.path}`),
     [
@@ -1454,6 +1454,12 @@ test('release gate runtime probe planner covers common Worker API state and erro
       'POST /profiles',
       'GET /profiles',
     ],
+  );
+  assert.equal(
+    probes
+      .filter((probe) => probe.path === '/runs' || probe.path === '/profiles')
+      .every((probe) => probe.headers?.authorization === 'Bearer test-admin-token'),
+    true,
   );
   assert.equal(probes.some((probe) => probe.body?.type === 'multipart-profile'), true);
   assert.equal(

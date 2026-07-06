@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -3317,9 +3317,47 @@ type ReleaseGateJsonArrayAssertion =
   | { type: 'containsObject'; where: Record<string, string | number | boolean | null> }
   | { type: 'countObjects'; where: Record<string, string | number | boolean | null>; count: number };
 
+const releaseGateLocalAdminToken = 'release-gate-local-admin-token';
+
 function firstTomlStringValue(text: string, key: string) {
   const match = new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, 'm').exec(text);
   return match?.[1];
+}
+
+function releaseGateAdminHeaders(adminToken = releaseGateLocalAdminToken) {
+  return { authorization: `Bearer ${adminToken}` };
+}
+
+function parseDevVarsValue(text: string, key: string) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^\\s*${escaped}\\s*=\\s*(.+?)\\s*$`, 'm').exec(text);
+  if (!match) return undefined;
+  const raw = match[1].trim();
+  const quoted = /^["'](.*)["']$/.exec(raw);
+  return quoted ? quoted[1] : raw;
+}
+
+function prepareReleaseGateLocalAdminSecret(repoPath: string) {
+  const devVarsPath = join(resolve(repoPath), '.dev.vars');
+  if (existsSync(devVarsPath)) {
+    const original = readFileSync(devVarsPath, 'utf8');
+    const existingToken = parseDevVarsValue(original, 'ADMIN_TOKEN');
+    if (existingToken) return { token: existingToken, restore: () => undefined };
+
+    writeFileSync(devVarsPath, `${original.replace(/\s*$/, '\n')}ADMIN_TOKEN=${releaseGateLocalAdminToken}\n`);
+    return {
+      token: releaseGateLocalAdminToken,
+      restore: () => writeFileSync(devVarsPath, original),
+    };
+  }
+
+  writeFileSync(devVarsPath, `ADMIN_TOKEN=${releaseGateLocalAdminToken}\n`);
+  return {
+    token: releaseGateLocalAdminToken,
+    restore: () => {
+      if (existsSync(devVarsPath)) unlinkSync(devVarsPath);
+    },
+  };
 }
 
 function releaseGateWorkerConfigPath(repoPath: string) {
@@ -3450,9 +3488,13 @@ export function releaseGateWorkerDevCommand(
   } satisfies ReleaseGateProcessCommand;
 }
 
-export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntimeProbePlan | undefined {
+export function releaseGateRuntimeProbePlan(
+  repoPath: string,
+  adminToken = releaseGateLocalAdminToken,
+): ReleaseGateRuntimeProbePlan | undefined {
   const command = releaseGateWorkerDevCommand(repoPath);
   if (!command) return undefined;
+  const adminHeaders = releaseGateAdminHeaders(adminToken);
 
   const probes: ReleaseGateHttpProbePlan[] = [
     {
@@ -3510,6 +3552,7 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
         path: '/runs',
         expected: 'POST /runs rejects invalid JSON with HTTP 400 and error "invalid_json".',
         expectedStatus: 400,
+        headers: adminHeaders,
         body: { type: 'text', value: '{not-json', contentType: 'application/json' },
         jsonContains: { error: 'invalid_json' },
         reason: 'The run creation route was present and should give actionable malformed-body feedback.',
@@ -3519,6 +3562,7 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
         path: '/runs',
         expected: 'POST /runs without active profiles returns HTTP 409 and error "missing_active_profile".',
         expectedStatus: 409,
+        headers: adminHeaders,
         body: { type: 'json', value: {} },
         jsonContains: { error: 'missing_active_profile' },
         reason: 'The run creation route depends on active profiles and should fail closed in a clean local state.',
@@ -3533,6 +3577,7 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
         path: '/profiles',
         expected: 'POST /profiles rejects non-multipart requests with HTTP 400.',
         expectedStatus: 400,
+        headers: adminHeaders,
         body: { type: 'json', value: { kind: 'audience_segments' } },
         jsonContains: { error: 'Request must be multipart/form-data' },
         reason: 'The profile upload route was present and should validate request shape before storage writes.',
@@ -3542,6 +3587,7 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
         path: '/profiles',
         expected: 'POST /profiles stores an active audience profile through D1 and R2.',
         expectedStatus: 201,
+        headers: adminHeaders,
         body: {
           type: 'multipart-profile',
           kind: 'audience_segments',
@@ -3557,6 +3603,7 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
         path: '/profiles',
         expected: 'POST /profiles stores an active voice profile through D1 and R2.',
         expectedStatus: 201,
+        headers: adminHeaders,
         body: {
           type: 'multipart-profile',
           kind: 'voice_profile',
@@ -3572,6 +3619,7 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
         path: '/profiles',
         expected: 'Uploading a second active audience profile deactivates the first same-kind profile.',
         expectedStatus: 201,
+        headers: adminHeaders,
         body: {
           type: 'multipart-profile',
           kind: 'audience_segments',
@@ -3587,6 +3635,7 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
         path: '/profiles',
         expected: 'GET /profiles shows persisted profiles with one active audience profile and one active voice profile.',
         expectedStatus: 200,
+        headers: adminHeaders,
         jsonArrayAssertions: [
           { type: 'minLength', min: 3 },
           { type: 'containsObject', where: { kind: 'audience_segments', filename: 'audience-one.md', isActive: false } },
@@ -4031,8 +4080,12 @@ async function runReleaseGateRuntimeProbe({
   stage: string;
   persistTo?: string;
 }): Promise<ReleaseGateEvidenceResult | undefined> {
-  const plan = releaseGateRuntimeProbePlan(repoPath);
-  if (!plan) return undefined;
+  const adminSecret = prepareReleaseGateLocalAdminSecret(repoPath);
+  const plan = releaseGateRuntimeProbePlan(repoPath, adminSecret.token);
+  if (!plan) {
+    adminSecret.restore();
+    return undefined;
+  }
 
   const port = await availableTcpPort();
   const command = releaseGateWorkerDevCommand(repoPath, port, persistTo ?? createReleaseGateRuntimeStatePath(repoPath));
@@ -4048,6 +4101,7 @@ async function runReleaseGateRuntimeProbe({
     detached: process.platform !== 'win32',
     env: {
       ...process.env,
+      ADMIN_TOKEN: adminSecret.token,
       CI: process.env.CI ?? '1',
       NO_COLOR: '1',
       WRANGLER_SEND_METRICS: 'false',
@@ -4134,6 +4188,7 @@ async function runReleaseGateRuntimeProbe({
     };
   } finally {
     await stopChildProcess(child);
+    adminSecret.restore();
   }
 }
 
