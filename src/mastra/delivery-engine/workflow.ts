@@ -2031,6 +2031,23 @@ function observabilityConfigGaps(observability: Record<string, unknown> | undefi
   return gaps;
 }
 
+function workerMainEntrypointGaps(repoPath: string, main: unknown) {
+  if (typeof main !== 'string' || !main.trim()) {
+    return ['main is missing; set it to the Worker entrypoint file used by Wrangler local validation.'];
+  }
+
+  const normalized = normalizeDeliveryPathReference(main);
+  if (!normalized || isAbsolute(normalized)) {
+    return [`main "${main}" must be a repo-relative Worker entrypoint path.`];
+  }
+
+  if (!existsSync(join(resolve(repoPath), normalized))) {
+    return [`main "${normalized}" does not exist; Wrangler local validation would start the wrong or missing Worker entrypoint.`];
+  }
+
+  return [];
+}
+
 function taskBoundaryCanConfigureWorkerConfig(repoPath: string, task: Task) {
   return taskBoundarySurfaces(repoPath, task)
     .map(concreteOwnedSurfacePath)
@@ -2246,6 +2263,7 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
   const gaps: string[] = [];
 
   if (configPath.endsWith('.toml')) {
+    gaps.push(...workerMainEntrypointGaps(repoPath, firstTomlStringValue(text, 'main')));
     gaps.push(...workerCompatibilityDateGaps(firstTomlStringValue(text, 'compatibility_date')));
     if (!tomlArrayStringValues(text, 'compatibility_flags').includes('nodejs_compat')) {
       gaps.push('compatibility_flags must include "nodejs_compat" so Wrangler provides Node.js compatibility for npm packages.');
@@ -2275,6 +2293,7 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
     gaps.push('$schema must be "./node_modules/wrangler/config-schema.json" so Wrangler/editor validation resolves locally.');
   }
 
+  gaps.push(...workerMainEntrypointGaps(repoPath, config.main));
   gaps.push(...workerCompatibilityDateGaps(config.compatibility_date));
 
   if (!stringArrayValue(config.compatibility_flags).includes('nodejs_compat')) {

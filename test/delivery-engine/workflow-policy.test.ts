@@ -1740,6 +1740,8 @@ test('Workers AI projects require an active Wrangler AI binding and required Env
 
 test('Worker config hygiene requires current JSONC schema date flags and observability', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-hygiene-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
   const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc'] }]).tasks;
 
   writeFileSync(
@@ -1823,6 +1825,7 @@ test('Worker release gate fails closed when Wrangler config is missing', () => {
 test('Worker config hygiene aligns Cloudflare binding names with Env declarations', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-env-align-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
   const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc'] }]).tasks;
 
   writeFileSync(
