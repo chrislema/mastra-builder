@@ -116,7 +116,7 @@ such as package.json, tsconfig.json, wrangler.toml, src/**, and migrations/**; d
 own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
 Do not put public/** files in engineer-owned tasks.
 When the target folder has no package.json, the root scaffold must be explicit and typecheckable:
-a first root engineer task owns package.json, tsconfig.json, and at least one src/*.ts input such
+a first root engineer task owns package.json, tsconfig.json, .gitignore, and at least one src/*.ts input such
 as src/index.ts or src/env.ts. Worker runtime/config/source/static asset/migration tasks depend on it unless they own those
 scaffold files themselves.
 Task owners must be engineer or designer; verification belongs to the later tester stage.

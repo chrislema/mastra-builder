@@ -5915,7 +5915,7 @@ Role-boundary hygiene:
 - Do not put public/** files in engineer-owned tasks; create or reuse a designer task for vanilla HTML/CSS/JS UI work.
 Root scaffold hygiene:
 - Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
-- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, tsconfig.json, and at least one TypeScript source input such as src/index.ts or src/env.ts.
+- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, tsconfig.json, .gitignore, and at least one TypeScript source input such as src/index.ts or src/env.ts.
 - Worker runtime/config/source/static asset/migration tasks must depend on that scaffold task unless they own package.json and tsconfig.json themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
@@ -7194,7 +7194,10 @@ Execution rules:
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
 - When worker_config_policy is not null, read src/env.ts if it exists and use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, and Wrangler binding names that exactly match Env binding property names.
-- For Worker scaffold package.json, use current Cloudflare tooling: Wrangler "latest" or v4+, @cloudflare/workers-types "latest" or a recent dated v4 release, scripts.dev as "wrangler dev", scripts.deploy as "wrangler deploy", and scripts.typecheck as "tsc --noEmit".
+- For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, @cloudflare/workers-types "latest" or a recent dated v4 release, scripts.dev as "wrangler dev", scripts.deploy as "wrangler deploy", and scripts.typecheck as "tsc --noEmit".
+- Do not add React, Vite, Next, Vue, Svelte, or frontend build dependencies/scripts. Chris's Worker frontends are vanilla HTML/CSS/JS served as static assets.
+- Configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes @cloudflare/workers-types, and strict is true.
+- .gitignore must exclude node_modules/, .wrangler/, .delivery/, .dev.vars, and .env.
 - For placeholder Worker route/error responses, include actionable next steps such as available route expectations, pending setup, or the next implementation surface instead of only returning "not found".
 - When profile_kind_policy is not null, use it exactly: PROFILE_KINDS must include audience_segments and voice_profile as the persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
