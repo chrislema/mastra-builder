@@ -56,9 +56,12 @@ import {
   verificationWithAcceptanceGaps,
   workflowStepIntegrationGaps,
   workersAiBindingGaps,
+  workerConfigHygieneGaps,
   wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
+
+const currentCompatibilityDate = () => new Date().toISOString().slice(0, 10);
 
 const readout = (blocking_ambiguities: string[]) => ({
   artifact_type: 'readout' as const,
@@ -1061,9 +1064,22 @@ test('Workers AI projects require an active Wrangler AI binding and required Env
   );
   writeFileSync(
     join(repoPath, 'wrangler.toml'),
-    ['name = "demo-worker"', '# [ai]', '# binding = "AI"'].join('\n'),
+    [
+      'name = "demo-worker"',
+      `compatibility_date = "${currentCompatibilityDate()}"`,
+      'compatibility_flags = [ "nodejs_compat" ]',
+      '',
+      '[observability]',
+      'enabled = true',
+      'head_sampling_rate = 1',
+      '',
+      '# [ai]',
+      '# binding = "AI"',
+    ].join('\n'),
   );
   const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.toml', 'src/index.ts'] }]).tasks;
+  const workersAiEvidence = () =>
+    releaseGateStaticEvidenceResults(repoPath).find((result) => result.command === 'static check: Workers AI binding configured');
 
   assert.equal(wranglerConfigHasWorkersAiBinding(repoPath), false);
   assert.deepEqual(workersAiBindingGaps(repoPath, task), [
@@ -1071,26 +1087,35 @@ test('Workers AI projects require an active Wrangler AI binding and required Env
     'Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.',
   ]);
   assert.deepEqual(
-    releaseGateStaticEvidenceResults(repoPath).map((result) => ({
-      command: result.command,
-      ok: result.ok,
-      required: result.required,
-      error: result.error,
-    })),
-    [
-      {
-        command: 'static check: Workers AI binding configured',
-        ok: false,
-        required: true,
-        error:
-          'Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section. Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.',
-      },
-    ],
+    workersAiEvidence() && {
+      command: workersAiEvidence()?.command,
+      ok: workersAiEvidence()?.ok,
+      required: workersAiEvidence()?.required,
+      error: workersAiEvidence()?.error,
+    },
+    {
+      command: 'static check: Workers AI binding configured',
+      ok: false,
+      required: true,
+      error:
+        'Workers AI source is present, but the Wrangler config does not contain an active [ai] binding = "AI" section. Worker Env marks AI as optional (AI?: Ai); AI-backed product behavior needs Env.AI to be a required binding.',
+    },
   );
 
   writeFileSync(
     join(repoPath, 'wrangler.toml'),
-    ['name = "demo-worker"', '[ai]', 'binding = "AI"'].join('\n'),
+    [
+      'name = "demo-worker"',
+      `compatibility_date = "${currentCompatibilityDate()}"`,
+      'compatibility_flags = [ "nodejs_compat" ]',
+      '',
+      '[observability]',
+      'enabled = true',
+      'head_sampling_rate = 1',
+      '',
+      '[ai]',
+      'binding = "AI"',
+    ].join('\n'),
   );
   writeFileSync(
     join(repoPath, 'src/index.ts'),
@@ -1103,7 +1128,71 @@ test('Workers AI projects require an active Wrangler AI binding and required Env
 
   assert.equal(wranglerConfigHasWorkersAiBinding(repoPath), true);
   assert.deepEqual(workersAiBindingGaps(repoPath, task), []);
-  assert.equal(releaseGateStaticEvidenceResults(repoPath)[0]?.ok, true);
+  assert.equal(workersAiEvidence()?.ok, true);
+});
+
+test('Worker config hygiene requires current JSONC schema date flags and observability', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-hygiene-'));
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc'] }]).tasks;
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    [
+      '{',
+      '  "$schema": "node_modules/wrangler/config-schema.json",',
+      '  "name": "demo-worker",',
+      '  "main": "src/index.ts",',
+      '  "compatibility_date": "2025-01-01", // stale',
+      '  "compatibility_flags": [],',
+      '  "observability": { "enabled": false },',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const gaps = workerConfigHygieneGaps(repoPath, task);
+  assert.match(gaps.join('\n'), /\$schema/);
+  assert.match(gaps.join('\n'), /compatibility_date "2025-01-01" is stale/);
+  assert.match(gaps.join('\n'), /nodejs_compat/);
+  assert.match(gaps.join('\n'), /observability\.enabled/);
+  assert.match(gaps.join('\n'), /head_sampling_rate/);
+
+  const remediation = [`DETERMINISTIC cloudflare_worker_config_current failed: ${gaps.join('; ')}`];
+  assert.equal(implementationFailureClass(remediation), 'worker_config');
+  assert.equal(
+    implementationRetryMode({
+      remediation,
+      missingSurfaces: [],
+    }),
+    'focused-repair',
+  );
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: {
+          enabled: true,
+          head_sampling_rate: 1,
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
+  assert.deepEqual(workerConfigHygieneGaps(repoPath), []);
+  assert.equal(
+    releaseGateStaticEvidenceResults(repoPath).find((result) => result.command === 'static check: Worker config hygiene')
+      ?.ok,
+    true,
+  );
 });
 
 test('stale downstream verification repair resets only future failed task surfaces', async () => {

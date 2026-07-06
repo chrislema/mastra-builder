@@ -1456,6 +1456,245 @@ function wranglerJsonHasWorkersAiBinding(text: string) {
   return /"ai"\s*:\s*\{[\s\S]*?"binding"\s*:\s*"AI"/.test(text);
 }
 
+function stripJsoncComments(text: string) {
+  let output = '';
+  let inString = false;
+  let stringQuote = '';
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === stringQuote) {
+        inString = false;
+        stringQuote = '';
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      inString = true;
+      stringQuote = char;
+      output += char;
+      continue;
+    }
+
+    if (char === '/' && next === '/') {
+      while (index < text.length && text[index] !== '\n') index += 1;
+      output += '\n';
+      continue;
+    }
+
+    if (char === '/' && next === '*') {
+      index += 2;
+      while (index < text.length) {
+        if (text[index] === '\n') output += '\n';
+        if (text[index] === '*' && text[index + 1] === '/') {
+          index += 1;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+
+    output += char;
+  }
+
+  return output;
+}
+
+function parseWranglerJsonConfig(text: string) {
+  const withoutComments = stripJsoncComments(text);
+  const withoutTrailingCommas = withoutComments.replace(/,\s*([}\]])/g, '$1');
+  try {
+    const parsed = JSON.parse(withoutTrailingCommas) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function recordValue(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function stringArrayValue(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function tomlArrayStringValues(text: string, key: string) {
+  const match = new RegExp(`^\\s*${key}\\s*=\\s*\\[([^\\]]*)\\]`, 'm').exec(text);
+  if (!match) return [];
+  return match[1]
+    .split(',')
+    .map((item) => item.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean);
+}
+
+function firstTomlBooleanValue(text: string, key: string) {
+  const match = new RegExp(`^\\s*${key}\\s*=\\s*(true|false)\\s*$`, 'm').exec(text);
+  return match ? match[1] === 'true' : undefined;
+}
+
+function firstTomlNumberValue(text: string, key: string) {
+  const match = new RegExp(`^\\s*${key}\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*$`, 'm').exec(text);
+  return match ? Number(match[1]) : undefined;
+}
+
+function tomlSectionBody(text: string, sectionName: string) {
+  const lines = text.split(/\r?\n/);
+  const body: string[] = [];
+  let inSection = false;
+
+  for (const line of lines) {
+    const section = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (section) {
+      if (inSection) break;
+      inSection = section[1] === sectionName;
+      continue;
+    }
+
+    if (inSection) body.push(line);
+  }
+
+  return inSection || body.length ? body.join('\n') : undefined;
+}
+
+function isoDateParts(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return undefined;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const time = Date.UTC(year, month - 1, day);
+  const parsed = new Date(time);
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+    return undefined;
+  }
+
+  return { year, month, day, time };
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function workerCompatibilityDateGaps(value: unknown) {
+  if (typeof value !== 'string') {
+    return [`compatibility_date is missing; set it to today's date (${todayIsoDate()}) for new Worker projects.`];
+  }
+
+  const parsed = isoDateParts(value);
+  if (!parsed) {
+    return [`compatibility_date "${value}" is not a valid YYYY-MM-DD date.`];
+  }
+
+  const today = isoDateParts(todayIsoDate());
+  if (!today) return [];
+
+  const ageDays = Math.floor((today.time - parsed.time) / 86_400_000);
+  if (ageDays < 0) {
+    return [`compatibility_date "${value}" is in the future; use today's date (${todayIsoDate()}) or a recent released date.`];
+  }
+  if (ageDays > 30) {
+    return [
+      `compatibility_date "${value}" is stale by ${ageDays} days; set it to today's date (${todayIsoDate()}) or a date within the last 30 days.`,
+    ];
+  }
+
+  return [];
+}
+
+function observabilityConfigGaps(observability: Record<string, unknown> | undefined) {
+  const gaps: string[] = [];
+  if (!observability) {
+    return ['observability is missing; enable Worker observability explicitly with enabled=true and a head_sampling_rate.'];
+  }
+
+  if (observability.enabled !== true) {
+    gaps.push('observability.enabled must be true for Worker logs/traces.');
+  }
+
+  const samplingRate = observability.head_sampling_rate;
+  if (typeof samplingRate !== 'number' || !Number.isFinite(samplingRate) || samplingRate <= 0 || samplingRate > 1) {
+    gaps.push('observability.head_sampling_rate must be an explicit number greater than 0 and at most 1.');
+  }
+
+  return gaps;
+}
+
+function taskBoundaryCanConfigureWorkerConfig(repoPath: string, task: Task) {
+  return taskBoundarySurfaces(repoPath, task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .some((path) => ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'].includes(path));
+}
+
+function relativeWorkerConfigPath(repoPath: string, configPath: string) {
+  const root = resolve(repoPath);
+  return configPath.startsWith(`${root}/`) ? configPath.slice(root.length + 1) : configPath;
+}
+
+export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
+  if (task && !taskBoundaryCanConfigureWorkerConfig(repoPath, task)) return [];
+
+  const configPath = releaseGateWorkerConfigPath(repoPath);
+  if (!configPath) return task ? ['Worker config surface is owned, but no Wrangler config file exists.'] : [];
+
+  const configName = relativeWorkerConfigPath(repoPath, configPath);
+  const text = readFileSync(configPath, 'utf8');
+  const gaps: string[] = [];
+
+  if (configPath.endsWith('.toml')) {
+    gaps.push(...workerCompatibilityDateGaps(firstTomlStringValue(text, 'compatibility_date')));
+    if (!tomlArrayStringValues(text, 'compatibility_flags').includes('nodejs_compat')) {
+      gaps.push('compatibility_flags must include "nodejs_compat" so Wrangler provides Node.js compatibility for npm packages.');
+    }
+
+    const observability = tomlSectionBody(text, 'observability');
+    if (!observability) {
+      gaps.push('observability is missing; add [observability] with enabled=true and head_sampling_rate.');
+    } else {
+      gaps.push(
+        ...observabilityConfigGaps({
+          enabled: firstTomlBooleanValue(observability, 'enabled'),
+          head_sampling_rate: firstTomlNumberValue(observability, 'head_sampling_rate'),
+        }),
+      );
+    }
+
+    return gaps.map((gap) => `${configName}: ${gap}`);
+  }
+
+  const config = parseWranglerJsonConfig(text);
+  if (!config) return [`${configName}: config is not valid JSONC that can be parsed for Worker config hygiene.`];
+
+  if (config.$schema !== './node_modules/wrangler/config-schema.json') {
+    gaps.push('$schema must be "./node_modules/wrangler/config-schema.json" so Wrangler/editor validation resolves locally.');
+  }
+
+  gaps.push(...workerCompatibilityDateGaps(config.compatibility_date));
+
+  if (!stringArrayValue(config.compatibility_flags).includes('nodejs_compat')) {
+    gaps.push('compatibility_flags must include "nodejs_compat" so Wrangler provides Node.js compatibility for npm packages.');
+  }
+
+  gaps.push(...observabilityConfigGaps(recordValue(config.observability)));
+
+  return gaps.map((gap) => `${configName}: ${gap}`);
+}
+
 export function wranglerConfigHasWorkersAiBinding(repoPath: string) {
   const configPath = releaseGateWorkerConfigPath(repoPath);
   if (!configPath) return false;
@@ -1825,10 +2064,19 @@ function remediationHasReadBudgetFailure(remediation: string[]) {
   return remediation.some((item) => /\bREAD_BUDGET_EXCEEDED\b|pre-write read\/list budget/i.test(item));
 }
 
+function remediationHasWorkerConfigFailure(remediation: string[]) {
+  return remediation.some((item) =>
+    /\b(cloudflare_worker_config_current|worker_config_hygiene|compatibility_date|nodejs_compat|observability)\b/i.test(
+      item,
+    ),
+  );
+}
+
 export function implementationFailureClass(remediation: string[]) {
   if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
   if (remediationHasUnreplacedPreflightStubFailure(remediation)) return 'preflight_stub' as const;
   if (remediationHasReadBudgetFailure(remediation)) return 'read_budget' as const;
+  if (remediationHasWorkerConfigFailure(remediation)) return 'worker_config' as const;
   if (remediationHasStaleWorkspaceVerificationFailure(remediation)) return 'stale_workspace_verification' as const;
   if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
   if (remediationHasPolicyBoundaryFailure(remediation)) return 'policy_boundary' as const;
@@ -1878,6 +2126,7 @@ export function implementationRetryMode({
     timeoutRecovery ||
     noActionRecovery ||
     failureClass === 'read_budget' ||
+    failureClass === 'worker_config' ||
     failureClass === 'policy_boundary' ||
     failureClass === 'judge_timeout' ||
     remediationHasVerificationFailure(remediation) ||
@@ -2717,11 +2966,12 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
 
 export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateEvidenceResult[] {
   const aiGaps = workersAiBindingGaps(repoPath);
-  if (!repoSourceUsesWorkersAi(repoPath) && !aiGaps.length) return [];
+  const workerConfigGaps = workerConfigHygieneGaps(repoPath);
+  const results: ReleaseGateEvidenceResult[] = [];
 
-  const ok = aiGaps.length === 0;
-  return [
-    {
+  if (repoSourceUsesWorkersAi(repoPath) || aiGaps.length) {
+    const ok = aiGaps.length === 0;
+    results.push({
       tier: 'api',
       command: 'static check: Workers AI binding configured',
       ok,
@@ -2729,8 +2979,24 @@ export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateE
       reason: 'Source uses Workers AI, so the Worker must expose a real AI binding before AI-backed routes or workflows can be accepted.',
       output_summary: ok ? 'Wrangler config contains active Workers AI binding and Env.AI is required.' : undefined,
       error: ok ? undefined : aiGaps.join(' '),
-    },
-  ];
+    });
+  }
+
+  if (releaseGateWorkerConfigPath(repoPath) || workerConfigGaps.length) {
+    const ok = workerConfigGaps.length === 0;
+    results.push({
+      tier: 'runtime',
+      command: 'static check: Worker config hygiene',
+      ok,
+      required: true,
+      reason:
+        'Worker release requires a current Wrangler config with local schema validation, recent compatibility date, Node.js compatibility, and observability.',
+      output_summary: ok ? 'Wrangler config is current, Node-compatible, and observable.' : undefined,
+      error: ok ? undefined : workerConfigGaps.join(' '),
+    });
+  }
+
+  return results;
 }
 
 async function recordReleaseGateStaticEvidenceResult({
@@ -3385,6 +3651,7 @@ function implementationDeterministicResults({
   const workflowIntegrationGaps = workflowStepIntegrationGaps(repoPath, task);
   const routeMiddlewareGaps = routeMiddlewareBypassGaps(repoPath, task);
   const aiBindingGaps = workersAiBindingGaps(repoPath, task);
+  const workerConfigGaps = workerConfigHygieneGaps(repoPath, task);
   const lifecycleStatusGaps = lifecycleStatusSchemaGaps(repoPath, task);
   const profileKindGaps = profileKindContractGaps(repoPath, task);
   const noteOwnership = runDeterministicCheck({
@@ -3440,6 +3707,12 @@ function implementationDeterministicResults({
       reason: aiBindingGaps.length ? aiBindingGaps.join('; ') : 'ok',
     },
     {
+      id: 'cloudflare_worker_config_current',
+      check: 'worker_config_hygiene',
+      passed: workerConfigGaps.length === 0,
+      reason: workerConfigGaps.length ? workerConfigGaps.join('; ') : 'ok',
+    },
+    {
       id: 'lifecycle_status_schema_constrained',
       check: 'state_explicitness',
       passed: lifecycleStatusGaps.length === 0,
@@ -3475,6 +3748,8 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'route_middleware_layering',
         'middleware_layering',
         'workers_ai_binding_required',
+        'cloudflare_worker_config_current',
+        'worker_config_hygiene',
         'lifecycle_status_schema_constrained',
         'state_explicitness',
         'profile_kind_contract_aligned',
@@ -5671,7 +5946,10 @@ const executeBuildTaskAttemptStep = createStep({
       package_manifest_owned: packageManifestOwned,
       existing_package_dependencies: existingPackageDependencies,
       focused_repair_file_context: focusedRepairFileContext,
-      platform_policy_findings: workersAiBindingGaps(inputData.repoPath, task),
+      platform_policy_findings: [
+        ...workersAiBindingGaps(inputData.repoPath, task),
+        ...workerConfigHygieneGaps(inputData.repoPath, task),
+      ],
     };
 
     const buildPrompt = `Implement build task ${task.id}.
@@ -5700,6 +5978,7 @@ Execution rules:
 - Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
+- For Worker config, use wrangler.jsonc for new projects with "$schema": "./node_modules/wrangler/config-schema.json", a current/recent compatibility_date, compatibility_flags including "nodejs_compat", and explicit observability enabled with head_sampling_rate.
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
 - For route tasks, integrate new endpoints through the existing Worker router/barrel/middleware path. Do not import route handlers into src/index.ts and dispatch them before routeRequest when routeRequest already exists.
 - If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.
