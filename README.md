@@ -115,7 +115,7 @@ generated types instead of hand-written Worker runtime types: `scripts.generate-
 `wrangler types`, `scripts.typecheck` runs `npm run generate-types && tsc --noEmit`, and
 `tsconfig.json` includes `./worker-configuration.d.ts` plus `node`. The release gate also
 requires `wrangler types --check` before package checks, dry-run deploy, startup profiling,
-local D1 migrations, and local `wrangler dev --env staging` probes.
+staging-aware local D1 migrations, and local `wrangler dev --env staging` probes.
 
 Use local `git` for source-control checkpoints. Use the `gh` CLI only when an explicit
 human instruction calls for pushes, pull requests, or other remote GitHub actions. Do not
@@ -250,7 +250,8 @@ npm run build
 For target Worker projects, the delivery release gate plans Wrangler-native evidence:
 generated type freshness for TypeScript Workers, `wrangler deploy --dry-run`,
 `wrangler check startup`, local D1 migrations when configured, static Worker config checks,
-and local `wrangler dev --env staging` runtime probes before any production approval path. New Worker
+and local `wrangler dev --env staging` runtime probes before any production approval path. When
+`env.staging` exists, local D1 migration evidence uses that staging environment as well. New Worker
 scaffolds should also ignore `*.cpuprofile` so startup-profile evidence stays out of git.
 
 `npm run build` has completed successfully for this project. If a restricted sandbox stalls

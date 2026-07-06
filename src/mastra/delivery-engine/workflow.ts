@@ -4066,24 +4066,57 @@ export function releaseGateLocalD1DatabaseName(repoPath: string) {
   const wranglerPath = releaseGateWorkerConfigPath(repoPath);
   if (!wranglerPath) return undefined;
 
+  const environmentName = workerConfigHasEnvironment(repoPath, 'staging') ? 'staging' : undefined;
   const text = readFileSync(wranglerPath, 'utf8');
   if (wranglerPath.endsWith('.toml')) {
-    return firstTomlStringValue(text, 'database_name') ?? firstTomlStringValue(text, 'name');
+    return (
+      (environmentName ? workerTomlD1DatabaseName(text, environmentName) : undefined) ??
+      workerTomlD1DatabaseName(text)
+    );
   }
 
   const config = parseWranglerJsonConfig(text);
-  const d1Databases = Array.isArray(config?.d1_databases) ? config.d1_databases : [];
+  const environment = environmentName && config ? workerJsonEnvironmentRecord(config, environmentName) : undefined;
+  return workerJsonD1DatabaseName(environment) ?? workerJsonD1DatabaseName(config);
+}
+
+function d1DatabaseNameFromRecord(record: Record<string, unknown> | undefined) {
+  const databaseName = record?.database_name;
+  const databaseId = record?.database_id;
+  const binding = record?.binding;
+  if (typeof databaseName === 'string' && databaseName.trim()) return databaseName;
+  if (typeof databaseId === 'string' && databaseId.trim()) return databaseId;
+  if (typeof binding === 'string' && binding.trim()) return binding;
+  return undefined;
+}
+
+function workerJsonD1DatabaseName(config: Record<string, unknown> | undefined) {
+  if (!config) return undefined;
+  const d1Databases = Array.isArray(config.d1_databases) ? config.d1_databases : [];
   for (const database of d1Databases) {
-    const record = recordValue(database);
-    const databaseName = record?.database_name;
-    const databaseId = record?.database_id;
-    const binding = record?.binding;
-    if (typeof databaseName === 'string' && databaseName.trim()) return databaseName;
-    if (typeof databaseId === 'string' && databaseId.trim()) return databaseId;
-    if (typeof binding === 'string' && binding.trim()) return binding;
+    const databaseName = d1DatabaseNameFromRecord(recordValue(database));
+    if (databaseName) return databaseName;
   }
 
   return undefined;
+}
+
+function workerTomlD1DatabaseName(text: string, environmentName?: string) {
+  const tableName = environmentName ? `env.${environmentName}.d1_databases` : 'd1_databases';
+  for (const body of tomlArrayTableBodies(text, tableName)) {
+    const databaseName = d1DatabaseNameFromRecord({
+      database_name: firstTomlStringValue(body, 'database_name'),
+      database_id: firstTomlStringValue(body, 'database_id'),
+      binding: firstTomlStringValue(body, 'binding'),
+    });
+    if (databaseName) return databaseName;
+  }
+
+  return undefined;
+}
+
+function releaseGateLocalD1Environment(repoPath: string) {
+  return workerConfigHasEnvironment(repoPath, 'staging') ? 'staging' : undefined;
 }
 
 function sourceTreeContainsText(rootPath: string, needle: string, scanned = { count: 0 }): boolean {
@@ -4614,12 +4647,15 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
 
   const databaseName = releaseGateLocalD1DatabaseName(repoPath);
   if (databaseName && existsSync(join(resolve(repoPath), 'migrations'))) {
+    const environmentName = releaseGateLocalD1Environment(repoPath);
+    const environmentArgs = environmentName ? ['--env', environmentName] : [];
+    const environmentCommand = environmentName ? ` --env ${environmentName}` : '';
     const persistArgs = persistTo ? ['--persist-to', persistTo] : [];
     const persistCommand = persistTo ? ` --persist-to ${persistTo}` : '';
     const migrationCommand = wranglerProcessCommand(
       repoPath,
-      `d1 migrations apply ${databaseName} --local${persistCommand}`,
-      ['d1', 'migrations', 'apply', databaseName, '--local', ...persistArgs],
+      `d1 migrations apply ${databaseName}${environmentCommand} --local${persistCommand}`,
+      ['d1', 'migrations', 'apply', databaseName, ...environmentArgs, '--local', ...persistArgs],
     );
     commands.push({
       tier: 'api',
@@ -4639,8 +4675,8 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
           tier: 'api',
           ...wranglerProcessCommand(
             repoPath,
-            `d1 execute ${databaseName} --local${persistCommand} --file ${fixturePath} --json`,
-            ['d1', 'execute', databaseName, '--local', ...persistArgs, '--file', fixturePath, '--json'],
+            `d1 execute ${databaseName}${environmentCommand} --local${persistCommand} --file ${fixturePath} --json`,
+            ['d1', 'execute', databaseName, ...environmentArgs, '--local', ...persistArgs, '--file', fixturePath, '--json'],
           ),
           required: true,
           reason:
@@ -4650,8 +4686,8 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
           tier: 'api',
           ...wranglerProcessCommand(
             repoPath,
-            `d1 execute ${databaseName} --local${persistCommand} --command "${versionAuditSql}" --json`,
-            ['d1', 'execute', databaseName, '--local', ...persistArgs, '--command', versionAuditSql, '--json'],
+            `d1 execute ${databaseName}${environmentCommand} --local${persistCommand} --command "${versionAuditSql}" --json`,
+            ['d1', 'execute', databaseName, ...environmentArgs, '--local', ...persistArgs, '--command', versionAuditSql, '--json'],
           ),
           required: true,
           reason:

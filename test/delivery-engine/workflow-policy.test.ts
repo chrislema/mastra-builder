@@ -1632,6 +1632,85 @@ test('release gate evidence planner uses wrangler.jsonc D1 config for required l
   );
 });
 
+test('release gate D1 migration validation targets staging environments', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-evidence-jsonc-staging-'));
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify({ scripts: { typecheck: 'node --check src/index.js' } }, null, 2),
+  );
+  writeFileSync(join(repoPath, 'migrations/0001_schema.sql'), 'CREATE TABLE runs (id TEXT PRIMARY KEY);\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'talking-head-builder',
+        main: 'src/index.js',
+        d1_databases: [{ binding: 'DB', database_name: 'talking-head-builder', database_id: 'local-placeholder' }],
+        env: {
+          staging: {
+            d1_databases: [{ binding: 'DB', database_name: 'talking-head-builder-staging', database_id: 'staging-id' }],
+          },
+          production: {
+            d1_databases: [{ binding: 'DB', database_name: 'talking-head-builder-production', database_id: 'production-id' }],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.equal(releaseGateLocalD1DatabaseName(repoPath), 'talking-head-builder-staging');
+  assert.deepEqual(
+    releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command),
+    [
+      'npm run typecheck',
+      'npx wrangler deploy --dry-run --env production',
+      'npx wrangler check startup --args="--env production"',
+      'npx wrangler d1 migrations apply talking-head-builder-staging --env staging --local --persist-to /tmp/probe-state',
+    ],
+  );
+});
+
+test('release gate D1 migration validation targets TOML staging environments', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-evidence-toml-staging-'));
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(join(repoPath, 'migrations/0001_schema.sql'), 'CREATE TABLE runs (id TEXT PRIMARY KEY);\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.toml'),
+    [
+      'name = "demo-worker"',
+      'main = "src/index.js"',
+      '[[d1_databases]]',
+      'binding = "DB"',
+      'database_name = "demo-db"',
+      '[env.staging]',
+      'name = "demo-worker-staging"',
+      '[[env.staging.d1_databases]]',
+      'binding = "DB"',
+      'database_name = "demo-db-staging"',
+      '[env.production]',
+      'name = "demo-worker-production"',
+      '[[env.production.d1_databases]]',
+      'binding = "DB"',
+      'database_name = "demo-db-production"',
+      '',
+    ].join('\n'),
+  );
+
+  assert.equal(releaseGateLocalD1DatabaseName(repoPath), 'demo-db-staging');
+  assert.deepEqual(
+    releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command),
+    [
+      'npx wrangler deploy --dry-run --env production',
+      'npx wrangler check startup --args="--env production"',
+      'npx wrangler d1 migrations apply demo-db-staging --env staging --local --persist-to /tmp/probe-state',
+    ],
+  );
+});
+
 test('release gate Wrangler commands prefer the installed local binary', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-local-wrangler-'));
   mkdirSync(join(repoPath, 'migrations'), { recursive: true });
