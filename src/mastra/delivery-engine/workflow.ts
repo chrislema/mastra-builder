@@ -2649,6 +2649,44 @@ function scriptUsesWranglerWithoutEntrypoint(script: unknown, command: 'dev' | '
   return !/(^|\s)(?:\.\/)?src\/index\.ts(\s|$)/.test(match[1] ?? '');
 }
 
+const forbiddenFrontendPackageNames = [
+  '@astrojs/cloudflare',
+  '@sveltejs/kit',
+  '@vitejs/plugin-react',
+  '@vitejs/plugin-vue',
+  'astro',
+  'next',
+  'parcel',
+  'react',
+  'react-dom',
+  'react-scripts',
+  'rollup',
+  'svelte',
+  'vite',
+  'vue',
+  'webpack',
+];
+
+function frontendFrameworkDependencyGaps(repoPath: string) {
+  const dependencies = new Set(packageDependencyNames(repoPath));
+  const forbidden = forbiddenFrontendPackageNames.filter((name) => dependencies.has(name));
+  return forbidden.length
+    ? [
+        `package.json: remove frontend framework/build dependencies (${forbidden.join(', ')}); Chris's Worker projects use vanilla HTML, CSS, and JavaScript without React, Vite, Next, Vue, or Svelte.`,
+      ]
+    : [];
+}
+
+function frontendBuildScriptGaps(scripts: Record<string, unknown>) {
+  const buildScript = scripts.build;
+  if (typeof buildScript !== 'string') return [];
+  if (!/\b(vite|next|react-scripts|webpack|rollup|parcel|astro|svelte-kit)\b/i.test(buildScript)) return [];
+
+  return [
+    `package.json: scripts.build uses a frontend framework/bundler command ("${buildScript}"); Worker projects should validate with tsc/test/Wrangler and serve vanilla public assets without a frontend build step.`,
+  ];
+}
+
 const workerScaffoldRequiredGitignorePatterns = ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env'];
 
 function gitignorePatternPresent(text: string, pattern: string) {
@@ -2694,6 +2732,7 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
   if (typeof scripts.typecheck !== 'string' || !/\btsc\s+--noEmit\b/.test(scripts.typecheck)) {
     gaps.push('package.json: scripts.typecheck should run "tsc --noEmit" for deterministic workflow verification.');
   }
+  gaps.push(...frontendBuildScriptGaps(scripts));
 
   const wranglerVersion = packageDependencyVersion(packageJson, 'wrangler');
   if (!wranglerVersion) {
@@ -2713,7 +2752,7 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
     );
   }
 
-  return [...gaps, ...workerScaffoldGitignoreGaps(repoPath)];
+  return [...gaps, ...frontendFrameworkDependencyGaps(repoPath), ...workerScaffoldGitignoreGaps(repoPath)];
 }
 
 function remediationHasVerificationFailure(remediation: string[]) {

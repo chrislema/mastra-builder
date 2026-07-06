@@ -1868,6 +1868,11 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
           dev: 'wrangler dev src/index.ts',
           deploy: 'wrangler deploy src/index.ts',
           typecheck: 'tsc --noEmit',
+          build: 'vite build',
+        },
+        dependencies: {
+          react: '^19.0.0',
+          vite: '^7.0.0',
         },
         devDependencies: {
           '@cloudflare/workers-types': '^4.20250124.0',
@@ -1884,6 +1889,8 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
   assert.match(gaps.join('\n'), /scripts\.deploy/);
   assert.match(gaps.join('\n'), /wrangler.*v4\+/);
   assert.match(gaps.join('\n'), /workers-types.*last 90 days/);
+  assert.match(gaps.join('\n'), /frontend framework\/build dependencies.*react.*vite/);
+  assert.match(gaps.join('\n'), /scripts\.build uses a frontend framework\/bundler/);
   assert.match(gaps.join('\n'), /\.gitignore is missing/);
 
   const remediation = [`DETERMINISTIC worker_package_scaffold_current failed: ${gaps.join('; ')}`];
