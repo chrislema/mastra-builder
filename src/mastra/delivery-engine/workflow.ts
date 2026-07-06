@@ -3328,11 +3328,27 @@ function releaseGateWorkerConfigPath(repoPath: string) {
 }
 
 export function releaseGateLocalD1DatabaseName(repoPath: string) {
-  const wranglerPath = join(resolve(repoPath), 'wrangler.toml');
-  if (!existsSync(wranglerPath)) return undefined;
+  const wranglerPath = releaseGateWorkerConfigPath(repoPath);
+  if (!wranglerPath) return undefined;
 
   const text = readFileSync(wranglerPath, 'utf8');
-  return firstTomlStringValue(text, 'database_name') ?? firstTomlStringValue(text, 'name');
+  if (wranglerPath.endsWith('.toml')) {
+    return firstTomlStringValue(text, 'database_name') ?? firstTomlStringValue(text, 'name');
+  }
+
+  const config = parseWranglerJsonConfig(text);
+  const d1Databases = Array.isArray(config?.d1_databases) ? config.d1_databases : [];
+  for (const database of d1Databases) {
+    const record = recordValue(database);
+    const databaseName = record?.database_name;
+    const databaseId = record?.database_id;
+    const binding = record?.binding;
+    if (typeof databaseName === 'string' && databaseName.trim()) return databaseName;
+    if (typeof databaseId === 'string' && databaseId.trim()) return databaseId;
+    if (typeof binding === 'string' && binding.trim()) return binding;
+  }
+
+  return undefined;
 }
 
 function sourceTreeContainsText(rootPath: string, needle: string, scanned = { count: 0 }): boolean {
@@ -3624,8 +3640,8 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
       command: `npx wrangler d1 migrations apply ${databaseName} --local${persistCommand}`,
       executable: 'npx',
       args: ['wrangler', 'd1', 'migrations', 'apply', databaseName, '--local', ...persistArgs],
-      required: false,
-      reason: 'wrangler.toml and migrations/ were present, so local D1 migration validation was available.',
+      required: true,
+      reason: 'Wrangler D1 config and migrations/ were present, so local D1 migration validation is required before deployment.',
     });
 
     if (releaseGateTranscriptFixtureAvailable(repoPath)) {

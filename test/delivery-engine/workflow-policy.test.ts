@@ -1170,7 +1170,7 @@ test('local deployment report reuses release-gate evidence without production de
           tier: 'api',
           command: 'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/state',
           ok: true,
-          required: false,
+          required: true,
           reason: 'Local D1 migration validation was available.',
           output_summary: 'migrations applied',
         },
@@ -1229,7 +1229,7 @@ test('release gate evidence planner uses bounded local commands', () => {
     })),
     [
       { tier: 'smoke', command: 'npm run typecheck', required: true },
-      { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: false },
+      { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: true },
     ],
   );
   assert.deepEqual(
@@ -1237,6 +1237,47 @@ test('release gate evidence planner uses bounded local commands', () => {
     [
       'npm run typecheck',
       'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
+    ],
+  );
+});
+
+test('release gate evidence planner uses wrangler.jsonc D1 config for required local migrations', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-evidence-jsonc-'));
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }, null, 2),
+  );
+  writeFileSync(join(repoPath, 'migrations/0001_schema.sql'), 'CREATE TABLE runs (id TEXT PRIMARY KEY);\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    [
+      '{',
+      '  "$schema": "./node_modules/wrangler/config-schema.json",',
+      '  "name": "talking-head-builder",',
+      '  "main": "src/index.ts",',
+      '  "d1_databases": [',
+      '    { "binding": "DB", "database_name": "talking-head-builder", "database_id": "local-placeholder" },',
+      '  ],',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  assert.equal(releaseGateLocalD1DatabaseName(repoPath), 'talking-head-builder');
+  assert.deepEqual(
+    releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => ({
+      tier: command.tier,
+      command: command.command,
+      required: command.required,
+    })),
+    [
+      { tier: 'smoke', command: 'npm run typecheck', required: true },
+      {
+        tier: 'api',
+        command: 'npx wrangler d1 migrations apply talking-head-builder --local --persist-to /tmp/probe-state',
+        required: true,
+      },
     ],
   );
 });
