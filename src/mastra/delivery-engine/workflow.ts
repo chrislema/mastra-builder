@@ -2043,6 +2043,19 @@ function relativeWorkerConfigPath(repoPath: string, configPath: string) {
   return configPath.startsWith(`${root}/`) ? configPath.slice(root.length + 1) : configPath;
 }
 
+function repoLooksLikeWorkerProject(repoPath: string) {
+  const root = resolve(repoPath);
+  const packageJson = packageRecord(repoPath);
+  const scripts = recordValue(packageJson?.scripts) ?? {};
+  return (
+    existsSync(join(root, 'src', 'index.ts')) ||
+    existsSync(join(root, 'src', 'env.ts')) ||
+    existsSync(join(root, 'worker-configuration.d.ts')) ||
+    typeof scripts.dev === 'string' && /\bwrangler\s+dev\b/.test(scripts.dev) ||
+    packageDependencyNames(repoPath).includes('wrangler')
+  );
+}
+
 type WorkerBindingKind = 'ai' | 'd1' | 'durable_object' | 'hyperdrive' | 'kv' | 'queue' | 'r2' | 'service' | 'vectorize' | 'workflow';
 
 interface WorkerBindingDeclaration {
@@ -2221,7 +2234,12 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
   if (task && !taskBoundaryCanConfigureWorkerConfig(repoPath, task)) return [];
 
   const configPath = releaseGateWorkerConfigPath(repoPath);
-  if (!configPath) return task ? ['Worker config surface is owned, but no Wrangler config file exists.'] : [];
+  if (!configPath) {
+    if (task) return ['Worker config surface is owned, but no Wrangler config file exists.'];
+    return repoLooksLikeWorkerProject(repoPath)
+      ? ['No Wrangler config file exists for this Worker project; add wrangler.jsonc with Worker entrypoint, compatibility_date, bindings, and observability before release.']
+      : [];
+  }
 
   const configName = relativeWorkerConfigPath(repoPath, configPath);
   const text = readFileSync(configPath, 'utf8');

@@ -1802,6 +1802,24 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
   );
 });
 
+test('Worker release gate fails closed when Wrangler config is missing', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-missing-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify({ scripts: { dev: 'wrangler dev', typecheck: 'tsc --noEmit' }, devDependencies: { wrangler: '^4.0.0' } }, null, 2),
+  );
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
+
+  const staticResult = releaseGateStaticEvidenceResults(repoPath).find(
+    (result) => result.command === 'static check: Worker config hygiene',
+  );
+
+  assert.equal(staticResult?.ok, false);
+  assert.equal(staticResult?.required, true);
+  assert.match(staticResult?.error ?? '', /No Wrangler config file exists/);
+});
+
 test('Worker config hygiene aligns Cloudflare binding names with Env declarations', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-env-align-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
