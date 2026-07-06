@@ -272,7 +272,7 @@ test('bare Worker project plans require package scaffold before runtime surfaces
     },
     {
       depends_on: ['T1'],
-      owned_surfaces: ['wrangler.toml', 'src/index.js'],
+      owned_surfaces: ['wrangler.jsonc', 'src/index.js'],
     },
   ]);
   const packageOnlyResult = projectScaffoldHygiene(repoPath, packageOnlyPlan);
@@ -289,7 +289,7 @@ test('bare Worker project plans require package scaffold before runtime surfaces
   assert.equal(tsWithoutTsconfigResult.passed, false);
   assert.match(tsWithoutTsconfigResult.reason, /TypeScript Worker source but not tsconfig\.json/);
 
-  const goodPlan = taskPlan([
+  const tomlPlan = taskPlan([
     {
       depends_on: [],
       owned_surfaces: ['package.json', 'src/index.js'],
@@ -297,6 +297,20 @@ test('bare Worker project plans require package scaffold before runtime surfaces
     {
       depends_on: ['T1'],
       owned_surfaces: ['wrangler.toml'],
+    },
+  ]);
+  const tomlResult = projectScaffoldHygiene(repoPath, tomlPlan);
+  assert.equal(tomlResult.passed, false);
+  assert.match(tomlResult.reason, /wrangler\.jsonc/);
+
+  const goodPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'src/index.js'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['wrangler.jsonc'],
     },
   ]);
   assert.deepEqual(projectScaffoldHygiene(repoPath, goodPlan), { passed: true, reason: 'ok' });
@@ -311,7 +325,7 @@ test('bare Worker project plans normalize root static assets behind the package 
     },
     {
       depends_on: ['T1'],
-      owned_surfaces: ['wrangler.toml'],
+      owned_surfaces: ['wrangler.jsonc'],
     },
     {
       depends_on: [],

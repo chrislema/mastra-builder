@@ -646,7 +646,7 @@ export function ownedSurfaceHygiene(taskPlan: TaskPlan) {
       if (ownedSurfaceReferenceIsConcrete(surface)) continue;
       return {
         passed: false,
-        reason: `${task.id} owned_surfaces contains conceptual surface "${surface}". Use concrete repo paths like wrangler.toml, src/index.ts, public/settings.html, migrations/0001_schema.sql, or "unknown: <reason>".`,
+        reason: `${task.id} owned_surfaces contains conceptual surface "${surface}". Use concrete repo paths like wrangler.jsonc, src/index.ts, public/settings.html, migrations/0001_schema.sql, or "unknown: <reason>".`,
       };
     }
   }
@@ -1298,6 +1298,14 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
     return {
       passed: false,
       reason: `${scaffoldRootTask.id} owns TypeScript Worker source but not tsconfig.json. TypeScript Worker scaffolds need tsconfig.json so npm run typecheck can pass before later tasks.`,
+    };
+  }
+
+  const plannedTomlConfig = taskPlan.tasks.find((task) => ownsExactSurface(task, 'wrangler.toml'));
+  if (plannedTomlConfig && !existsSync(join(repoPath, 'wrangler.toml'))) {
+    return {
+      passed: false,
+      reason: `${plannedTomlConfig.id} owns wrangler.toml, but this repo has no existing wrangler.toml. New Worker project plans should own wrangler.jsonc so config schema validation, bindings, and local Wrangler checks use the current JSONC config path.`,
     };
   }
 
