@@ -4175,9 +4175,14 @@ type ReleaseGateHttpProbePlan = {
   textContains?: string;
   jsonContains?: ReleaseGateJsonExpectation;
   jsonContainsAny?: ReleaseGateJsonExpectation[];
+  jsonFieldMatches?: Record<string, string>;
+  jsonFieldsEqualVariables?: Record<string, string>;
   jsonArrayAssertions?: ReleaseGateJsonArrayAssertion[];
+  headersContain?: Record<string, string>;
+  captures?: Record<string, string>;
   body?: ReleaseGateHttpRequestBody;
   headers?: Record<string, string>;
+  redirect?: RequestRedirect;
   reason: string;
 };
 
@@ -4663,6 +4668,112 @@ function releaseGatePublicAssetProbe(repoPath: string, file: 'index.html' | 'sty
   } satisfies ReleaseGateHttpProbePlan;
 }
 
+const releaseGateLinkLifecycleDestination = 'https://example.com/mastra-release-gate';
+
+function releaseGateHasLinkLifecycleRoutes(repoPath: string) {
+  return (
+    releaseGateRepoHasRoute(repoPath, '/api/links') &&
+    releaseGateRepoHasRoute(repoPath, '/api/links/') &&
+    releaseGateRepoHasRoute(repoPath, '/l/')
+  );
+}
+
+function releaseGateLinkLifecycleProbes(): ReleaseGateHttpProbePlan[] {
+  return [
+    {
+      method: 'POST',
+      path: '/api/links',
+      expected: 'POST /api/links rejects malformed JSON with HTTP 400 and actionable JSON guidance.',
+      expectedStatus: 400,
+      body: { type: 'text', value: '{not-json', contentType: 'application/json' },
+      textContains: 'next_steps',
+      reason: 'The link creation route should fail closed on malformed JSON before touching D1.',
+    },
+    {
+      method: 'POST',
+      path: '/api/links',
+      expected: 'POST /api/links rejects a missing destination URL with HTTP 400 and actionable JSON guidance.',
+      expectedStatus: 400,
+      body: { type: 'json', value: {} },
+      textContains: 'next_steps',
+      reason: 'The link creation route should validate required request fields.',
+    },
+    {
+      method: 'POST',
+      path: '/api/links',
+      expected: 'POST /api/links rejects non-http destination URLs with HTTP 400 and actionable JSON guidance.',
+      expectedStatus: 400,
+      body: { type: 'json', value: { url: 'ftp://example.com/not-web' } },
+      textContains: 'next_steps',
+      reason: 'The link creation route should accept only http and https destinations.',
+    },
+    {
+      method: 'GET',
+      path: '/api/links',
+      expected: 'GET /api/links returns an intentional JSON method error instead of a stack trace or HTML page.',
+      expectedStatus: 405,
+      textContains: 'next_steps',
+      reason: 'Unsupported API methods should return explicit JSON errors.',
+    },
+    {
+      method: 'POST',
+      path: '/api/links',
+      expected: 'POST /api/links creates a short link with a six-character URL-safe id and zero clicks.',
+      expectedStatus: 201,
+      body: { type: 'json', value: { url: releaseGateLinkLifecycleDestination } },
+      jsonContains: { url: releaseGateLinkLifecycleDestination, clicks: 0 },
+      jsonFieldMatches: { id: '^[A-Za-z0-9_-]{6}$' },
+      captures: { releaseGateLinkId: 'id' },
+      reason: 'A valid creation request should write D1 state and return the public link shape.',
+    },
+    {
+      method: 'GET',
+      path: '/api/links/{{releaseGateLinkId}}',
+      expected: 'GET /api/links/:id returns the created link stats before any redirect.',
+      expectedStatus: 200,
+      jsonContains: { url: releaseGateLinkLifecycleDestination, clicks: 0 },
+      jsonFieldsEqualVariables: { id: 'releaseGateLinkId' },
+      reason: 'Stats lookup should read the just-created D1 record.',
+    },
+    {
+      method: 'GET',
+      path: '/l/{{releaseGateLinkId}}',
+      expected: 'GET /l/:id redirects to the stored destination and increments the click count.',
+      expectedStatus: 302,
+      redirect: 'manual',
+      headersContain: { location: releaseGateLinkLifecycleDestination },
+      reason: 'Redirect behavior is the core public short-link path and should be proven against local D1 state.',
+    },
+    {
+      method: 'GET',
+      path: '/api/links/{{releaseGateLinkId}}',
+      expected: 'GET /api/links/:id returns clicks incremented by exactly one after a redirect.',
+      expectedStatus: 200,
+      jsonContains: { url: releaseGateLinkLifecycleDestination, clicks: 1 },
+      jsonFieldsEqualVariables: { id: 'releaseGateLinkId' },
+      reason: 'Stats lookup after one redirect should prove atomic click counting.',
+    },
+    {
+      method: 'GET',
+      path: '/api/links/unknown-release-gate',
+      expected: 'GET /api/links/:id returns an actionable JSON 404 for an unknown id.',
+      expectedStatus: 404,
+      jsonContains: { error: 'unknown link id' },
+      textContains: 'next_steps',
+      reason: 'Unknown stats lookups should fail closed with JSON guidance.',
+    },
+    {
+      method: 'GET',
+      path: '/l/unknown-release-gate',
+      expected: 'GET /l/:id returns an actionable JSON 404 for an unknown id.',
+      expectedStatus: 404,
+      jsonContains: { error: 'unknown link id' },
+      textContains: 'next_steps',
+      reason: 'Unknown redirects should fail closed with JSON guidance instead of HTML or stack traces.',
+    },
+  ];
+}
+
 export function releaseGateRuntimeProbePlan(
   repoPath: string,
   adminToken = releaseGateLocalAdminToken,
@@ -4698,6 +4809,10 @@ export function releaseGateRuntimeProbePlan(
       jsonContainsAny: [{ status: 'ok' }, { ok: true }],
       reason: `A ${healthRoute} health route was present in the source tree.`,
     });
+  }
+
+  if (releaseGateHasLinkLifecycleRoutes(repoPath)) {
+    probes.push(...releaseGateLinkLifecycleProbes());
   }
 
   if (sourcePolicy.talkingHeadTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/latest')) {
@@ -5236,6 +5351,87 @@ function jsonContainsAnyExpected(body: string, expectedOptions: ReleaseGateJsonE
   };
 }
 
+function parseJsonRecordExpected(body: string): { ok: true; record: Record<string, unknown> } | { ok: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch (error) {
+    return { ok: false, error: `Response was not valid JSON: ${compactDiagnostic(error, 300)}` };
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'Response JSON was not an object.' };
+  }
+
+  return { ok: true, record: parsed as Record<string, unknown> };
+}
+
+function jsonFieldMatchesExpected(body: string, expected: Record<string, string>) {
+  const parsed = parseJsonRecordExpected(body);
+  if (!parsed.ok) return parsed;
+
+  for (const [key, pattern] of Object.entries(expected)) {
+    const value = parsed.record[key];
+    if (typeof value !== 'string' || !new RegExp(pattern).test(value)) {
+      return {
+        ok: false,
+        error: `Expected JSON field ${key} to match /${pattern}/, received ${JSON.stringify(value)}.`,
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+function jsonFieldsEqualVariablesExpected(
+  body: string,
+  expected: Record<string, string>,
+  variables: Record<string, string>,
+) {
+  const parsed = parseJsonRecordExpected(body);
+  if (!parsed.ok) return parsed;
+
+  for (const [field, variableName] of Object.entries(expected)) {
+    const expectedValue = variables[variableName];
+    if (expectedValue === undefined) return { ok: false, error: `Probe variable ${variableName} was not captured.` };
+    if (parsed.record[field] !== expectedValue) {
+      return {
+        ok: false,
+        error: `Expected JSON field ${field} to equal captured ${variableName}=${JSON.stringify(expectedValue)}, received ${JSON.stringify(parsed.record[field])}.`,
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+function jsonCapturesExpected(body: string, captures: Record<string, string>) {
+  const parsed = parseJsonRecordExpected(body);
+  if (!parsed.ok) return parsed;
+
+  const values: Record<string, string> = {};
+  for (const [variableName, field] of Object.entries(captures)) {
+    const value = parsed.record[field];
+    if (value === undefined || value === null) {
+      return { ok: false, error: `Expected response JSON field ${field} to capture ${variableName}.` };
+    }
+    values[variableName] = String(value);
+  }
+
+  return { ok: true, values };
+}
+
+function headersContainExpected(headers: Headers, expected: Record<string, string>) {
+  for (const [key, value] of Object.entries(expected)) {
+    const actual = headers.get(key);
+    if (!actual || !actual.includes(value)) {
+      return { ok: false, error: `Expected response header ${key} to include ${JSON.stringify(value)}, received ${JSON.stringify(actual)}.` };
+    }
+  }
+
+  return { ok: true };
+}
+
 function textContainsExpected(body: string, expected: string) {
   if (body.includes(expected)) return { ok: true };
   return { ok: false, error: `Expected response body to include ${JSON.stringify(expected)}.` };
@@ -5288,6 +5484,7 @@ function requestInitForProbe(probe: ReleaseGateHttpProbePlan): RequestInit {
   const init: RequestInit = {
     method: probe.method,
     headers: probe.headers,
+    redirect: probe.redirect,
     signal: AbortSignal.timeout(5_000),
   };
 
@@ -5319,8 +5516,39 @@ function requestInitForProbe(probe: ReleaseGateHttpProbePlan): RequestInit {
   };
 }
 
-async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): Promise<ReleaseGateHttpProbeResult> {
-  const url = new URL(probe.path, baseUrl).toString();
+function renderProbeTemplate(template: string, variables: Record<string, string>) {
+  const missing = new Set<string>();
+  const rendered = template.replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (_match, variableName: string) => {
+    const value = variables[variableName];
+    if (value === undefined) {
+      missing.add(variableName);
+      return '';
+    }
+    return encodeURIComponent(value);
+  });
+
+  if (missing.size) return { ok: false as const, error: `Missing captured probe variable(s): ${Array.from(missing).join(', ')}` };
+  return { ok: true as const, value: rendered };
+}
+
+async function runHttpProbe(
+  baseUrl: string,
+  probe: ReleaseGateHttpProbePlan,
+  variables: Record<string, string> = {},
+): Promise<ReleaseGateHttpProbeResult> {
+  const renderedPath = renderProbeTemplate(probe.path, variables);
+  if (!renderedPath.ok) {
+    return {
+      method: probe.method,
+      path: probe.path,
+      url: new URL('/', baseUrl).toString(),
+      expected: probe.expected,
+      ok: false,
+      error: renderedPath.error,
+    };
+  }
+
+  const url = new URL(renderedPath.value, baseUrl).toString();
   try {
     const response = await fetch(url, requestInitForProbe(probe));
     const body = await response.text();
@@ -5328,13 +5556,34 @@ async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): P
     const textCheck = probe.textContains ? textContainsExpected(body, probe.textContains) : { ok: true };
     const jsonCheck = probe.jsonContains ? jsonContainsExpected(body, probe.jsonContains) : { ok: true };
     const jsonAnyCheck = probe.jsonContainsAny ? jsonContainsAnyExpected(body, probe.jsonContainsAny) : { ok: true };
+    const jsonFieldCheck = probe.jsonFieldMatches ? jsonFieldMatchesExpected(body, probe.jsonFieldMatches) : { ok: true };
+    const jsonVariableCheck = probe.jsonFieldsEqualVariables
+      ? jsonFieldsEqualVariablesExpected(body, probe.jsonFieldsEqualVariables, variables)
+      : { ok: true };
     const jsonArrayCheck = probe.jsonArrayAssertions
       ? jsonArrayAssertionsExpected(body, probe.jsonArrayAssertions)
       : { ok: true };
-    const ok = statusOk && textCheck.ok && jsonCheck.ok && jsonAnyCheck.ok && jsonArrayCheck.ok;
+    const headerCheck = probe.headersContain ? headersContainExpected(response.headers, probe.headersContain) : { ok: true };
+    const captureCheck = probe.captures ? jsonCapturesExpected(body, probe.captures) : { ok: true, values: {} };
+    const ok =
+      statusOk &&
+      textCheck.ok &&
+      jsonCheck.ok &&
+      jsonAnyCheck.ok &&
+      jsonFieldCheck.ok &&
+      jsonVariableCheck.ok &&
+      jsonArrayCheck.ok &&
+      headerCheck.ok &&
+      captureCheck.ok;
+    if (ok && captureCheck.ok) Object.assign(variables, captureCheck.values);
     const summary = [
       `HTTP ${response.status}`,
       response.headers.get('content-type') ? `content-type ${response.headers.get('content-type')}` : undefined,
+      probe.headersContain
+        ? Object.keys(probe.headersContain)
+            .map((header) => `${header} ${response.headers.get(header) ?? ''}`.trim())
+            .join('; ')
+        : undefined,
       body.trim() ? `body ${compactDiagnostic(body.trim(), 300)}` : undefined,
     ]
       .filter(Boolean)
@@ -5353,7 +5602,11 @@ async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): P
         : textCheck.error ??
           jsonCheck.error ??
           jsonAnyCheck.error ??
+          jsonFieldCheck.error ??
+          jsonVariableCheck.error ??
           jsonArrayCheck.error ??
+          headerCheck.error ??
+          captureCheck.error ??
           `Expected ${probe.expected}, received HTTP ${response.status}.`,
     };
   } catch (error) {
@@ -5429,8 +5682,9 @@ async function runReleaseGateRuntimeProbe({
       if (exit) throw new Error(`Worker runtime command exited before probes passed: code ${exit.code}, signal ${exit.signal}.`);
 
       probes = [];
+      const probeVariables: Record<string, string> = {};
       for (const probe of plan.probes) {
-        probes.push(await runHttpProbe(baseUrl, probe));
+        probes.push(await runHttpProbe(baseUrl, probe, probeVariables));
       }
 
       if (probes.every((probe) => probe.ok)) {

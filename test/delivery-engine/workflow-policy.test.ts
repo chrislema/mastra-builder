@@ -2155,6 +2155,54 @@ test('release gate runtime probe planner discovers Worker API health routes', ()
   ]);
 });
 
+test('release gate runtime probe planner exercises short-link lifecycle routes', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-link-lifecycle-'));
+  mkdirSync(join(repoPath, 'workers'), { recursive: true });
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "workers/app.js"\n');
+  writeFileSync(
+    join(repoPath, 'workers/app.js'),
+    [
+      "if (url.pathname === '/api/health') {}",
+      "if (url.pathname === '/api/links') {}",
+      "if (url.pathname.startsWith('/api/links/')) {}",
+      "if (url.pathname.startsWith('/l/')) {}",
+    ].join('\n'),
+  );
+
+  const probes = releaseGateRuntimeProbePlan(repoPath)?.probes ?? [];
+  assert.deepEqual(
+    probes.map((probe) => `${probe.method} ${probe.path}`),
+    [
+      'GET /',
+      'GET /api/health',
+      'POST /api/links',
+      'POST /api/links',
+      'POST /api/links',
+      'GET /api/links',
+      'POST /api/links',
+      'GET /api/links/{{releaseGateLinkId}}',
+      'GET /l/{{releaseGateLinkId}}',
+      'GET /api/links/{{releaseGateLinkId}}',
+      'GET /api/links/unknown-release-gate',
+      'GET /l/unknown-release-gate',
+    ],
+  );
+
+  const createProbe = probes.find((probe) => probe.captures?.releaseGateLinkId === 'id');
+  assert.equal(createProbe?.expectedStatus, 201);
+  assert.deepEqual(createProbe?.jsonFieldMatches, { id: '^[A-Za-z0-9_-]{6}$' });
+
+  const redirectProbe = probes.find((probe) => probe.path === '/l/{{releaseGateLinkId}}');
+  assert.equal(redirectProbe?.redirect, 'manual');
+  assert.deepEqual(redirectProbe?.headersContain, { location: 'https://example.com/mastra-release-gate' });
+
+  const incrementProbe = probes.find(
+    (probe) => probe.path === '/api/links/{{releaseGateLinkId}}' && probe.jsonContains?.clicks === 1,
+  );
+  assert.deepEqual(incrementProbe?.jsonFieldsEqualVariables, { id: 'releaseGateLinkId' });
+});
+
 test('release gate runtime probe targets staging when the Worker config defines it', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-staging-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
