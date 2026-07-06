@@ -268,6 +268,46 @@ test('release gate runtime probe planner covers common Worker API state and erro
   );
 });
 
+test('release gate evidence planner seeds latest transcript and version audit fixtures when schema is present', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-transcript-fixture-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(
+    join(repoPath, 'wrangler.toml'),
+    ['name = "demo-worker"', 'main = "src/index.ts"', '[[d1_databases]]', 'binding = "DB"', 'database_name = "demo-db"'].join('\n'),
+  );
+  writeFileSync(join(repoPath, 'src/index.ts'), "if (pathname === '/latest') {}\n");
+  writeFileSync(
+    join(repoPath, 'migrations/0001_init.sql'),
+    [
+      'CREATE TABLE runs (id TEXT PRIMARY KEY);',
+      'CREATE TABLE candidates (id TEXT PRIMARY KEY);',
+      'CREATE TABLE transcripts (id TEXT PRIMARY KEY);',
+    ].join('\n'),
+  );
+
+  const commands = releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command);
+  assert.deepEqual(commands, [
+    'npx wrangler d1 migrations apply demo-db --local --persist-to /tmp/probe-state',
+    'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --file .delivery/tmp/release-gate-transcript-fixture.sql --json',
+    'npx wrangler d1 execute demo-db --local --persist-to /tmp/probe-state --command "SELECT COUNT(*) AS transcript_versions, SUM(CASE WHEN id = \'release-gate-transcript-v1\' THEN 1 ELSE 0 END) AS preserved_original_versions, SUM(CASE WHEN id = \'release-gate-transcript-v2\' THEN 1 ELSE 0 END) AS regenerated_versions, (SELECT transcript_id FROM runs WHERE id = \'release-gate-run\') AS active_transcript_id FROM transcripts WHERE run_id = \'release-gate-run\'" --json',
+  ]);
+  assert.match(
+    readFileSync(join(repoPath, '.delivery/tmp/release-gate-transcript-fixture.sql'), 'utf8'),
+    /release-gate-transcript-v2/,
+  );
+
+  const latestProbe = releaseGateRuntimeProbePlan(repoPath)?.probes.find((probe) => probe.method === 'GET' && probe.path === '/latest');
+  assert.equal(latestProbe?.expectedStatus, 200);
+  assert.deepEqual(latestProbe?.jsonContains, {
+    title: 'Release Gate Regenerated Transcript',
+    hook: 'Regenerated hook.',
+    primarySegment: 'operators',
+    whyThisWasPicked: 'Regenerated selection rationale.',
+  });
+});
+
 test('release gate runtime probe planner falls back to npx wrangler for Worker configs', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-npx-'));
   writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'vite --host 0.0.0.0' } }, null, 2));

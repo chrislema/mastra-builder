@@ -1522,6 +1522,46 @@ function releaseGateRepoHasRoute(repoPath: string, route: string) {
   return sourceTreeContainsText(join(root, 'src'), route);
 }
 
+function releaseGateMigrationText(repoPath: string) {
+  const migrationsPath = join(resolve(repoPath), 'migrations');
+  if (!existsSync(migrationsPath)) return '';
+
+  return readdirSync(migrationsPath)
+    .filter((file) => file.endsWith('.sql'))
+    .sort()
+    .map((file) => readFileSync(join(migrationsPath, file), 'utf8'))
+    .join('\n');
+}
+
+function releaseGateTranscriptFixtureAvailable(repoPath: string) {
+  const schema = releaseGateMigrationText(repoPath);
+  return (
+    Boolean(releaseGateLocalD1DatabaseName(repoPath)) &&
+    releaseGateRepoHasRoute(repoPath, '/latest') &&
+    /\bCREATE\s+TABLE\s+runs\b/i.test(schema) &&
+    /\bCREATE\s+TABLE\s+candidates\b/i.test(schema) &&
+    /\bCREATE\s+TABLE\s+transcripts\b/i.test(schema)
+  );
+}
+
+function releaseGateTranscriptFixtureSql() {
+  return [
+    '-- Release-gate fixture: completed run plus original and regenerated transcript versions.',
+    "INSERT OR REPLACE INTO candidates (id, run_id, bookmark_id, link_id, source_url, title, author, published_at, summary, core_idea, suggested_angle, primary_segment, segment_fit_json, created_at) VALUES ('release-gate-candidate', 'release-gate-run', 'release-gate-bookmark', NULL, 'https://example.com/release-gate-source', 'Release Gate Candidate', 'Release Gate', '2026-01-01T00:00:00.000Z', 'Fixture candidate for release-gate transcript persistence.', 'Prove completed transcript persistence through GET /latest.', 'Show that the latest transcript is served from D1.', 'operators', '[{\"segmentName\":\"operators\",\"relevance\":5}]', '2026-01-01T00:00:00.000Z');",
+    "INSERT OR REPLACE INTO transcripts (id, run_id, candidate_id, audience_profile_id, voice_profile_id, title, hook, transcript, captions_json, source_urls_json, why_this_was_picked, primary_segment, alternate_angles_json, word_count, created_at) VALUES ('release-gate-transcript-v1', 'release-gate-run', 'release-gate-candidate', 'release-gate-audience', 'release-gate-voice', 'Release Gate Original Transcript', 'Original hook.', 'Original transcript retained for audit.', '[\"Original caption\"]', '[\"https://example.com/release-gate-source\"]', 'Original selection rationale.', 'operators', '[\"Original alternate angle\"]', 5, '2026-01-01T00:05:00.000Z');",
+    "INSERT OR REPLACE INTO transcripts (id, run_id, candidate_id, audience_profile_id, voice_profile_id, title, hook, transcript, captions_json, source_urls_json, why_this_was_picked, primary_segment, alternate_angles_json, word_count, created_at) VALUES ('release-gate-transcript-v2', 'release-gate-run', 'release-gate-candidate', 'release-gate-audience', 'release-gate-voice', 'Release Gate Regenerated Transcript', 'Regenerated hook.', 'Regenerated transcript served as latest while the original remains stored.', '[\"Regenerated caption\"]', '[\"https://example.com/release-gate-source\"]', 'Regenerated selection rationale.', 'operators', '[\"Regenerated alternate angle\"]', 9, '2026-01-01T00:10:00.000Z');",
+    "INSERT OR REPLACE INTO runs (id, status, window_start, window_end, audience_profile_id, voice_profile_id, selected_candidate_id, transcript_id, error_message, created_at, updated_at) VALUES ('release-gate-run', 'completed', '2025-12-25T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'release-gate-audience', 'release-gate-voice', 'release-gate-candidate', 'release-gate-transcript-v2', NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:15:00.000Z');",
+    '',
+  ].join('\n');
+}
+
+function writeReleaseGateTranscriptFixtureFile(repoPath: string) {
+  const fixturePath = join(resolve(repoPath), '.delivery', 'tmp', 'release-gate-transcript-fixture.sql');
+  mkdirSync(dirname(fixturePath), { recursive: true });
+  writeFileSync(fixturePath, releaseGateTranscriptFixtureSql());
+  return '.delivery/tmp/release-gate-transcript-fixture.sql';
+}
+
 export function releaseGateWorkerDevCommand(
   repoPath: string,
   port: number | '<port>' = '<port>',
@@ -1575,14 +1615,31 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
   }
 
   if (releaseGateRepoHasRoute(repoPath, '/latest')) {
-    probes.push({
-      method: 'GET',
-      path: '/latest',
-      expected: 'GET /latest returns an actionable 404 when no completed transcript exists.',
-      expectedStatus: 404,
-      jsonContains: { error: 'no_transcript_available' },
-      reason: 'A latest transcript route was present and should fail closed before any run has completed.',
-    });
+    if (releaseGateTranscriptFixtureAvailable(repoPath)) {
+      probes.push({
+        method: 'GET',
+        path: '/latest',
+        expected: 'GET /latest returns the seeded latest completed transcript from D1.',
+        expectedStatus: 200,
+        jsonContains: {
+          title: 'Release Gate Regenerated Transcript',
+          hook: 'Regenerated hook.',
+          primarySegment: 'operators',
+          whyThisWasPicked: 'Regenerated selection rationale.',
+        },
+        reason:
+          'A latest transcript route and transcript schema were present, so release-gate fixture data proves completed transcript persistence and response shape.',
+      });
+    } else {
+      probes.push({
+        method: 'GET',
+        path: '/latest',
+        expected: 'GET /latest returns an actionable 404 when no completed transcript exists.',
+        expectedStatus: 404,
+        jsonContains: { error: 'no_transcript_available' },
+        reason: 'A latest transcript route was present and should fail closed before any run has completed.',
+      });
+    }
   }
 
   if (releaseGateRepoHasRoute(repoPath, '/runs')) {
@@ -1725,6 +1782,32 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
       required: false,
       reason: 'wrangler.toml and migrations/ were present, so local D1 migration validation was available.',
     });
+
+    if (releaseGateTranscriptFixtureAvailable(repoPath)) {
+      const fixturePath = writeReleaseGateTranscriptFixtureFile(repoPath);
+      const versionAuditSql =
+        "SELECT COUNT(*) AS transcript_versions, SUM(CASE WHEN id = 'release-gate-transcript-v1' THEN 1 ELSE 0 END) AS preserved_original_versions, SUM(CASE WHEN id = 'release-gate-transcript-v2' THEN 1 ELSE 0 END) AS regenerated_versions, (SELECT transcript_id FROM runs WHERE id = 'release-gate-run') AS active_transcript_id FROM transcripts WHERE run_id = 'release-gate-run'";
+      commands.push(
+        {
+          tier: 'api',
+          command: `npx wrangler d1 execute ${databaseName} --local${persistCommand} --file ${fixturePath} --json`,
+          executable: 'npx',
+          args: ['wrangler', 'd1', 'execute', databaseName, '--local', ...persistArgs, '--file', fixturePath, '--json'],
+          required: true,
+          reason:
+            'A latest transcript route and transcript schema were present, so release gate seeds a completed run with original and regenerated transcript versions.',
+        },
+        {
+          tier: 'api',
+          command: `npx wrangler d1 execute ${databaseName} --local${persistCommand} --command "${versionAuditSql}" --json`,
+          executable: 'npx',
+          args: ['wrangler', 'd1', 'execute', databaseName, '--local', ...persistArgs, '--command', versionAuditSql, '--json'],
+          required: true,
+          reason:
+            'Transcript regeneration data-safety evidence: expected transcript_versions=2, preserved_original_versions=1, regenerated_versions=1, and active_transcript_id=release-gate-transcript-v2.',
+        },
+      );
+    }
   }
 
   return commands;
@@ -2191,6 +2274,11 @@ async function collectReleaseGateEvidence({
   }
   if (!runtimePlan) {
     notes.push('No Wrangler Worker config was detected, so local Worker runtime startup was not probed.');
+  }
+  if (releaseGateTranscriptFixtureAvailable(repoPath)) {
+    notes.push(
+      'Release gate seeds D1 with a completed run containing original and regenerated transcript versions, then probes GET /latest against the same local Wrangler state.',
+    );
   }
   notes.push('No browser E2E harness is started by this workflow; E2E and full_matrix tiers should be not_required unless cited evidence exists.');
 
