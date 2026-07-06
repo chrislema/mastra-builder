@@ -32,6 +32,7 @@ import {
   releaseGateRuntimeProbePlan,
   releaseGateStaticEvidenceResults,
   releaseGateWorkerDevCommand,
+  routeMiddlewareBypassGaps,
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
@@ -811,6 +812,48 @@ test('route task boundaries include the existing Worker entry integration surfac
     'src/routes/index.ts',
     'src/index.ts',
   ]);
+});
+
+test('route tasks must integrate through the existing Worker router', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-route-middleware-bypass-'));
+  mkdirSync(join(repoPath, 'src/http'), { recursive: true });
+  mkdirSync(join(repoPath, 'src/routes'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/http/router.ts'), 'export function routeRequest() { return new Response("ok"); }\n');
+  writeFileSync(join(repoPath, 'src/routes/runs.ts'), 'export function handleRunsRequest() { return new Response("runs"); }\n');
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      "import { routeRequest } from './http/router';",
+      "import { handleRunsRequest } from './routes/runs';",
+      'export default {',
+      '  fetch(request: Request) {',
+      "    if (new URL(request.url).pathname === '/runs') return handleRunsRequest();",
+      '    return routeRequest();',
+      '  },',
+      '};',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/routes/runs.ts'] }]).tasks;
+
+  assert.deepEqual(routeMiddlewareBypassGaps(repoPath, task), [
+    'Route surface src/routes/runs.ts is imported directly from src/index.ts while the existing routeRequest router is present; register it through the router/barrel/middleware path instead of dispatching before routeRequest.',
+  ]);
+
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      "import { routeRequest } from './http/router';",
+      'export default {',
+      '  fetch(request: Request) {',
+      '    return routeRequest();',
+      '  },',
+      '};',
+      '',
+    ].join('\n'),
+  );
+
+  assert.deepEqual(routeMiddlewareBypassGaps(repoPath, task), []);
 });
 
 test('workflow step task boundaries include the Workflow entrypoint integration surface', () => {

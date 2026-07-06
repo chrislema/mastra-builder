@@ -1020,6 +1020,39 @@ export function workflowStepIntegrationGaps(repoPath: string, task: Task) {
     });
 }
 
+function routeOwnedSurfaces(task: Task) {
+  return effectiveOwnedSurfaces(task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .filter((path) => /^src\/routes\/[^/]+\.[cm]?[jt]s$/.test(path) && !/\/index\.[cm]?[jt]s$/.test(path));
+}
+
+export function routeMiddlewareBypassGaps(repoPath: string, task: Task) {
+  const routeSurfaces = routeOwnedSurfaces(task);
+  if (!routeSurfaces.length) return [];
+
+  const indexPath = join(resolve(repoPath), 'src/index.ts');
+  const routerPath = join(resolve(repoPath), 'src/http/router.ts');
+  if (!existsSync(indexPath) || !existsSync(routerPath)) return [];
+
+  const indexSource = readFileSync(indexPath, 'utf8');
+  if (!/\brouteRequest\s*\(/.test(indexSource)) return [];
+
+  return routeSurfaces.flatMap((surface) => {
+    const slug = surface.split('/').pop()?.replace(/\.[cm]?[jt]s$/, '');
+    if (!slug) return [];
+
+    const routeImportPattern = new RegExp(
+      `\\bfrom\\s+['"]\\.\\/routes\\/${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`,
+    );
+    if (!routeImportPattern.test(indexSource)) return [];
+
+    return [
+      `Route surface ${surface} is imported directly from src/index.ts while the existing routeRequest router is present; register it through the router/barrel/middleware path instead of dispatching before routeRequest.`,
+    ];
+  });
+}
+
 function taskBoundaryCanConfigureWorkersAi(repoPath: string, task: Task) {
   return taskBoundarySurfaces(repoPath, task)
     .map(concreteOwnedSurfacePath)
@@ -2880,6 +2913,7 @@ function implementationDeterministicResults({
   const missingSurfaces = missingOwnedSurfacePaths(repoPath, task);
   const unreplacedStubs = unreplacedPreflightStubPaths(repoPath, task);
   const workflowIntegrationGaps = workflowStepIntegrationGaps(repoPath, task);
+  const routeMiddlewareGaps = routeMiddlewareBypassGaps(repoPath, task);
   const aiBindingGaps = workersAiBindingGaps(repoPath, task);
   const lifecycleStatusGaps = lifecycleStatusSchemaGaps(repoPath, task);
   const noteOwnership = runDeterministicCheck({
@@ -2923,6 +2957,12 @@ function implementationDeterministicResults({
       reason: workflowIntegrationGaps.length ? workflowIntegrationGaps.join('; ') : 'ok',
     },
     {
+      id: 'route_middleware_layering',
+      check: 'middleware_layering',
+      passed: routeMiddlewareGaps.length === 0,
+      reason: routeMiddlewareGaps.length ? routeMiddlewareGaps.join('; ') : 'ok',
+    },
+    {
       id: 'workers_ai_binding_required',
       check: 'workers_ai_binding_required',
       passed: aiBindingGaps.length === 0,
@@ -2955,6 +2995,8 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'owned_surfaces_present',
         'preflight_stubs_replaced',
         'workflow_step_integrated',
+        'route_middleware_layering',
+        'middleware_layering',
         'workers_ai_binding_required',
         'lifecycle_status_schema_constrained',
         'state_explicitness',
@@ -4714,6 +4756,7 @@ Execution rules:
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
+- For route tasks, integrate new endpoints through the existing Worker router/barrel/middleware path. Do not import route handlers into src/index.ts and dispatch them before routeRequest when routeRequest already exists.
 - If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.
 - Do not inspect node_modules; rely on project types and workflow verification.
 - If timeout recovery is active, do not investigate. Create the missing owned surfaces immediately.
