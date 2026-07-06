@@ -95,6 +95,16 @@ test('delivery state service prefers Mastra storage snapshots over stale local p
   assert.equal(written.some((log) => log.resourceId === resolve(repoPath) && log.data?.kind === 'snapshot'), true);
 });
 
+test('delivery state initialization tolerates report dirs without a run projection', async () => {
+  const repoPath = createRepo();
+  mkdirSync(join(repoPath, '.delivery', 'runs'), { recursive: true });
+
+  const run = await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md' });
+
+  assert.equal(run.status, 'running');
+  assert.equal(readDeliveryRun(repoPath).run_id, run.run_id);
+});
+
 test('delivery state initialization repairs stale running Mastra snapshots from terminal local projection', async () => {
   const repoPath = createRepo();
   const { store, written } = createMemoryObservabilityStore();

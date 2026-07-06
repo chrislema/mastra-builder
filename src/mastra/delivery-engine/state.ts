@@ -294,3 +294,7 @@ export function readDeliveryBoundary(repoPath: string): DeliveryBoundary | undef
 export function hasDeliveryDirectory(repoPath: string) {
   return existsSync(deliveryDir(repoPath));
 }
+
+export function hasDeliveryRunProjection(repoPath: string) {
+  return existsSync(runPath(repoPath));
+}

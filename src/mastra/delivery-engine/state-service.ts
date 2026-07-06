@@ -13,9 +13,9 @@ import {
 } from './observability';
 import {
   createDeliveryRunId,
-  hasDeliveryDirectory,
   readDeliveryEvents,
   readDeliveryRun,
+  hasDeliveryRunProjection,
   removeDeliveryBoundaryProjection,
   timestampDeliveryEvent,
   writeDeliveryBoundaryProjection,
@@ -44,7 +44,7 @@ async function readDeliverySnapshot({
 }
 
 function readLocalDeliverySnapshot(repoPath: string): DeliveryStateSnapshot | undefined {
-  if (!hasDeliveryDirectory(repoPath)) return undefined;
+  if (!hasDeliveryRunProjection(repoPath)) return undefined;
   return { run: readDeliveryRun(repoPath), events: readDeliveryEvents(repoPath) };
 }
 
@@ -129,7 +129,7 @@ export async function initializeDeliveryRunState({
   const spec = repoRelativeExistingFile({ repoPath: repo, path: specPath, label: 'spec' });
 
   const storedStatus = await readDeliveryRunStatusWithMastra({ repoPath: repo, mastra });
-  const localRun = hasDeliveryDirectory(repo) ? readDeliveryRun(repo) : undefined;
+  const localRun = hasDeliveryRunProjection(repo) ? readDeliveryRun(repo) : undefined;
   if (storedStatus?.status === 'running') {
     const localTerminalProjection =
       localRun?.run_id === storedStatus.run_id && localRun.status !== 'running' ? localRun : undefined;
