@@ -2,13 +2,13 @@
   "target": {
     "type": "skill",
     "name": "deployment-report",
-    "source_summary": "templates/deployment-report.md + agents/deployer.md (Mission, Must Not, Handoff) + skills/testing/check-release-gate.md"
+    "source_summary": "templates/deployment-report.md + native deployment workflow policy + skills/testing/check-release-gate.md"
   },
   "scale": { "min": 1, "max": 5 },
   "gates": [
     {
       "id": "no_deploy_through_blockers",
-      "description": "The deploy executed only after a PASS release gate with zero open blockers. Deploying through a known blocker is the deployer's first Must Not — binary.",
+      "description": "The deploy executed only after a PASS release gate with zero open blockers. Deploying through a known blocker is the native deployment stage's first Must Not — binary.",
       "severity": "critical",
       "on_fail": "cap",
       "cap_value": 0.0,
@@ -79,7 +79,7 @@
     "gate_handling": "Apply gate caps after normalization; lowest applicable cap wins."
   },
   "output_range": [0.0, 1.0],
-  "weight_rationale": "verification_quality is heaviest because the deployer's entire mission is 'ship only from an approved passing state and verify the result' — the second clause is this dimension, and it is the difference between a report and a hope.",
+  "weight_rationale": "verification_quality is heaviest because the native deployment stage's mission is 'ship only from an approved passing state and verify the result' — the second clause is this dimension, and it is the difference between a report and a hope.",
   "unmeasurable_rules": [
     { "rule": "Checked the release gate before deploying (behavior)", "home": "trajectory/deployer.rubric.json :: release_gate_read_before_deploy gate" },
     { "rule": "Verified after deploying (behavior)", "home": "trajectory/deployer.rubric.json :: live_verify_after_deploy gate" }

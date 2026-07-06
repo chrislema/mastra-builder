@@ -114,14 +114,14 @@ export const deliveryBuildToTesterHandoffScorer = createHandoffReadinessScorer({
 
 export const deliveryTesterToDeployerHandoffScorer = createHandoffReadinessScorer({
   id: 'delivery-tester-to-deployer-handoff',
-  name: 'Delivery Tester To Deployer Handoff',
-  description: 'Scores whether tester release gating passed and deployment may proceed.',
+  name: 'Delivery Tester To Deployment Handoff',
+  description: 'Scores whether tester release gating passed and the native deployment stage may proceed.',
   expectedStatus: 'release_ready',
-  nextRole: 'deployer',
+  nextRole: 'deployment workflow',
   extraReason: (output) =>
     output.releaseGate?.decision === 'pass'
-      ? 'Tester handoff is ready for deployer with a passing release gate.'
-      : 'Tester handoff is ready for deployer.',
+      ? 'Tester handoff is ready for the native deployment stage with a passing release gate.'
+      : 'Tester handoff is ready for the native deployment stage.',
 });
 
 export const deliveryWorkflowCompletionScorer = createScorer<unknown, DeliveryWorkflowScorerOutput>({

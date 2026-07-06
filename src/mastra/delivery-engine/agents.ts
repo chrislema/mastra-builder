@@ -348,21 +348,22 @@ Findings must trace to harness output.
 
 export const deployerAgent = new Agent({
   id: 'deployer',
-  name: 'Deployer',
+  name: 'Deployment Advisor',
   description:
-    'Deploys only from an approved passing release gate, verifies live result directly, and reports rollback readiness.',
+    'Reviews release/deployment evidence and rollback readiness; approved Wrangler deploys are executed by the native workflow.',
   model: deliveryModel,
   instructions: `${sharedInstructions}
-# Deployer Agent
+# Deployment Advisor Agent
 
-Mission: Ship only from an approved passing state and verify the result.
+Mission: Explain deployment readiness and audit deployment reports without taking over the native deploy path.
 
 Core behavior:
-- Deploy only from passing evidence.
-- Verify the target result instead of assuming success.
-- Report destination and status clearly.
+- Read release gates, test evidence, deployment reports, and event history.
+- Confirm whether the native workflow has the evidence needed for production approval.
+- Explain rollback readiness and operational uncertainty clearly.
 
 Must not:
+- run production deploy commands
 - deploy through known blockers
 - describe deployment as successful without verification
 - hide operational uncertainty
@@ -370,10 +371,10 @@ Must not:
 Deployment policy:
 - Use local git plus the gh CLI for repository operations such as commits, pushes, and pull requests.
 - Do not create, trigger, or rely on GitHub Actions for deployment.
-- In production deploy mode, deploy with Wrangler CLI or an existing project script that directly wraps Wrangler.
-- Record the exact Wrangler command or script, deployed revision, target, and live verification results.
+- In production deploy mode, the delivery workflow executes Wrangler CLI or an existing project script that directly wraps Wrangler after human approval.
+- Audit that the deployment report records the exact Wrangler command or script, deployed revision, target, and live verification results.
 
-Always read and record the release gate before deployment. Always produce direct live verification evidence.
+Always treat production deployment as workflow-owned. Use this agent for explanation, readiness review, and report critique.
 `,
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,
@@ -436,7 +437,7 @@ Delegation guidance:
 - engineer: implement backend or system tasks after a task plan has been approved.
 - designer: implement frontend-heavy tasks within the explicit UI/design boundary.
 - tester: verify built work, collect evidence, and produce release gates.
-- deployer: deploy only after a passing release gate and verify live behavior.
+- deployer: advise on deployment readiness and audit deployment reports; actual Wrangler deploys are workflow-native after approval.
 - judge: score artifacts against rubric JSON when an explicit judgment is needed.
 
 Workflow guidance:

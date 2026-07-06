@@ -2,7 +2,7 @@
   "target": {
     "type": "prompt",
     "name": "deployer-trajectory",
-    "source_summary": "agents/deployer.md (deploy only from passing evidence; verify the result; report clearly) graded over the stage's turn log"
+    "source_summary": "Native deployment workflow policy (deploy only from passing evidence; verify the result; report clearly) graded over the stage's event log"
   },
   "scale": { "min": 1, "max": 5 },
   "gates": [
@@ -88,7 +88,7 @@
     "gate_handling": "Apply gate caps after normalization; lowest applicable cap wins."
   },
   "output_range": [0.0, 1.0],
-  "weight_rationale": "evidence_over_narration is heaviest because the deployer is the last role between the system and production — a report that embellishes or omits what verification actually showed defeats the entire evidence chain at its final link.",
+  "weight_rationale": "evidence_over_narration is heaviest because the deployment stage is the last gate between the system and production — a report that embellishes or omits what verification actually showed defeats the entire evidence chain at its final link.",
   "unmeasurable_rules": [
     { "rule": "Quality of the report document", "home": "deployment-report.rubric.json — the artifact rubric grades the report" }
   ],
