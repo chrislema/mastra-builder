@@ -2672,6 +2672,40 @@ function remediationHasVerificationFailure(remediation: string[]) {
   );
 }
 
+export type TypeScriptDiagnostic = {
+  path: string;
+  line: number;
+  column: number;
+  code: string;
+  message: string;
+};
+
+export function typeScriptDiagnosticsFromText(text: string) {
+  const diagnostics: TypeScriptDiagnostic[] = [];
+  const seen = new Set<string>();
+  const diagnosticPattern = /(^|\n)([^:\n()]+\.tsx?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+([^\n\r]+)/g;
+
+  for (const match of text.matchAll(diagnosticPattern)) {
+    const path = normalizeDeliveryPathReference(match[2] ?? '');
+    const line = Number(match[3]);
+    const column = Number(match[4]);
+    const code = match[5] ?? '';
+    const message = (match[6] ?? '').trim();
+    if (!path || !Number.isInteger(line) || !Number.isInteger(column) || !code || !message) continue;
+
+    const key = `${path}:${line}:${column}:${code}:${message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    diagnostics.push({ path, line, column, code, message });
+  }
+
+  return diagnostics;
+}
+
+export function typeScriptDiagnosticsFromRemediation(remediation: string[]) {
+  return typeScriptDiagnosticsFromText(remediation.join('\n'));
+}
+
 function remediationHasStaleWorkspaceVerificationFailure(remediation: string[]) {
   return remediation.some((item) => /\bSTALE_WORKSPACE_VERIFICATION\b/i.test(item));
 }
@@ -6608,6 +6642,7 @@ const executeBuildTaskAttemptStep = createStep({
     const packageManifestOwned = taskOwnsPackageManifest(task);
     const existingPackageDependencies = packageDependencyNames(inputData.repoPath);
     const dependencySurfaces = directDependencySurfacePaths(taskPlan, task);
+    const verificationFailureDiagnostics = typeScriptDiagnosticsFromRemediation(inputData.remediation);
     const focusedRepairFileContext = replaceStubsRecovery || focusedRepairRecovery
       ? repoFileContents(inputData.repoPath, focusedRepairContextPaths(taskPlan, task, usableSurfaces))
       : [];
@@ -6624,6 +6659,7 @@ const executeBuildTaskAttemptStep = createStep({
       preflight_created_surfaces: preflightCreatedSurfaces,
       boundary_surfaces: usableSurfaces,
       direct_dependency_surfaces: dependencySurfaces,
+      verification_failure_diagnostics: verificationFailureDiagnostics,
       package_manifest_owned: packageManifestOwned,
       existing_package_dependencies: existingPackageDependencies,
       focused_repair_file_context: focusedRepairFileContext,
@@ -6656,12 +6692,14 @@ Execution rules:
 - direct_dependency_surfaces are read-only context unless a listed path is also present in boundary_surfaces.
 - Do not run shell commands; the workflow runs verification after your edits.
 - If this is a retry, edit the files needed to resolve the remediation before doing any broad investigation.
+- If verification_failure_diagnostics is non-empty, fix each listed file/line diagnostic directly before any other cleanup.
 - In write-first or focused repair mode, you must call an available workspace write/edit tool before returning; a text-only response is a failed attempt.
 - If failure_class is missing_surface, create every missing_owned_surface before editing any other file.
 - If failure_class is preflight_stub, replace every unreplaced_preflight_stub before editing any other file.
 - If failure_class is policy_boundary, do not repeat blocked writes; use only normalized boundary_surfaces paths.
 - Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
+- For TS18046 on unknown values, narrow with typeof/asRecord/Array.isArray before property access or numeric comparison. Number.isInteger(value) alone does not narrow unknown to number.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
 - When worker_config_policy is not null, read src/env.ts if it exists and use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, and Wrangler binding names that exactly match Env binding property names.
@@ -6703,6 +6741,8 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
 Focused repair mode is active.
 - Fix the remediation below before doing anything else:
 ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
+- Resolve every verification_failure_diagnostic before returning:
+${verificationFailureDiagnostics.map((item) => `  - ${item.path}:${item.line}:${item.column} ${item.code} ${item.message}`).join('\n') || '  - none'}
 - If unreplaced_preflight_stubs is non-empty, replace every listed stub before doing anything else:
 ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
 - Use focused_repair_file_context as your source for current file contents. It includes boundary files plus direct dependency files needed for type and domain contracts.

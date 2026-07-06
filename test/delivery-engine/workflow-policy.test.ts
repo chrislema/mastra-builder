@@ -61,6 +61,8 @@ import {
   staleDownstreamVerificationSurfacePaths,
   taskOwnedSurfaceRoleHygiene,
   taskBoundarySurfaces,
+  typeScriptDiagnosticsFromRemediation,
+  typeScriptDiagnosticsFromText,
   unreplacedPreflightStubPaths,
   verificationWithAcceptanceGaps,
   workflowStepIntegrationGaps,
@@ -2239,6 +2241,43 @@ test('deterministic implementation blockers produce retry remediation before mod
       'DETERMINISTIC preflight_stubs_replaced failed: preflight stubs remain: src/routes/runs.ts',
       'DETERMINISTIC verification_passed failed: npm run typecheck failed: TS1128',
     ],
+  );
+});
+
+test('typescript diagnostics are extracted from verification remediation for focused repair packets', () => {
+  const failure = `npm run typecheck failed: Command failed: npm run typecheck
+
+stdout:
+
+> talking-head-builder@0.1.0 typecheck
+> tsc --noEmit
+
+src/ai/profilePrompts.ts(304,37): error TS18046: 'value' is of type 'unknown'.
+src/ai/profilePrompts.ts(304,51): error TS18046: 'value' is of type 'unknown'.
+src/ai/profilePrompts.ts(304,51): error TS18046: 'value' is of type 'unknown'.
+`;
+
+  assert.deepEqual(typeScriptDiagnosticsFromText(failure), [
+    {
+      path: 'src/ai/profilePrompts.ts',
+      line: 304,
+      column: 37,
+      code: 'TS18046',
+      message: "'value' is of type 'unknown'.",
+    },
+    {
+      path: 'src/ai/profilePrompts.ts',
+      line: 304,
+      column: 51,
+      code: 'TS18046',
+      message: "'value' is of type 'unknown'.",
+    },
+  ]);
+  assert.deepEqual(
+    typeScriptDiagnosticsFromRemediation([`DETERMINISTIC verification_passed failed: ${failure}`]).map(
+      (diagnostic) => `${diagnostic.path}:${diagnostic.line}:${diagnostic.column} ${diagnostic.code}`,
+    ),
+    ['src/ai/profilePrompts.ts:304:37 TS18046', 'src/ai/profilePrompts.ts:304:51 TS18046'],
   );
 });
 
