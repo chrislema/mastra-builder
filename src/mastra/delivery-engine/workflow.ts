@@ -523,6 +523,19 @@ function looksLikeSafeAssumptionOrRisk(decision: string) {
   );
 }
 
+function looksLikeSettledDeliveryPolicy(decision: string) {
+  return (
+    /\b(?:Pages Functions?|Cloudflare Pages)\b[\s\S]{0,80}\bWorkers?\b/i.test(decision) ||
+    /\bWorkers?\b[\s\S]{0,80}\b(?:Pages Functions?|Cloudflare Pages)\b/i.test(decision) ||
+    /\b(?:React|Next\.?js|Vue|Svelte|JSX|TSX|Vite|frontend framework)\b/i.test(decision) ||
+    /\bGitHub Actions?\b[\s\S]{0,80}\bdeploy/i.test(decision) ||
+    /\bdeploy\b[\s\S]{0,80}\bGitHub Actions?\b/i.test(decision) ||
+    /\bWrangler\b[\s\S]{0,80}\bdeploy/i.test(decision) ||
+    /\bWorkers AI\b[\s\S]{0,80}\bbinding\b/i.test(decision) ||
+    /\blocal validation\b|\bproduction approval\b/i.test(decision)
+  );
+}
+
 function namesTaskScopedBlocker(decision: string) {
   return /\bblocks?\s+T\d[\w-]*\b/i.test(decision) || /\bbefore\s+T\d[\w-]*\b/i.test(decision);
 }
@@ -534,6 +547,13 @@ export function openDecisionHygiene(taskPlan: TaskPlan) {
       return {
         passed: false,
         reason: `open_decisions[${index}] is not decision-shaped; include Topic, Why it matters, Options considered, and Follow-up impact.`,
+      };
+    }
+
+    if (looksLikeSettledDeliveryPolicy(decision)) {
+      return {
+        passed: false,
+        reason: `open_decisions[${index}] asks about settled delivery policy; move it to readout.safe_assumptions or taskPlan.risks and proceed with the Worker-first defaults.`,
       };
     }
 
@@ -1003,8 +1023,16 @@ const taskStatusSummary = (state: Record<string, 'complete' | 'stuck' | 'blocked
 export const hasExecutableRootTask = (taskPlan: TaskPlan) =>
   taskPlan.tasks.some((task) => task.depends_on.length === 0 && task.acceptance_criteria.length && task.owned_surfaces.length);
 
+export function isTrueBlockingAmbiguity(question: string) {
+  if (looksLikeSettledDeliveryPolicy(question)) return false;
+  if (looksLikeSafeAssumptionOrRisk(question)) return false;
+  return /\b(blocks?|blocked|cannot|prevents?|required before|must be resolved before|implementation impossible|missing required)\b/i.test(
+    question,
+  );
+}
+
 export const shouldSuspendForPlannerQuestions = (readout: z.infer<typeof readoutSchema>, taskPlan: TaskPlan) =>
-  readout.blocking_ambiguities.length > 0 && !hasExecutableRootTask(taskPlan);
+  readout.blocking_ambiguities.some(isTrueBlockingAmbiguity) && !hasExecutableRootTask(taskPlan);
 
 function weakDimensionIsNonActionableForTask(
   dimension: AggregatedJudgment['dimensions_scored'][number],

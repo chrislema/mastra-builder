@@ -17,6 +17,7 @@ import {
   implementationRetryMode,
   implementationToolChoiceForRetryMode,
   implementationWeakDimensionRemediation,
+  isTrueBlockingAmbiguity,
   judgeProviderErrorDetails,
   judgeUnavailableOutputForRubric,
   judgeUnavailableRemediation,
@@ -90,7 +91,26 @@ test('planner questions are deferred when a task plan has an executable root tas
 });
 
 test('planner questions suspend when no executable root task exists', () => {
-  assert.equal(shouldSuspendForPlannerQuestions(readout(['Cannot start safely.']), taskPlan([])), true);
+  assert.equal(
+    shouldSuspendForPlannerQuestions(
+      readout(['Implementation impossible: the spec explicitly marks the required upstream API contract TBD.']),
+      taskPlan([]),
+    ),
+    true,
+  );
+});
+
+test('planner questions do not suspend for settled policy or preferences', () => {
+  assert.equal(isTrueBlockingAmbiguity('Should this be React or vanilla HTML?'), false);
+  assert.equal(isTrueBlockingAmbiguity('Should deployment use GitHub Actions or Wrangler?'), false);
+  assert.equal(isTrueBlockingAmbiguity('Which accent color should the UI use?'), false);
+  assert.equal(
+    shouldSuspendForPlannerQuestions(
+      readout(['Should this be Cloudflare Pages or Workers?', 'Which accent color should the UI use?']),
+      taskPlan([]),
+    ),
+    false,
+  );
 });
 
 test('task plan open decisions must be decision-shaped blockers', () => {
@@ -133,6 +153,18 @@ test('task plan open decisions must be decision-shaped blockers', () => {
   ];
   assert.equal(openDecisionHygiene(unblockedPlan).passed, false);
   assert.match(openDecisionHygiene(unblockedPlan).reason, /safe assumption or risk|does not explain what implementation work it blocks/);
+
+  const settledPolicyPlan = taskPlan([{ depends_on: [] }]);
+  settledPolicyPlan.open_decisions = [
+    [
+      'Topic: Pages versus Workers',
+      'Why it matters: blocks T1 because the project shape changes',
+      'Options considered: Cloudflare Pages; standalone Workers',
+      'Follow-up impact: T1 cannot scaffold until this is decided',
+    ].join(' | '),
+  ];
+  assert.equal(openDecisionHygiene(settledPolicyPlan).passed, false);
+  assert.match(openDecisionHygiene(settledPolicyPlan).reason, /settled delivery policy/);
 });
 
 test('task plan owned surfaces must be concrete repo paths or explicit unknowns', () => {
