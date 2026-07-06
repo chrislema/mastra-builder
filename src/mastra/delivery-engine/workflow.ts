@@ -681,6 +681,25 @@ function workflowStepSlug(path: string) {
   return path.split('/').pop()?.replace(/\.[cm]?[jt]s$/, '');
 }
 
+function workflowStepExportedNames(repoPath: string, stepPath: string) {
+  const fullPath = join(resolve(repoPath), stepPath);
+  if (!existsSync(fullPath)) return [];
+
+  const source = readFileSync(fullPath, 'utf8');
+  const names = new Set<string>();
+  for (const match of source.matchAll(/\bexport\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) {
+    names.add(match[1]);
+  }
+  for (const match of source.matchAll(/\bexport\s+const\s+([A-Za-z_$][\w$]*)/g)) {
+    names.add(match[1]);
+  }
+  return [...names];
+}
+
+function withoutImportStatements(source: string) {
+  return source.replace(/^\s*import\s+[\s\S]*?;\s*$/gm, '');
+}
+
 export function workflowStepIntegrationGaps(repoPath: string, task: Task) {
   const steps = workflowStepOwnedSurfaces(task);
   if (!steps.length) return [];
@@ -689,13 +708,18 @@ export function workflowStepIntegrationGaps(repoPath: string, task: Task) {
   if (!existsSync(weeklyPath)) return [];
 
   const weeklySource = readFileSync(weeklyPath, 'utf8');
+  const weeklyImplementationSource = withoutImportStatements(weeklySource);
   return steps
     .filter((step) => existsSync(join(resolve(repoPath), step)))
     .flatMap((step) => {
       const slug = workflowStepSlug(step);
-      if (!slug || weeklySource.includes(`./steps/${slug}`)) return [];
+      const exportedNames = workflowStepExportedNames(repoPath, step);
+      const callsExportedStep = exportedNames.some((name) =>
+        new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(weeklyImplementationSource),
+      );
+      if (slug && weeklySource.includes(`./steps/${slug}`) && callsExportedStep) return [];
       return [
-        `Workflow step ${step} is not imported or called from src/workflows/weekly.ts; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.`,
+        `Workflow step ${step} is not called from src/workflows/weekly.ts; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.`,
       ];
     });
 }

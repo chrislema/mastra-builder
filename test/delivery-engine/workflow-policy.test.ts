@@ -465,7 +465,16 @@ test('workflow step implementation must be integrated into WeeklyWorkflow before
   const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/workflows/steps/fetch-bookmarks.ts'] }]).tasks;
 
   assert.deepEqual(workflowStepIntegrationGaps(repoPath, task), [
-    'Workflow step src/workflows/steps/fetch-bookmarks.ts is not imported or called from src/workflows/weekly.ts; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.',
+    'Workflow step src/workflows/steps/fetch-bookmarks.ts is not called from src/workflows/weekly.ts; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.',
+  ]);
+
+  writeFileSync(
+    join(repoPath, 'src/workflows/weekly.ts'),
+    "import { fetchBookmarksStep } from './steps/fetch-bookmarks';\nexport class WeeklyWorkflow { async fetchBookmarks(context: unknown) { return context; } }\n",
+  );
+
+  assert.deepEqual(workflowStepIntegrationGaps(repoPath, task), [
+    'Workflow step src/workflows/steps/fetch-bookmarks.ts is not called from src/workflows/weekly.ts; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.',
   ]);
 
   writeFileSync(
