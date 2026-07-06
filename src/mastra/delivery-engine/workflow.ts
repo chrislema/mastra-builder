@@ -670,18 +670,32 @@ function ownsPackageScaffold(task: Task) {
   return ownsExactSurface(task, 'package.json');
 }
 
-function normalizeScaffoldRootTask(task: Task) {
-  if (ownsExactSurface(task, '.gitignore')) return task;
+function ownsWorkerConfigSurface(task: Task) {
+  return taskOwnsAnyExactSurface(task, workerConfigSurfacePaths);
+}
+
+function normalizeScaffoldRootTask(repoPath: string, task: Task, includeWorkerConfig: boolean) {
+  const ownedSurfaces = [...task.owned_surfaces];
+  const acceptanceCriteria = [...task.acceptance_criteria];
+
+  if (!ownsExactSurface(task, '.gitignore')) {
+    ownedSurfaces.push('.gitignore');
+    acceptanceCriteria.push(
+      '.gitignore excludes node_modules/, .wrangler/, .delivery/, .dev.vars*, .env*, and *.cpuprofile so local delivery artifacts, Wrangler state, startup profiles, dependencies, and local secrets stay out of git.',
+    );
+  }
+
+  if (includeWorkerConfig && !releaseGateWorkerConfigPath(repoPath) && !ownsWorkerConfigSurface(task)) {
+    ownedSurfaces.push('wrangler.jsonc');
+    acceptanceCriteria.push(
+      'wrangler.jsonc exists in the root scaffold with the Worker entrypoint, env.staging/env.production, nodejs_compat, observability, and any required bindings so Wrangler validation can run from the first build slice.',
+    );
+  }
 
   return {
     ...task,
-    owned_surfaces: [...task.owned_surfaces, '.gitignore'],
-    acceptance_criteria: Array.from(
-      new Set([
-        ...task.acceptance_criteria,
-        '.gitignore excludes node_modules/, .wrangler/, .delivery/, .dev.vars*, .env*, and *.cpuprofile so local delivery artifacts, Wrangler state, startup profiles, dependencies, and local secrets stay out of git.',
-      ]),
-    ),
+    owned_surfaces: Array.from(new Set(ownedSurfaces)),
+    acceptance_criteria: Array.from(new Set(acceptanceCriteria)),
   };
 }
 
@@ -745,9 +759,10 @@ export function normalizeTaskPlanScaffoldDependencies(repoPath: string, taskPlan
   if (!scaffoldRootTask) return taskPlan;
 
   let changed = false;
+  const planAlreadyOwnsWorkerConfig = taskPlan.tasks.some(ownsWorkerConfigSurface);
   const tasks = taskPlan.tasks.map((task) => {
     if (task.id === scaffoldRootTask.id) {
-      const normalizedTask = normalizeScaffoldRootTask(task);
+      const normalizedTask = normalizeScaffoldRootTask(repoPath, task, !planAlreadyOwnsWorkerConfig);
       if (normalizedTask !== task) changed = true;
       return normalizedTask;
     }
@@ -1298,6 +1313,13 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
     return {
       passed: false,
       reason: `${scaffoldRootTask.id} owns TypeScript Worker source but not tsconfig.json. TypeScript Worker scaffolds need tsconfig.json so npm run typecheck can pass before later tasks.`,
+    };
+  }
+
+  if (!releaseGateWorkerConfigPath(repoPath) && !ownsWorkerConfigSurface(scaffoldRootTask)) {
+    return {
+      passed: false,
+      reason: `${scaffoldRootTask.id} owns the new Worker package scaffold but not wrangler.jsonc. New Worker scaffolds should include wrangler.jsonc in the root task so the first build slice can run Wrangler dry-run validation before downstream runtime tasks.`,
     };
   }
 
@@ -6946,7 +6968,8 @@ Project policy:
 - New Worker config must use compatibility_date "${todayIsoDate()}" unless the source docs explicitly require a different recent date.
 Every task must have checkable acceptance criteria and owned_surfaces.
 Worker task slicing:
-- Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml belongs in one task, and migrations/*.sql belongs in a later task.
+- For a brand-new Worker project, the first root engineer scaffold task must own package.json, .gitignore, wrangler.jsonc, and the Worker entrypoint so Wrangler dry-run validation can run from the first build slice.
+- Keep D1 schema/migration work separate from Worker config: migrations/*.sql belongs in a later task after the root scaffold/config task.
 - Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 Owned-surface hygiene:
@@ -6960,7 +6983,7 @@ Role-boundary hygiene:
 - Do not put public/** files in engineer-owned tasks; create or reuse a designer task for vanilla HTML/CSS/JS UI work.
 Root scaffold hygiene:
 - Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
-- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, .gitignore, and at least one concrete Worker source entry such as src/index.js or workers/app.js. Include tsconfig.json only when the Worker source is TypeScript.
+- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, .gitignore, wrangler.jsonc, and at least one concrete Worker source entry such as src/index.js or workers/app.js. Include tsconfig.json only when the Worker source is TypeScript.
 - Worker runtime/config/source/static asset/migration tasks must depend on that scaffold task unless they own package.json and the Worker source entry themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
@@ -7188,7 +7211,8 @@ Project policy:
 - New Worker config must use compatibility_date "${todayIsoDate()}" unless the source docs explicitly require a different recent date.
 
 Task-plan quality requirements:
-- Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml in one task, migrations/*.sql in a later task.
+- For a brand-new Worker project, the first root engineer scaffold task must own package.json, .gitignore, wrangler.jsonc, and the Worker entrypoint so Wrangler dry-run validation can run from the first build slice.
+- Keep D1 schema/migration work separate from Worker config: migrations/*.sql belongs in a later task after the root scaffold/config task.
 - Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 - Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.

@@ -107,6 +107,10 @@ New Worker config should define Wrangler `env.staging` and `env.production`.
 Bindings and vars required by the Worker must be mirrored inside those environments because
 Wrangler does not inherit them across environments. Production approval runs the native
 Wrangler path with `wrangler deploy --env production`.
+For brand-new Worker projects, the first root scaffold task should create `package.json`,
+`.gitignore`, `wrangler.jsonc`, and the Worker entrypoint together so Wrangler dry-run
+verification can run from the first build slice. D1 migrations should remain separate
+downstream tasks.
 New Worker package scripts should match those explicit environments: `scripts.dev` runs
 `wrangler dev --env staging`, and `scripts.deploy` runs `wrangler deploy --env production`.
 

@@ -320,31 +320,7 @@ test('bare Worker project plans require package scaffold before runtime surfaces
   assert.equal(packageOnlyResult.passed, false);
   assert.match(packageOnlyResult.reason, /no Worker source input/);
 
-  const tsWithoutTsconfigPlan = taskPlan([
-    {
-      depends_on: [],
-      owned_surfaces: ['package.json', 'src/index.ts'],
-    },
-  ]);
-  const tsWithoutTsconfigResult = projectScaffoldHygiene(repoPath, tsWithoutTsconfigPlan);
-  assert.equal(tsWithoutTsconfigResult.passed, false);
-  assert.match(tsWithoutTsconfigResult.reason, /TypeScript Worker source but not tsconfig\.json/);
-
-  const tomlPlan = taskPlan([
-    {
-      depends_on: [],
-      owned_surfaces: ['package.json', 'src/index.js'],
-    },
-    {
-      depends_on: ['T1'],
-      owned_surfaces: ['wrangler.toml'],
-    },
-  ]);
-  const tomlResult = projectScaffoldHygiene(repoPath, tomlPlan);
-  assert.equal(tomlResult.passed, false);
-  assert.match(tomlResult.reason, /wrangler\.jsonc/);
-
-  const goodPlan = taskPlan([
+  const delayedConfigPlan = taskPlan([
     {
       depends_on: [],
       owned_surfaces: ['package.json', 'src/index.js'],
@@ -354,10 +330,41 @@ test('bare Worker project plans require package scaffold before runtime surfaces
       owned_surfaces: ['wrangler.jsonc'],
     },
   ]);
+  const delayedConfigResult = projectScaffoldHygiene(repoPath, delayedConfigPlan);
+  assert.equal(delayedConfigResult.passed, false);
+  assert.match(delayedConfigResult.reason, /root task/);
+  assert.match(delayedConfigResult.reason, /Wrangler dry-run validation/);
+
+  const tsWithoutTsconfigPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'src/index.ts', 'wrangler.jsonc'],
+    },
+  ]);
+  const tsWithoutTsconfigResult = projectScaffoldHygiene(repoPath, tsWithoutTsconfigPlan);
+  assert.equal(tsWithoutTsconfigResult.passed, false);
+  assert.match(tsWithoutTsconfigResult.reason, /TypeScript Worker source but not tsconfig\.json/);
+
+  const tomlPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'src/index.js', 'wrangler.toml'],
+    },
+  ]);
+  const tomlResult = projectScaffoldHygiene(repoPath, tomlPlan);
+  assert.equal(tomlResult.passed, false);
+  assert.match(tomlResult.reason, /wrangler\.jsonc/);
+
+  const goodPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'src/index.js', 'wrangler.jsonc'],
+    },
+  ]);
   assert.deepEqual(projectScaffoldHygiene(repoPath, goodPlan), { passed: true, reason: 'ok' });
 });
 
-test('bare Worker project plans normalize root static assets behind the package scaffold', () => {
+test('bare Worker project plans normalize root scaffold surfaces and static assets', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-project-scaffold-normalize-'));
   const plan = taskPlan([
     {
@@ -380,6 +387,28 @@ test('bare Worker project plans normalize root static assets behind the package 
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\.delivery/);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\*\.cpuprofile/);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
+  assert.equal(projectScaffoldHygiene(repoPath, normalized).passed, false);
+  assert.match(projectScaffoldHygiene(repoPath, normalized).reason, /root task/);
+});
+
+test('bare Worker project plans can auto-add missing root Wrangler config', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-project-scaffold-normalize-config-'));
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'src/index.js'],
+    },
+    {
+      depends_on: [],
+      owned_surfaces: ['public/index.html', 'public/styles.css'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanScaffoldDependencies(repoPath, plan);
+
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'src/index.js', '.gitignore', 'wrangler.jsonc']);
+  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /Wrangler validation can run from the first build slice/);
+  assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
   assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
 });
 
