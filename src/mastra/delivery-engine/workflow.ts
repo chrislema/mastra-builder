@@ -1820,16 +1820,25 @@ function taskBoundaryCanConfigureWorkersAi(repoPath: string, task: Task) {
     );
 }
 
-function repoSourceUsesWorkersAi(repoPath: string) {
+function workerSourceSearchRoots(repoPath: string) {
   const root = resolve(repoPath);
-  const sourceRoots = [
+  return [
     join(root, 'src'),
     join(root, 'workers'),
     join(root, 'worker.js'),
     join(root, 'worker.mjs'),
     join(root, 'worker.ts'),
     join(root, 'worker.mts'),
+    join(root, 'worker.cts'),
   ];
+}
+
+function workerSourceContainsText(repoPath: string, needle: string) {
+  const scanned = { count: 0 };
+  return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeContainsText(sourceRoot, needle, scanned));
+}
+
+function repoSourceUsesWorkersAi(repoPath: string) {
   const needles = [
     'env.AI',
     'WorkersAiClient',
@@ -1839,10 +1848,7 @@ function repoSourceUsesWorkersAi(repoPath: string) {
     "from '../../ai/client'",
   ];
 
-  return needles.some((needle) => {
-    const scanned = { count: 0 };
-    return sourceRoots.some((sourceRoot) => sourceTreeContainsText(sourceRoot, needle, scanned));
-  });
+  return needles.some((needle) => workerSourceContainsText(repoPath, needle));
 }
 
 function wranglerTomlHasWorkersAiBinding(text: string) {
@@ -3747,8 +3753,13 @@ function sourceTreeContainsText(rootPath: string, needle: string, scanned = { co
 
 function releaseGateRepoHasRoute(repoPath: string, route: string) {
   const root = resolve(repoPath);
-  if (route === '/health' && existsSync(join(root, 'src/routes/health.ts'))) return true;
-  return sourceTreeContainsText(join(root, 'src'), route);
+  if (
+    route === '/health' &&
+    ['src/routes/health.ts', 'src/routes/health.js', 'src/routes/health.mjs'].some((path) => existsSync(join(root, path)))
+  ) {
+    return true;
+  }
+  return workerSourceContainsText(repoPath, route);
 }
 
 function releaseGateMigrationText(repoPath: string) {

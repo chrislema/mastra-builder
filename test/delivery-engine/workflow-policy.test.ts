@@ -1654,6 +1654,53 @@ test('release gate runtime probe planner covers common Worker API state and erro
   );
 });
 
+test('release gate runtime probe planner discovers routes in vanilla JS Worker entries', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-js-probes-'));
+  mkdirSync(join(repoPath, 'workers'), { recursive: true });
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'workers/app.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'workers/app.js'),
+    [
+      "if (url.pathname === '/profiles') {}",
+      "if (url.pathname === '/runs') {}",
+      "if (url.pathname === '/latest') {}",
+      "if (url.pathname === '/health') {}",
+    ].join('\n'),
+  );
+
+  const probes = releaseGateRuntimeProbePlan(repoPath, 'test-admin-token')?.probes ?? [];
+  assert.deepEqual(
+    probes.map((probe) => `${probe.method} ${probe.path}`),
+    [
+      'GET /',
+      'GET /health',
+      'GET /latest',
+      'POST /runs',
+      'POST /runs',
+      'POST /profiles',
+      'POST /profiles',
+      'POST /profiles',
+      'POST /profiles',
+      'GET /profiles',
+    ],
+  );
+});
+
 test('release gate evidence planner seeds latest transcript and version audit fixtures when schema is present', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-transcript-fixture-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
