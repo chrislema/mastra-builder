@@ -22,6 +22,7 @@ test('delivery model defaults to OpenAI GPT-5.5 with prompt-injected structured 
     model: configuredDeliveryModel(),
   });
   assert.deepEqual(missingEnvVarsForDeliveryModels({}), ['OPENAI_API_KEY']);
+  assert.deepEqual(missingEnvVarsForDeliveryModels({ OPENAI_API_KEY: 'your-openai-api-key' }), ['OPENAI_API_KEY']);
 });
 
 test('delivery judge model can be configured separately from builder model', () => {
@@ -33,4 +34,12 @@ test('delivery judge model can be configured separately from builder model', () 
   assert.equal(configuredDeliveryModel(env), 'openai/gpt-5.5');
   assert.equal(configuredJudgeModel(env), 'zai-coding-plan/glm-5.2');
   assert.deepEqual(missingEnvVarsForDeliveryModels(env), ['OPENAI_API_KEY', 'ZHIPU_API_KEY']);
+  assert.deepEqual(
+    missingEnvVarsForDeliveryModels({
+      ...env,
+      OPENAI_API_KEY: 'your-openai-api-key',
+      ZHIPU_API_KEY: 'your-zai-api-key',
+    }),
+    ['OPENAI_API_KEY', 'ZHIPU_API_KEY'],
+  );
 });

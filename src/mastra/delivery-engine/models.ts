@@ -29,10 +29,15 @@ const providerApiKeyEnvVars: Record<string, string[]> = {
 };
 
 const placeholderValues = new Set(['your-api-key', 'your_api_key', 'changeme', 'change-me']);
+const placeholderPatterns = [/^your[-_].*(?:api[-_]?key|key|token)$/i];
 
 const isConfiguredEnvValue = (value: string | undefined) => {
   const trimmed = value?.trim();
-  return Boolean(trimmed && !placeholderValues.has(trimmed.toLowerCase()));
+  return Boolean(
+    trimmed &&
+      !placeholderValues.has(trimmed.toLowerCase()) &&
+      !placeholderPatterns.some((pattern) => pattern.test(trimmed)),
+  );
 };
 
 export function requiredEnvVarsForModel(model: string) {
