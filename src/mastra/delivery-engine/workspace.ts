@@ -1,8 +1,9 @@
+import { statSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { Workspace, LocalFilesystem, LocalSandbox, WORKSPACE_TOOLS } from '@mastra/core/workspace';
-import { fileOwnership, matchesAny, noBcryptWeakHash } from './checks';
+import { fileOwnership, matchesAny, noBcryptWeakHash, stageSlice } from './checks';
 import { deliveryRepoPathFromRequestContext } from './context';
-import { hasDeliveryDirectory, readDeliveryBoundary } from './state';
+import { hasDeliveryDirectory, readDeliveryBoundary, readDeliveryEvents, type DeliveryBoundary } from './state';
 import { appendDeliveryEventState } from './state-service';
 import type { MastraLike } from './observability';
 
@@ -96,6 +97,69 @@ function isDependencyPath(path: string) {
   return clean === 'node_modules' || clean.startsWith('node_modules/');
 }
 
+const envPositiveInt = (name: string, fallback: number) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback;
+};
+
+const maxReadToolsBeforeWrite = envPositiveInt('DELIVERY_MAX_READ_TOOLS_BEFORE_WRITE', 6);
+
+function isExistingDirectory(repoPath: string, path: string) {
+  try {
+    return statSync(resolve(repoPath, path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function hasSuccessfulWorkspaceWrite(events: ReturnType<typeof readDeliveryEvents>, stage: string) {
+  return stageSlice(events, stage).some(
+    (event) => event.type === 'tool_use' && event.ok === true && typeof event.tool === 'string' && writeToolNames.has(event.tool),
+  );
+}
+
+function successfulReadToolCount(events: ReturnType<typeof readDeliveryEvents>, stage: string) {
+  return stageSlice(events, stage).filter(
+    (event) =>
+      event.type === 'tool_use' &&
+      event.ok === true &&
+      typeof event.tool === 'string' &&
+      dependencyReadToolNames.has(event.tool),
+  ).length;
+}
+
+export function deliveryReadToolBlockReason({
+  repoPath,
+  workspaceToolName,
+  relativePaths,
+  boundary = readDeliveryBoundary(repoPath),
+}: {
+  repoPath: string;
+  workspaceToolName: string;
+  relativePaths: string[];
+  boundary?: DeliveryBoundary;
+}) {
+  if (!dependencyReadToolNames.has(workspaceToolName)) return undefined;
+
+  if (workspaceToolName === WORKSPACE_TOOLS.FILESYSTEM.READ_FILE) {
+    const directoryPath = relativePaths.find((path) => isExistingDirectory(repoPath, path));
+    if (directoryPath) {
+      return `${directoryPath} is a directory. List files in that directory and read a concrete file path instead.`;
+    }
+  }
+
+  if (!boundary || !/^build:/.test(boundary.stage)) return undefined;
+  const events = readDeliveryEvents(repoPath);
+  if (hasSuccessfulWorkspaceWrite(events, boundary.stage)) return undefined;
+
+  const readCount = successfulReadToolCount(events, boundary.stage);
+  if (readCount >= maxReadToolsBeforeWrite) {
+    return `Build stage ${boundary.stage} already used ${readCount} read/list tool calls before any write. Stop investigating and write or edit the task's owned surfaces.`;
+  }
+
+  return undefined;
+}
+
 function recordBlockedToolCall({
   repoPath,
   workspaceToolName,
@@ -174,6 +238,23 @@ export const deliveryWorkspace = new Workspace({
 
         if (dependencyReadToolNames.has(workspaceToolName)) {
           const boundary = readDeliveryBoundary(repoPath);
+          const readBlockReason = deliveryReadToolBlockReason({
+            repoPath,
+            workspaceToolName,
+            relativePaths,
+            boundary,
+          });
+          if (readBlockReason) {
+            recordBlockedToolCall({ repoPath, workspaceToolName, input, reason: readBlockReason, context });
+            return {
+              proceed: false,
+              output: {
+                blocked: true,
+                reason: readBlockReason,
+              },
+            };
+          }
+
           const dependencyPath = boundary ? relativePaths.find(isDependencyPath) : undefined;
           if (dependencyPath) {
             const reason = `Reading ${dependencyPath} is blocked during delivery stages; rely on project types and workflow verification instead.`;
