@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'root-scaffold-hygiene-v4';
+const plannerPolicyVersion = 'verifiable-root-scaffold-v5';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -596,6 +596,12 @@ function ownsPackageScaffold(task: Task) {
   return ownsExactSurface(task, 'package.json') && ownsExactSurface(task, 'tsconfig.json');
 }
 
+function ownsTypeScriptInputSurface(task: Task) {
+  return normalizedOwnedSurfaces(task).some(
+    (surface) => surface === 'src/**' || (surface.startsWith('src/') && /\.(?:ts|mts|cts)$/.test(surface)),
+  );
+}
+
 function ownsWorkerRuntimeSurface(task: Task) {
   return normalizedOwnedSurfaces(task).some(
     (surface) =>
@@ -624,6 +630,13 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
       passed: false,
       reason:
         'Target repo has no package.json. The task plan needs a root scaffold task that owns package.json and tsconfig.json before Worker runtime files so automated verification can run.',
+    };
+  }
+
+  if (!ownsTypeScriptInputSurface(scaffoldRootTask)) {
+    return {
+      passed: false,
+      reason: `${scaffoldRootTask.id} owns package.json and tsconfig.json but no TypeScript source input. Bare Worker scaffolds need an owned src/*.ts surface such as src/index.ts or src/env.ts so npm run typecheck can pass before later tasks.`,
     };
   }
 
@@ -3523,7 +3536,7 @@ Owned-surface hygiene:
 - If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
 Root scaffold hygiene:
 - Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
-- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json and tsconfig.json.
+- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, tsconfig.json, and at least one TypeScript source input such as src/index.ts or src/env.ts.
 - Worker runtime/config/source tasks must depend on that scaffold task unless they own package.json and tsconfig.json themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.

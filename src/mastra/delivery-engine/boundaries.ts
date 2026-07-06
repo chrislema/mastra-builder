@@ -12,6 +12,7 @@ export const roleBoundaries = {
   engineer: {
     maxTurns: 40,
     owned: [
+      '.gitignore',
       'package.json',
       'package-lock.json',
       'pnpm-lock.yaml',

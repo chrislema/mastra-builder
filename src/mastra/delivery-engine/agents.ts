@@ -109,9 +109,10 @@ record it as a safe assumption. If it is non-blocking delivery uncertainty, reco
 Every open decision must be decision-shaped: Topic, Why it matters, Options considered, Follow-up impact.
 Every task owned surface must be a concrete repo path or glob, not a conceptual label. Use
 "unknown: <why>" only when a file truly cannot be known.
-When the target folder has no package.json, the root scaffold must be explicit: a first root
-engineer task owns package.json and tsconfig.json, and Worker runtime/config/source tasks depend
-on it unless they own those scaffold files themselves.
+When the target folder has no package.json, the root scaffold must be explicit and typecheckable:
+a first root engineer task owns package.json, tsconfig.json, and at least one src/*.ts input such
+as src/index.ts or src/env.ts. Worker runtime/config/source tasks depend on it unless they own those
+scaffold files themselves.
 Task owners must be engineer or designer; verification belongs to the later tester stage.
 Architecture defaults are Workers-first: use standalone Cloudflare Workers unless the
 existing repo or spec explicitly calls for Pages Functions. Never split one feature set

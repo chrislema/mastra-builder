@@ -142,7 +142,7 @@ test('bare Worker project plans require package scaffold before runtime surfaces
   assert.equal(badResult.passed, false);
   assert.match(badResult.reason, /no package\.json/);
 
-  const goodPlan = taskPlan([
+  const packageOnlyPlan = taskPlan([
     {
       depends_on: [],
       owned_surfaces: ['package.json', 'tsconfig.json'],
@@ -150,6 +150,20 @@ test('bare Worker project plans require package scaffold before runtime surfaces
     {
       depends_on: ['T1'],
       owned_surfaces: ['wrangler.toml', 'src/env.ts', 'src/index.ts'],
+    },
+  ]);
+  const packageOnlyResult = projectScaffoldHygiene(repoPath, packageOnlyPlan);
+  assert.equal(packageOnlyResult.passed, false);
+  assert.match(packageOnlyResult.reason, /no TypeScript source input/);
+
+  const goodPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['wrangler.toml', 'src/env.ts'],
     },
   ]);
   assert.deepEqual(projectScaffoldHygiene(repoPath, goodPlan), { passed: true, reason: 'ok' });
