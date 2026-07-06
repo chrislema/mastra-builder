@@ -9,6 +9,7 @@ import {
   createMissingOwnedSurfaceStubs,
   deliveryBuildResumePlan,
   directDependencySurfacePaths,
+  implementationActionableJudgmentRemediation,
   implementationDeterministicRemediation,
   implementationEnginePolicyMismatch,
   implementationFilesTouched,
@@ -1549,6 +1550,44 @@ test('contract-only tasks ignore non-actionable database state dimension complai
   );
 });
 
+test('contract-only tasks can proceed when only database state remediation lowers the implementation score', () => {
+  const judgment = {
+    ...implementationJudgment,
+    overall: 0.675,
+    passed: false,
+    dimensions_scored: [
+      { id: 'smallest_coherent_change', score: 5, weight: 8, evidence: 'ok' },
+      {
+        id: 'state_explicitness',
+        score: 2,
+        weight: 7,
+        evidence: 'The adapter does not show database CHECK constraints or indexes.',
+      },
+      { id: 'implementation_note_quality', score: 4, weight: 5, evidence: 'honest and complete' },
+    ],
+    remediation: [
+      'DIMENSION state_explicitness scored 2/5 (The adapter does not show database CHECK constraints or indexes.). Target: Explicit lifecycle states with CHECK constraints, timestamps, and indexes.',
+    ],
+  };
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/services/bookmarkClient.ts'],
+    },
+  ]);
+
+  assert.deepEqual(implementationActionableJudgmentRemediation(judgment, plan.tasks[0]), []);
+  assert.equal(
+    shouldProceedAfterNonActionableImplementationJudgment({
+      judgment,
+      deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
+      note: implementationNote,
+      task: plan.tasks[0],
+    }),
+    true,
+  );
+});
+
 test('state-owning tasks still repair weak state explicitness dimensions', () => {
   const judgment = {
     ...implementationJudgment,
@@ -1574,6 +1613,43 @@ test('state-owning tasks still repair weak state explicitness dimensions', () =>
   assert.deepEqual(implementationWeakDimensionRemediation(judgment, plan.tasks[0]), [
     'DIMENSION state_explicitness scored 3/5. Improve this before continuing: The schema lacks database CHECK constraints or indexes.',
   ]);
+});
+
+test('state-owning tasks keep database state remediation actionable', () => {
+  const judgment = {
+    ...implementationJudgment,
+    overall: 0.675,
+    passed: false,
+    dimensions_scored: [
+      { id: 'smallest_coherent_change', score: 5, weight: 8, evidence: 'ok' },
+      {
+        id: 'state_explicitness',
+        score: 2,
+        weight: 7,
+        evidence: 'The schema lacks database CHECK constraints or indexes.',
+      },
+    ],
+    remediation: [
+      'DIMENSION state_explicitness scored 2/5 (The schema lacks database CHECK constraints or indexes.). Target: Explicit lifecycle states with CHECK constraints, timestamps, and indexes.',
+    ],
+  };
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+    },
+  ]);
+
+  assert.deepEqual(implementationActionableJudgmentRemediation(judgment, plan.tasks[0]), judgment.remediation);
+  assert.equal(
+    shouldProceedAfterNonActionableImplementationJudgment({
+      judgment,
+      deterministicResults: [{ id: 'module_loads', check: 'ran_code_before_complete', passed: true, reason: 'ok' }],
+      note: implementationNote,
+      task: plan.tasks[0],
+    }),
+    false,
+  );
 });
 
 test('missing owned surfaces block the non-actionable implementation fast path', () => {

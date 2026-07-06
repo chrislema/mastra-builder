@@ -1057,8 +1057,27 @@ export function implementationWeakDimensionRemediation(judgment: AggregatedJudgm
     );
 }
 
+export function implementationActionableJudgmentRemediation(judgment: AggregatedJudgment, task?: Task) {
+  const nonActionableDimensionIds = new Set(
+    judgment.dimensions_scored
+      .filter((dimension) => dimension.score <= 3)
+      .filter((dimension) => weakDimensionIsNonActionableForTask(dimension, task))
+      .map((dimension) => dimension.id),
+  );
+
+  return judgment.remediation.filter((item) => {
+    for (const dimensionId of nonActionableDimensionIds) {
+      if (item.startsWith(`DIMENSION ${dimensionId} `)) return false;
+    }
+    return true;
+  });
+}
+
 function implementationFindingSteps(taskId: string, judgment: AggregatedJudgment, task?: Task) {
-  const remediation = [...judgment.remediation, ...implementationWeakDimensionRemediation(judgment, task)];
+  const remediation = [
+    ...implementationActionableJudgmentRemediation(judgment, task),
+    ...implementationWeakDimensionRemediation(judgment, task),
+  ];
   return remediation.length ? remediation : [`${taskId} did not produce a passing implementation judgment`];
 }
 
@@ -1074,7 +1093,8 @@ export function shouldProceedAfterNonActionableImplementationJudgment({
   task?: Task;
 }) {
   if (judgment.passed) return false;
-  if (judgment.gates_failed.length || judgment.dimensions_missing.length || judgment.remediation.length) return false;
+  if (judgment.gates_failed.length || judgment.dimensions_missing.length) return false;
+  if (implementationActionableJudgmentRemediation(judgment, task).length) return false;
   if (implementationWeakDimensionRemediation(judgment, task).length) return false;
   if (!deterministicResults.every((result) => result.passed)) return false;
   if (!note.verification.performed.length) return false;
@@ -3712,9 +3732,11 @@ const deliveryAgentTimeouts = {
   standard: envTimeoutMs('DELIVERY_AGENT_CALL_TIMEOUT_MS', 300_000),
   build: envTimeoutMs('DELIVERY_BUILD_CALL_TIMEOUT_MS', 180_000),
   buildNoTool: envTimeoutMs('DELIVERY_BUILD_NO_TOOL_TIMEOUT_MS', 60_000),
-  buildPostWriteQuiet: envTimeoutMs('DELIVERY_BUILD_POST_WRITE_QUIET_TIMEOUT_MS', 90_000),
+  buildPostWriteQuiet: envTimeoutMs('DELIVERY_BUILD_POST_WRITE_QUIET_TIMEOUT_MS', 60_000),
   judge: envTimeoutMs('DELIVERY_JUDGE_CALL_TIMEOUT_MS', 300_000),
 };
+
+const repairPostWriteQuietTimeoutMs = 45_000;
 
 class DeliveryStageTimeoutError extends Error {
   constructor(
@@ -5593,6 +5615,7 @@ Execution rules:
 - If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.
 - Do not inspect node_modules; rely on project types and workflow verification.
 - If timeout recovery is active, do not investigate. Create the missing owned surfaces immediately.
+- After you have written or edited the task's owned surfaces, stop reading/listing files and return your summary so the workflow can typecheck and judge the result.
 - Return a brief natural-language summary; the workflow will create the implementation note from files, events, and verification.`;
     const recoveryPrompt = writeFirstRecovery
       ? `
@@ -5633,6 +5656,10 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
 - Do not add or import a package that is not already listed in existing_package_dependencies unless package_manifest_owned is true.`
       : '';
     const finalBuildPrompt = `${buildPrompt}${recoveryPrompt}${replaceStubsPrompt}${repairPrompt}`;
+    const postWriteQuietTimeoutMs =
+      writeFirstRecovery || replaceStubsRecovery || focusedRepairRecovery
+        ? Math.min(deliveryAgentTimeouts.buildPostWriteQuiet, repairPostWriteQuietTimeoutMs)
+        : deliveryAgentTimeouts.buildPostWriteQuiet;
     let buildResponse: unknown;
     try {
       buildResponse = await runWithDeliveryStageTimeout({
@@ -5642,7 +5669,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
         timeoutMs: deliveryAgentTimeouts.build,
         firstToolTimeoutMs: deliveryAgentTimeouts.buildNoTool,
         firstToolCheck: () => stageHasToolUse({ repoPath: inputData.repoPath, mastra, stage }),
-        postWriteQuietTimeoutMs: deliveryAgentTimeouts.buildPostWriteQuiet,
+        postWriteQuietTimeoutMs,
         latestWriteCheck: () => latestStageSuccessfulWriteTimestamp({ repoPath: inputData.repoPath, mastra, stage }),
         operation: (abortSignal) =>
           agent.generate(
