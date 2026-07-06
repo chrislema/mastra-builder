@@ -1923,6 +1923,18 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+export function workerConfigTaskPacketPolicy() {
+  return {
+    schema: './node_modules/wrangler/config-schema.json',
+    compatibility_date: todayIsoDate(),
+    compatibility_flags: ['nodejs_compat'],
+    observability: {
+      enabled: true,
+      head_sampling_rate: 1,
+    },
+  };
+}
+
 function workerCompatibilityDateGaps(value: unknown) {
   if (typeof value !== 'string') {
     return [`compatibility_date is missing; set it to today's date (${todayIsoDate()}) for new Worker projects.`];
@@ -5152,6 +5164,7 @@ Project policy:
 - Prefer wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - Use wrangler CLI for deploy and local runtime validation; never use GitHub Actions as the deployment path.
 - Git/gh may support source-control steps, but production deployment is a separate Wrangler action after human approval.
+- New Worker config must use compatibility_date "${todayIsoDate()}" unless the source docs explicitly require a different recent date.
 Every task must have checkable acceptance criteria and owned_surfaces.
 Worker task slicing:
 - Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml belongs in one task, and migrations/*.sql belongs in a later task.
@@ -5391,6 +5404,7 @@ Project policy:
 - Use wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - Use Wrangler CLI for local validation and deployment; never make GitHub Actions the deployment path.
 - If AI is used in the target Worker, plan an active Workers AI binding and an internal adapter around it.
+- New Worker config must use compatibility_date "${todayIsoDate()}" unless the source docs explicitly require a different recent date.
 
 Task-plan quality requirements:
 - Plan Worker config and D1 schema as separate engineer tasks: wrangler.jsonc/wrangler.json/wrangler.toml in one task, migrations/*.sql in a later task.
@@ -6404,6 +6418,7 @@ const executeBuildTaskAttemptStep = createStep({
       package_manifest_owned: packageManifestOwned,
       existing_package_dependencies: existingPackageDependencies,
       focused_repair_file_context: focusedRepairFileContext,
+      worker_config_policy: workerConfigTaskPacketPolicy(),
       platform_policy_findings: [
         ...workersAiBindingGaps(inputData.repoPath, task),
         ...workerConfigHygieneGaps(inputData.repoPath, task),
@@ -6437,7 +6452,7 @@ Execution rules:
 - Do not introduce runtime dependencies that are absent from existing_package_dependencies unless package_manifest_owned is true and you update the package manifest in this task.
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
-- For Worker config, use wrangler.jsonc for new projects with "$schema": "./node_modules/wrangler/config-schema.json", a current/recent compatibility_date, compatibility_flags including "nodejs_compat", and explicit observability enabled with head_sampling_rate.
+- For Worker config, use worker_config_policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", and explicit observability enabled with head_sampling_rate.
 - For Worker scaffold package.json, use current Cloudflare tooling: Wrangler "latest" or v4+, @cloudflare/workers-types "latest" or a recent dated v4 release, scripts.dev as "wrangler dev", scripts.deploy as "wrangler deploy", and scripts.typecheck as "tsc --noEmit".
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
 - For route tasks, integrate new endpoints through the existing Worker router/barrel/middleware path. Do not import route handlers into src/index.ts and dispatch them before routeRequest when routeRequest already exists.

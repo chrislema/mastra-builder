@@ -64,6 +64,7 @@ import {
   workflowStepIntegrationGaps,
   workersAiBindingGaps,
   workerConfigHygieneGaps,
+  workerConfigTaskPacketPolicy,
   workerPackageScaffoldGaps,
   wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
@@ -1356,6 +1357,15 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
       ?.ok,
     true,
   );
+});
+
+test('Worker config task packet policy carries the exact current compatibility date', () => {
+  const policy = workerConfigTaskPacketPolicy();
+
+  assert.equal(policy.schema, './node_modules/wrangler/config-schema.json');
+  assert.equal(policy.compatibility_date, currentCompatibilityDate());
+  assert.deepEqual(policy.compatibility_flags, ['nodejs_compat']);
+  assert.deepEqual(policy.observability, { enabled: true, head_sampling_rate: 1 });
 });
 
 test('Worker package scaffold hygiene requires current Wrangler tooling and config-based scripts', () => {
