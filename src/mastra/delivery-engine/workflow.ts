@@ -737,6 +737,7 @@ function taskCanSafelyDependOn(taskPlan: TaskPlan, taskId: string, dependencyId:
 const requiredTalkingHeadProfileKinds = ['audience_segments', 'voice_profile'];
 const profileContractProducerSurfaces = [
   'src/validation.ts',
+  'src/contracts.ts',
   'src/domain.ts',
   'src/domain/profileKinds.ts',
   'src/domain/profile.ts',

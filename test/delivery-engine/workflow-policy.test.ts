@@ -535,6 +535,26 @@ test('profile kind contract treats root domain module as the producer surface', 
   assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /audience_segments, voice_profile/);
 });
 
+test('profile kind contract treats root contracts module as the producer surface', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-root-contracts-contract-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src', 'contracts.ts'),
+    'export const PROFILE_KINDS = ["audience_segments", "voice_profile"] as const;\n',
+  );
+  writeFileSync(join(repoPath, 'src', 'validation.ts'), 'import { PROFILE_KINDS } from "./contracts";\n');
+
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/contracts.ts', 'src/validation.ts'],
+    },
+  ]);
+
+  assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
+  assert.equal(profileKindTaskPacketPolicy().producer_surfaces.includes('src/contracts.ts'), true);
+});
+
 test('profile kind task packet policy names required persistent kinds', () => {
   assert.deepEqual(profileKindTaskPacketPolicy().required_persistent_kinds, ['audience_segments', 'voice_profile']);
   assert.equal(profileKindTaskPacketPolicy().producer_surfaces.includes('src/domain/profileKinds.ts'), true);
