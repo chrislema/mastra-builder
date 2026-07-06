@@ -91,6 +91,17 @@ test('task plan open decisions must be decision-shaped blockers', () => {
 
   assert.deepEqual(openDecisionHygiene(blockerPlan), { passed: true, reason: 'ok' });
 
+  const futureTaskBlockerPlan = taskPlan([{ depends_on: [] }]);
+  futureTaskBlockerPlan.open_decisions = [
+    [
+      'Topic: Bookmark service date-window contract',
+      'Why it matters: Blocks T08 implementation of src/bookmarks/client.ts because the Worker must know whether to call env.BOOKMARKS.fetch() or an RPC method.',
+      'Options considered: service-binding fetch endpoint with from/to query; RPC-style method; documented public HTTP fallback for local development.',
+      'Follow-up impact: Resolve before T08 can be completed against the real bookmarks service; other tasks can proceed with the low-risk adapter boundary.',
+    ].join(' | '),
+  ];
+  assert.deepEqual(openDecisionHygiene(futureTaskBlockerPlan), { passed: true, reason: 'ok' });
+
   const softDecisionPlan = taskPlan([{ depends_on: [] }]);
   softDecisionPlan.open_decisions = ['Whether the weekly cron should run on a specific day/time or simply every 7 days.'];
   assert.equal(openDecisionHygiene(softDecisionPlan).passed, false);

@@ -514,6 +514,10 @@ function looksLikeSafeAssumptionOrRisk(decision: string) {
   );
 }
 
+function namesTaskScopedBlocker(decision: string) {
+  return /\bblocks?\s+T\d[\w-]*\b/i.test(decision) || /\bbefore\s+T\d[\w-]*\b/i.test(decision);
+}
+
 export function openDecisionHygiene(taskPlan: TaskPlan) {
   for (const [index, decision] of taskPlan.open_decisions.entries()) {
     const missingFields = openDecisionRequiredFields.filter((field) => !hasOpenDecisionField(decision, field));
@@ -524,7 +528,7 @@ export function openDecisionHygiene(taskPlan: TaskPlan) {
       };
     }
 
-    if (looksLikeSafeAssumptionOrRisk(decision)) {
+    if (looksLikeSafeAssumptionOrRisk(decision) && !namesTaskScopedBlocker(decision)) {
       return {
         passed: false,
         reason: `open_decisions[${index}] appears to be a safe assumption or risk, not a blocker; move it to readout.safe_assumptions or taskPlan.risks.`,
