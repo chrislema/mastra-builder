@@ -20,6 +20,10 @@ Current curation branch: `worker-harness-curation`.
 | --- | --- | --- | --- |
 | `fc13d06` Source-gate Talking Head release policies | Keep revised | Kept useful profile/transcript release-gate machinery, but gated `audience_segments`, `voice_profile`, `/latest`, `/runs`, and `/profiles` probes on source docs. | `npm run typecheck`; `npm test` |
 | `c4d57bb` Source-gate bookmark adapter policy | Keep revised | Kept safe service-adapter behavior, but gated BOOKMARKS planner guidance on source docs and generalized rubric language. | `npm run typecheck`; `npm test` |
+| `094eb19` Align Workers AI binding guidance with JSONC config | Keep revised | Clarified Workers AI guidance and deterministic gaps for the JSONC-first config path while still supporting TOML in existing/source-required repos. | `npm run typecheck`; focused `workflow-policy` tests |
+| `5da5095` Align deployer trajectory rubric with native deploys | Keep revised | Updated the deployment trajectory scoring exemplar to grade native workflow deploy/live_verify events instead of an agent-run deploy command. | focused rubric exemplar tests |
+| `6d106db` Generalize service adapter rubric fixture | Keep revised | Removed lingering BOOKMARKS/bookmarkClient language from a rubric test fixture after the rubric itself became generic. | focused rubric exemplar tests |
+| `d4c0593` Reject example model API key placeholders | Keep revised | Prevents copied `.env.example` placeholder keys from passing delivery model preflight and failing later during provider calls. | focused model tests; `npm run typecheck` |
 
 ## Static Triage By Commit
 
@@ -109,10 +113,11 @@ Current curation branch: `worker-harness-curation`.
 
 ## Current Residual Risk
 
-- Static tests prove the policy graph, deterministic gates, and release command planning. They do not prove a full multi-agent delivery trajectory.
-- The only paid run that may be worthwhile later is one fresh Worker sample after this curation pass is complete.
+- Static tests prove the policy graph, deterministic gates, scorer regression gate, release command planning, and Mastra build. They do not prove a full multi-agent delivery trajectory.
+- `npm run build` passes in a network-enabled environment. In the restricted sandbox it fails at Mastra's dependency-install phase with DNS resolution blocked for `registry.npmjs.org`; that is not a code failure.
+- The only paid run that may be worthwhile is one fresh Worker sample after this cheap curation pass, not one run per historical commit.
 - If that run is approved later, it should use a fresh empty temp target with `vision.md` and `spec.md`, then be watched for first blocker only.
 
 ## Current Recommendation
 
-Do not run a paid sample yet. Continue static scans for over-generalized policy language, then run `npm run ci:delivery` and `npm run build` once the curation branch has no suspect global product rules.
+The cheap pass is complete for this branch. `npm run ci:delivery` passes, and `npm run build` passes when network is available for Mastra's dependency install. The next high-signal validation is one paid fresh Worker sample only if we decide the token spend is worth it.
