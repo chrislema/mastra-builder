@@ -1891,6 +1891,7 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
   assert.match(gaps.join('\n'), /workers-types.*last 90 days/);
   assert.match(gaps.join('\n'), /frontend framework\/build dependencies.*react.*vite/);
   assert.match(gaps.join('\n'), /scripts\.build uses a frontend framework\/bundler/);
+  assert.match(gaps.join('\n'), /tsconfig\.json: missing/);
   assert.match(gaps.join('\n'), /\.gitignore is missing/);
 
   const remediation = [`DETERMINISTIC worker_package_scaffold_current failed: ${gaps.join('; ')}`];
@@ -1916,6 +1917,24 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
           '@cloudflare/workers-types': 'latest',
           wrangler: '^4.0.0',
         },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'tsconfig.json'),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ESNext',
+          moduleResolution: 'Bundler',
+          lib: ['ES2022', 'WebWorker'],
+          types: ['@cloudflare/workers-types'],
+          strict: true,
+        },
+        include: ['src/**/*.ts'],
       },
       null,
       2,

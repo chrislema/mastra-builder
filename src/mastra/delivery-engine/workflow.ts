@@ -2687,6 +2687,55 @@ function frontendBuildScriptGaps(scripts: Record<string, unknown>) {
   ];
 }
 
+function tsconfigWorkerScaffoldGaps(repoPath: string) {
+  const tsconfigPath = join(resolve(repoPath), 'tsconfig.json');
+  if (!existsSync(tsconfigPath)) {
+    return ['tsconfig.json: missing; new Worker scaffolds need a Worker-runtime TypeScript config for deterministic typecheck.'];
+  }
+
+  const config = parseWranglerJsonConfig(readFileSync(tsconfigPath, 'utf8'));
+  if (!config) return ['tsconfig.json: file is not valid JSONC.'];
+
+  const compilerOptions = recordValue(config.compilerOptions);
+  if (!compilerOptions) return ['tsconfig.json: compilerOptions is missing.'];
+
+  const gaps: string[] = [];
+  const target = typeof compilerOptions.target === 'string' ? compilerOptions.target.toLowerCase() : '';
+  if (!/^es(?:202[2-9]|next)$/.test(target)) {
+    gaps.push('tsconfig.json: compilerOptions.target should be ES2022 or newer for Cloudflare Workers.');
+  }
+
+  const module = typeof compilerOptions.module === 'string' ? compilerOptions.module.toLowerCase() : '';
+  if (module !== 'esnext') {
+    gaps.push('tsconfig.json: compilerOptions.module should be ESNext for Worker module syntax.');
+  }
+
+  const moduleResolution =
+    typeof compilerOptions.moduleResolution === 'string' ? compilerOptions.moduleResolution.toLowerCase() : '';
+  if (moduleResolution !== 'bundler') {
+    gaps.push('tsconfig.json: compilerOptions.moduleResolution should be Bundler for Wrangler/Worker imports.');
+  }
+
+  const libs = stringArrayValue(compilerOptions.lib).map((item) => item.toLowerCase());
+  if (!libs.some((item) => /^es(?:202[2-9]|next)$/.test(item))) {
+    gaps.push('tsconfig.json: compilerOptions.lib should include ES2022 or newer.');
+  }
+  if (!libs.includes('webworker')) {
+    gaps.push('tsconfig.json: compilerOptions.lib should include WebWorker for Cloudflare Worker globals.');
+  }
+
+  const types = stringArrayValue(compilerOptions.types).map((item) => item.toLowerCase());
+  if (!types.includes('@cloudflare/workers-types')) {
+    gaps.push('tsconfig.json: compilerOptions.types should include @cloudflare/workers-types.');
+  }
+
+  if (compilerOptions.strict !== true) {
+    gaps.push('tsconfig.json: compilerOptions.strict should be true.');
+  }
+
+  return gaps;
+}
+
 const workerScaffoldRequiredGitignorePatterns = ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env'];
 
 function gitignorePatternPresent(text: string, pattern: string) {
@@ -2752,7 +2801,12 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
     );
   }
 
-  return [...gaps, ...frontendFrameworkDependencyGaps(repoPath), ...workerScaffoldGitignoreGaps(repoPath)];
+  return [
+    ...gaps,
+    ...frontendFrameworkDependencyGaps(repoPath),
+    ...tsconfigWorkerScaffoldGaps(repoPath),
+    ...workerScaffoldGitignoreGaps(repoPath),
+  ];
 }
 
 function remediationHasVerificationFailure(remediation: string[]) {
