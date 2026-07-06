@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { buildJudgeArtifactPrompt, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
 
 const rubricDir = join(process.cwd(), 'src/mastra/delivery-engine/rubrics');
 
@@ -45,4 +46,23 @@ test('rubric exemplars reference real gates and score expectations', () => {
       assert.equal(gateIds.has(gate), true, `${file} exemplar references unknown gate ${gate}`);
     }
   }
+});
+
+test('task-plan rubric tells the judge safe adapter risks are not blockers', () => {
+  const rubric = loadDeliveryEngineRubric('task-plan');
+  const prompt = buildJudgeArtifactPrompt({
+    rubric,
+    subjectName: '.delivery/artifacts/task-plan.json',
+    subject: {
+      artifact_type: 'task-plan',
+      open_decisions: [],
+      risks: [
+        'The exact BOOKMARKS service endpoint is unspecified; src/bookmarkClient.ts isolates the adapter default.',
+      ],
+    },
+  });
+
+  assert.match(prompt, /unspecified external service contract is not a blocker/);
+  assert.match(prompt, /safe_assumptions or risks/);
+  assert.match(prompt, /src\/bookmarkClient\.ts/);
 });

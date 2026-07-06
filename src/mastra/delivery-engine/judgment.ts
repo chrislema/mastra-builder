@@ -45,6 +45,7 @@ export type Rubric = {
     name?: string;
     type?: string;
   };
+  evaluation_notes?: string[];
   scale: {
     min: number;
     max: number;
@@ -296,6 +297,9 @@ export function buildJudgeArtifactPrompt({
     passed: result.passed,
     reason: result.reason ?? 'deterministic check',
   }));
+  const evaluationNotes = rubric.evaluation_notes?.length
+    ? `\nEvaluation notes:\n${rubric.evaluation_notes.map((note) => `- ${note}`).join('\n')}\n`
+    : '';
 
   return `Judge the artifact "${subjectName}" against the supplied rubric.
 
@@ -304,6 +308,7 @@ Return structured judge output only. Score every rubric dimension from ${rubric.
 Required LLM gate ids, exactly once each: ${llmGateIds.length ? llmGateIds.join(', ') : '(none)'}
 Required dimension ids, exactly once each: ${dimensionIds.length ? dimensionIds.join(', ') : '(none)'}
 Empty gates or dimensions arrays are invalid when required ids are listed.
+${evaluationNotes}
 
 LLM gates:
 ${JSON.stringify(llmGates, null, 2)}

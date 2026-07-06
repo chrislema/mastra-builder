@@ -5,6 +5,10 @@
     "source_summary": "templates/task-plan.md + agents/planner.md + skills/planning/decompose-tasks.md + planner Technology Decision Framework"
   },
   "scale": { "min": 1, "max": 5 },
+  "evaluation_notes": [
+    "For Chris's Worker-first delivery harness, an unspecified external service contract is not a blocker when the plan chooses a safe default, records the uncertainty as a safe assumption or risk, and isolates the integration behind a concrete adapter surface such as src/bookmarkClient.ts.",
+    "Do not penalize open_decisions_hygiene for non-blocking risks that are explicitly made low-blast-radius by an adapter task; reserve low scores for unknowns that prevent an executable task from being implemented safely."
+  ],
   "gates": [
     {
       "id": "no_circular_dependencies",
@@ -97,9 +101,9 @@
       "weight": 4,
       "description": "Decision log contains only genuine blockers, each decision-shaped.",
       "anchors": {
-        "1": "Decision log padded with non-blockers, or empty while the plan visibly guesses at unclear intent.",
-        "3": "Real blockers logged, but mixed with items resolvable by a safe assumption.",
-        "5": "Only genuine blockers; each has topic, why it matters, options considered, and follow-up impact (decision-log template shape)."
+        "1": "Decision log padded with non-blockers, or empty while the plan visibly guesses at unclear intent without a safe adapter boundary.",
+        "3": "Real blockers logged, but mixed with items resolvable by a safe assumption or adapter default.",
+        "5": "Only genuine blockers; each has topic, why it matters, options considered, and follow-up impact (decision-log template shape). Safe adapter defaults are recorded as safe_assumptions or risks instead."
       },
       "model": "default",
       "surface": "artifact"
