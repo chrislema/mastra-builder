@@ -1759,24 +1759,24 @@ function remediationHasUnreplacedPreflightStubFailure(remediation: string[]) {
 
 function remediationHasPolicyBoundaryFailure(remediation: string[]) {
   return remediation.some((item) =>
-    /\b(file_ownership|write_paths_in_boundary|owned globs|owned surfaces|forbidden glob|outside this task)\b/i.test(
+    /\b(file_ownership|write_paths_in_boundary|owned globs|forbidden glob|outside this task)\b/i.test(
       item,
     ),
   );
 }
 
 export function implementationFailureClass(remediation: string[]) {
-  if (remediation.some((item) => /\b(no tool calls|without making a tool call|made no tool calls)\b/i.test(item))) {
-    return 'model_no_action' as const;
-  }
-  if (remediationHasJudgeTimeout(remediation)) return 'judge_timeout' as const;
   if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
   if (remediationHasUnreplacedPreflightStubFailure(remediation)) return 'preflight_stub' as const;
-  if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
   if (remediationHasStaleWorkspaceVerificationFailure(remediation)) return 'stale_workspace_verification' as const;
   if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
   if (remediationHasPolicyBoundaryFailure(remediation)) return 'policy_boundary' as const;
+  if (remediationHasJudgeTimeout(remediation)) return 'judge_timeout' as const;
   if (remediationHasImplementationJudgmentFailure(remediation)) return 'judge_quality' as const;
+  if (remediation.some((item) => /\b(no tool calls|without making a tool call|made no tool calls)\b/i.test(item))) {
+    return 'model_no_action' as const;
+  }
+  if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
   return 'unknown' as const;
 }
 
@@ -1795,20 +1795,24 @@ export function canSalvageTimedOutBuildAttempt({
 export function implementationRetryMode({
   remediation,
   missingSurfaces,
+  unreplacedStubs = [],
 }: {
   remediation: string[];
   missingSurfaces: string[];
+  unreplacedStubs?: string[];
 }) {
   const timeoutRecovery = remediation.some((item) => /timed out/i.test(item));
   const failureClass = implementationFailureClass(remediation);
   const noActionRecovery = failureClass === 'model_no_action';
+  if (failureClass === 'preflight_stub' || (unreplacedStubs.length && (timeoutRecovery || noActionRecovery))) {
+    return 'replace-stubs' as const;
+  }
   if ((timeoutRecovery || noActionRecovery || failureClass === 'missing_surface') && missingSurfaces.length) {
     return 'write-first' as const;
   }
   if (
     timeoutRecovery ||
     noActionRecovery ||
-    failureClass === 'preflight_stub' ||
     failureClass === 'policy_boundary' ||
     failureClass === 'judge_timeout' ||
     remediationHasVerificationFailure(remediation) ||
@@ -1820,7 +1824,9 @@ export function implementationRetryMode({
 }
 
 export function implementationToolChoiceForRetryMode(retryMode: ReturnType<typeof implementationRetryMode>) {
-  return retryMode === 'write-first' || retryMode === 'focused-repair' ? 'required' : 'auto';
+  return retryMode === 'write-first' || retryMode === 'replace-stubs' || retryMode === 'focused-repair'
+    ? 'required'
+    : 'auto';
 }
 
 function judgeRepairAlreadyAttempted(remediation: string[]) {
@@ -5054,21 +5060,26 @@ const executeBuildTaskAttemptStep = createStep({
     const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
     const unreplacedStubs = unreplacedPreflightStubPaths(inputData.repoPath, task);
     const verificationRecovery = remediationHasVerificationFailure(inputData.remediation);
-    const retryMode = implementationRetryMode({ remediation: inputData.remediation, missingSurfaces });
+    const retryMode = implementationRetryMode({
+      remediation: inputData.remediation,
+      missingSurfaces,
+      unreplacedStubs,
+    });
     const failureClass = implementationFailureClass(inputData.remediation);
     const writeFirstRecovery = retryMode === 'write-first';
+    const replaceStubsRecovery = retryMode === 'replace-stubs';
     const focusedRepairRecovery = retryMode === 'focused-repair';
     const activeTools = writeFirstRecovery
       ? implementationWriteOnlyWorkspaceTools
-      : focusedRepairRecovery
+      : replaceStubsRecovery || focusedRepairRecovery
         ? implementationRepairWorkspaceTools
         : implementationWorkspaceTools;
     const toolChoice = implementationToolChoiceForRetryMode(retryMode);
-    const maxSteps = writeFirstRecovery ? 3 : focusedRepairRecovery ? 4 : 8;
+    const maxSteps = writeFirstRecovery ? 3 : replaceStubsRecovery ? 5 : focusedRepairRecovery ? 4 : 8;
     const packageManifestOwned = taskOwnsPackageManifest(task);
     const existingPackageDependencies = packageDependencyNames(inputData.repoPath);
     const dependencySurfaces = directDependencySurfacePaths(taskPlan, task);
-    const focusedRepairFileContext = focusedRepairRecovery
+    const focusedRepairFileContext = replaceStubsRecovery || focusedRepairRecovery
       ? repoFileContents(inputData.repoPath, focusedRepairContextPaths(taskPlan, task, usableSurfaces))
       : [];
     const taskPacket = {
@@ -5132,6 +5143,18 @@ Timeout recovery is active.
 - Do not read or list files in this attempt.
 - Create compile-safe placeholders that satisfy the task packet and allow workflow verification to run.`
       : '';
+    const replaceStubsPrompt = replaceStubsRecovery
+      ? `
+
+Preflight stub replacement mode is active.
+- Replace every unreplaced_preflight_stub before doing anything else:
+${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
+- Use mastra_workspace_write_file or mastra_workspace_edit_file now; a text-only response is a failed attempt.
+- Do not list or read files in this attempt.
+- Use focused_repair_file_context as your source for current file contents and dependency context.
+- Prefer one write/edit per listed stub path, and do not return until every listed stub has real compile-safe implementation code.
+- Do not edit dependency context files unless they also appear in boundary_surfaces.`
+      : '';
     const repairPrompt = focusedRepairRecovery
       ? `
 
@@ -5148,7 +5171,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
 - Do not read spec.md, wrangler.toml, package.json, or package-lock.json unless that exact file is listed in boundary_surfaces.
 - Do not add or import a package that is not already listed in existing_package_dependencies unless package_manifest_owned is true.`
       : '';
-    const finalBuildPrompt = `${buildPrompt}${recoveryPrompt}${repairPrompt}`;
+    const finalBuildPrompt = `${buildPrompt}${recoveryPrompt}${replaceStubsPrompt}${repairPrompt}`;
     let buildResponse: unknown;
     try {
       buildResponse = await runWithDeliveryStageTimeout({

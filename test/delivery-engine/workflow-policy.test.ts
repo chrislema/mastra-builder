@@ -1715,6 +1715,7 @@ test('implementation retry mode focuses timeout retries when owned files already
 test('implementation repair retries require a tool call', () => {
   assert.equal(implementationToolChoiceForRetryMode('normal'), 'auto');
   assert.equal(implementationToolChoiceForRetryMode('write-first'), 'required');
+  assert.equal(implementationToolChoiceForRetryMode('replace-stubs'), 'required');
   assert.equal(implementationToolChoiceForRetryMode('focused-repair'), 'required');
 });
 
@@ -1757,7 +1758,18 @@ test('implementation retry mode classifies deterministic failure families', () =
       remediation: preflightStubRemediation,
       missingSurfaces: [],
     }),
-    'focused-repair',
+    'replace-stubs',
+  );
+  assert.equal(
+    implementationRetryMode({
+      remediation: [
+        'T04 repair attempt made no tool calls after 60000ms. Make a focused write to the existing boundary surfaces before returning.',
+        ...preflightStubRemediation,
+      ],
+      missingSurfaces: [],
+      unreplacedStubs: ['src/workflows/steps/create-briefs.ts'],
+    }),
+    'replace-stubs',
   );
   assert.equal(
     implementationFailureClass([
