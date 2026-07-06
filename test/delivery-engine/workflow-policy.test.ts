@@ -436,22 +436,16 @@ test('task plan normalization splits oversized storage-only tasks and rewires do
 
   assert.deepEqual(
     normalized.tasks.map((task) => task.id),
-    ['T1', 'T1-part-2', 'T1-part-3', 'T2'],
+    ['T1', 'T1-part-2', 'T1-part-3', 'T1-part-4', 'T2'],
   );
-  assert.deepEqual(normalized.tasks[0].owned_surfaces, [
-    'src/storage/d1.ts',
-    'src/storage/artifacts.ts',
-    'src/storage/profiles.ts',
-  ]);
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['src/storage/d1.ts', 'src/storage/artifacts.ts']);
   assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
-  assert.deepEqual(normalized.tasks[1].owned_surfaces, [
-    'src/storage/runs.ts',
-    'src/storage/bookmarks.ts',
-    'src/storage/links.ts',
-  ]);
+  assert.deepEqual(normalized.tasks[1].owned_surfaces, ['src/storage/profiles.ts', 'src/storage/runs.ts']);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1-part-2']);
-  assert.deepEqual(normalized.tasks[2].owned_surfaces, ['src/storage/candidates.ts', 'src/storage/transcripts.ts']);
+  assert.deepEqual(normalized.tasks[2].owned_surfaces, ['src/storage/bookmarks.ts', 'src/storage/links.ts']);
   assert.deepEqual(normalized.tasks[3].depends_on, ['T1-part-3']);
+  assert.deepEqual(normalized.tasks[3].owned_surfaces, ['src/storage/candidates.ts', 'src/storage/transcripts.ts']);
+  assert.deepEqual(normalized.tasks[4].depends_on, ['T1-part-4']);
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
@@ -481,27 +475,25 @@ test('task plan normalization splits oversized repository implementation tasks',
 
   assert.deepEqual(
     normalized.tasks.map((task) => task.id),
-    ['T1', 'T1-part-2', 'T1-part-3', 'T2'],
+    ['T1', 'T1-part-2', 'T1-part-3', 'T1-part-4', 'T1-part-5', 'T2'],
   );
   assert.deepEqual(normalized.tasks[0].depends_on, ['T0']);
-  assert.deepEqual(normalized.tasks[0].owned_surfaces, [
-    'src/storage/d1.ts',
-    'src/storage/r2.ts',
-    'src/repositories/profileArtifacts.ts',
-  ]);
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['src/storage/d1.ts', 'src/storage/r2.ts']);
   assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
   assert.deepEqual(normalized.tasks[1].owned_surfaces, [
+    'src/repositories/profileArtifacts.ts',
     'src/repositories/runs.ts',
-    'src/repositories/bookmarks.ts',
-    'src/repositories/links.ts',
   ]);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1-part-2']);
-  assert.deepEqual(normalized.tasks[2].owned_surfaces, [
+  assert.deepEqual(normalized.tasks[2].owned_surfaces, ['src/repositories/bookmarks.ts', 'src/repositories/links.ts']);
+  assert.deepEqual(normalized.tasks[3].depends_on, ['T1-part-3']);
+  assert.deepEqual(normalized.tasks[3].owned_surfaces, [
     'src/repositories/candidates.ts',
     'src/repositories/candidateScores.ts',
-    'src/repositories/transcripts.ts',
   ]);
-  assert.deepEqual(normalized.tasks[3].depends_on, ['T1-part-3']);
+  assert.deepEqual(normalized.tasks[4].depends_on, ['T1-part-4']);
+  assert.deepEqual(normalized.tasks[4].owned_surfaces, ['src/repositories/transcripts.ts']);
+  assert.deepEqual(normalized.tasks[5].depends_on, ['T1-part-5']);
 });
 
 test('task plan normalization leaves scaffold and entrypoint tasks intact', () => {

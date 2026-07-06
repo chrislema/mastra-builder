@@ -802,8 +802,8 @@ export function normalizeTaskPlanRoleBoundaries(taskPlan: TaskPlan): TaskPlan {
   return changed ? { ...taskPlan, tasks } : taskPlan;
 }
 
-const maxImplementationOwnedSurfacesPerTask = 3;
-const minImplementationOwnedSurfacesToSplit = 5;
+const maxImplementationOwnedSurfacesPerTask = 2;
+const minImplementationOwnedSurfacesToSplit = 3;
 
 function splittableImplementationSurfacePath(surface: string) {
   const path = concreteOwnedSurfacePath(surface);
