@@ -1294,6 +1294,37 @@ test('release gate evidence planner uses bounded local commands', () => {
   );
 });
 
+test('release gate evidence planner runs the available package verification matrix', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-evidence-matrix-'));
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          typecheck: 'tsc --noEmit',
+          test: 'node --test',
+          build: 'wrangler deploy --dry-run',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(
+    releaseGateEvidenceCommandPlan(repoPath).map((command) => ({
+      tier: command.tier,
+      command: command.command,
+      required: command.required,
+    })),
+    [
+      { tier: 'smoke', command: 'npm run typecheck', required: true },
+      { tier: 'smoke', command: 'npm run test', required: true },
+      { tier: 'smoke', command: 'npm run build', required: true },
+    ],
+  );
+});
+
 test('release gate evidence planner uses wrangler.jsonc D1 config for required local migrations', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-evidence-jsonc-'));
   mkdirSync(join(repoPath, 'migrations'), { recursive: true });

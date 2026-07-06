@@ -3207,11 +3207,12 @@ function packageScripts(repoPath: string) {
 }
 
 function buildVerificationScript(repoPath: string) {
+  return packageVerificationScripts(repoPath)[0];
+}
+
+function packageVerificationScripts(repoPath: string) {
   const scripts = packageScripts(repoPath);
-  for (const script of ['typecheck', 'test', 'build']) {
-    if (typeof scripts[script] === 'string') return script;
-  }
-  return undefined;
+  return ['typecheck', 'test', 'build'].filter((script) => typeof scripts[script] === 'string');
 }
 
 async function ensureNodeDependencies({
@@ -3938,8 +3939,7 @@ function createReleaseGateRuntimeStatePath(repoPath: string) {
 
 export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: string): ReleaseGateEvidenceCommand[] {
   const commands: ReleaseGateEvidenceCommand[] = [];
-  const script = buildVerificationScript(repoPath);
-  if (script) {
+  for (const script of packageVerificationScripts(repoPath)) {
     commands.push({
       tier: 'smoke',
       command: `npm run ${script}`,
