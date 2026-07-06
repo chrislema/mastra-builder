@@ -142,7 +142,7 @@ test('stale downstream verification repair resets only future failed task surfac
     'export const transcript = buildUsageStats();\n',
   );
   const plan = taskPlan([
-    { depends_on: [], owned_surfaces: ['src/workflows/steps/score-candidates.ts'] },
+    { depends_on: [], owned_surfaces: ['src/**', 'src/workflows/steps/score-candidates.ts'] },
     { depends_on: ['T1'], owned_surfaces: ['src/workflows/steps/generate-transcript.ts'] },
   ]);
   const failure = [

@@ -773,7 +773,9 @@ export function staleDownstreamVerificationSurfacePaths({
   const orderedTasks = topoOrderTasks(taskPlan.tasks);
   const protectedSurfaces = orderedTasks
     .slice(0, currentTaskIndex + 1)
-    .flatMap((task) => taskBoundarySurfaces(repoPath, task));
+    .flatMap((task) => taskBoundarySurfaces(repoPath, task))
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path));
   const downstreamTasks = orderedTasks.slice(currentTaskIndex + 1);
 
   return verificationFailurePaths(failure).filter((path) => {
