@@ -4479,6 +4479,166 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
   },
 });
 
+function planGateRevisionRemediation({
+  deterministicResults,
+  judgment,
+}: {
+  deterministicResults: DeterministicGateResult[];
+  judgment: AggregatedJudgment;
+}) {
+  const failedChecks = deterministicResults.filter((check) => !check.passed);
+  if (failedChecks.length) {
+    return failedChecks.map((check) => check.reason ?? 'deterministic task-plan check failed');
+  }
+  if (!judgment.passed) return judgment.remediation;
+  return [];
+}
+
+async function reviseTaskPlanFromPlanGate({
+  mastra,
+  repoPath,
+  taskPlan,
+  deterministicResults,
+  judgment,
+  revisionNumber,
+}: {
+  mastra: any;
+  repoPath: string;
+  taskPlan: TaskPlan;
+  deterministicResults: DeterministicGateResult[];
+  judgment: AggregatedJudgment;
+  revisionNumber: number;
+}) {
+  const stage = `plan:gate-repair-${revisionNumber}`;
+  const revisionPath = `.delivery/artifacts/task-plan.plan-gate-revision-${revisionNumber}.json`;
+  const remediation = planGateRevisionRemediation({ deterministicResults, judgment });
+
+  await appendDeliveryEventState({
+    repoPath,
+    mastra,
+    event: {
+      type: 'plan_gate_revision_requested',
+      stage,
+      revision: String(revisionNumber),
+      remediation,
+    },
+  });
+  await startDeliveryStageState({
+    repoPath,
+    stage,
+    role: 'planner',
+    mastra,
+  });
+
+  const planner = requiredAgent(mastra, 'planner');
+  let response: unknown;
+  try {
+    response = await runWithDeliveryStageTimeout({
+      repoPath,
+      mastra,
+      stage,
+      timeoutMs: deliveryAgentTimeouts.standard,
+      operation: (abortSignal) =>
+        planner.generate(
+          `The task-plan gate failed before architect review. Revise the task plan to address the gate findings.
+
+Return a full replacement taskPlan object. Do not write implementation code. Do not ask new human questions unless no executable Worker scaffold can be planned.
+
+Project policy:
+- This harness is for Chris's standalone Cloudflare Worker projects, not desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages.
+- Default new projects to a Worker module entry, Wrangler config, TypeScript Worker source, and vanilla HTML/CSS/JS under public/ when a UI is needed.
+- Use wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
+- Use Wrangler CLI for local validation and deployment; never make GitHub Actions the deployment path.
+- If AI is used in the target Worker, plan an active Workers AI binding and an internal adapter around it.
+
+Task-plan quality requirements:
+- Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.
+- Every consumes-output relation must be declared by task ID. If a later task uses storage, prompts, routes, services, generated types, bindings, or workflow steps from an earlier slice, add the dependency edge explicitly.
+- Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
+- Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks.
+- Every taskPlan.open_decisions entry must use this exact field shape:
+"Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
+- The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.
+
+Gate remediation:
+${remediation.map((item) => `- ${item}`).join('\n') || '- No textual remediation was provided; satisfy all failed gates and weak dimensions.'}
+
+Deterministic gate results:
+${JSON.stringify(deterministicResults, null, 2)}
+
+Task-plan rubric judgment:
+${JSON.stringify(judgment, null, 2)}
+
+Current task plan:
+${JSON.stringify(taskPlan, null, 2)}`,
+          {
+            ...structuredNoToolOptions,
+            abortSignal,
+            requestContext: createDeliveryRequestContext(repoPath),
+            structuredOutput: {
+              schema: plannerRevisionOutputSchema,
+              ...deliveryStructuredOutputOptions,
+              instructions: 'Return only the revised taskPlan object wrapped as { "taskPlan": ... }.',
+            },
+          },
+        ),
+    });
+  } catch (error) {
+    await endDeliveryStageState({ repoPath, stage, reason: 'failed', mastra }).catch(() => undefined);
+    throw error;
+  }
+
+  let parsedRevision: ReturnType<typeof parsePlannerRevisionResponse>;
+  try {
+    parsedRevision = parsePlannerRevisionResponse(response, `plan gate revision ${revisionNumber}`);
+  } catch (error) {
+    await endDeliveryStageState({ repoPath, stage, reason: 'failed', mastra }).catch(() => undefined);
+    throw error;
+  }
+  if (parsedRevision.repairedFromBareTaskPlan) {
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'structured_output_repaired',
+        stage,
+        target: 'task-plan',
+        reason: parsedRevision.repairReason,
+      },
+    });
+  }
+
+  const revisedTaskPlan = normalizeTaskPlanForDelivery(repoPath, parsedRevision.revision.taskPlan);
+  writeDeliveryArtifact({
+    repoPath,
+    artifactPath: revisionPath,
+    artifact: revisedTaskPlan,
+  });
+  writeDeliveryArtifact({
+    repoPath,
+    artifactPath: '.delivery/artifacts/task-plan.json',
+    artifact: revisedTaskPlan,
+  });
+  await recordDeliveryArtifactState({
+    repoPath,
+    type: `task-plan:plan-gate-revision-${revisionNumber}`,
+    path: revisionPath,
+    mastra,
+  });
+  await recordDeliveryArtifactState({
+    repoPath,
+    type: 'task-plan',
+    path: '.delivery/artifacts/task-plan.json',
+    mastra,
+  });
+  await endDeliveryStageState({ repoPath, stage, reason: 'complete_stage', mastra });
+
+  return {
+    taskPlan: revisedTaskPlan,
+    path: revisionPath,
+  };
+}
+
 const createPlanGateStep = createStep({
   id: 'judge-task-plan',
   description: 'Run deterministic plan gates and rubric judgment before architect handoff.',
@@ -4486,91 +4646,117 @@ const createPlanGateStep = createStep({
   outputSchema: planStageOutputSchema,
   scorers: deliveryPlanStepScorers,
   execute: async ({ inputData, mastra }) => {
-    const deterministicResults = taskPlanDeterministicResults({
-      repoPath: inputData.repoPath,
-      taskPlan: inputData.taskPlan,
-    });
-    const checks = checkSummaries(deterministicResults);
-    const taskPlanJudge = await judgeDeliveryArtifact({
-      mastra,
-      repoPath: inputData.repoPath,
-      rubricName: 'task-plan',
-      subjectName: '.delivery/artifacts/task-plan.json',
-      subject: inputData.taskPlan,
-      deterministicResults,
-      slug: 'task-plan',
-    });
-    const taskPlanJudgment = taskPlanJudge.judgment;
-    const artifacts = [
-      ...inputData.artifacts,
-      taskPlanJudge.judgeOutputPath,
-      taskPlanJudge.judgmentPath,
-    ];
-    const judgments = [taskPlanJudge.ref];
-    const planContext = {
+    const artifacts = [...inputData.artifacts];
+    const checks: CheckSummary[] = [];
+    const judgments: JudgmentRef[] = [];
+    let taskPlan = inputData.taskPlan;
+    let subjectName = '.delivery/artifacts/task-plan.json';
+
+    for (let attempt = 0; attempt <= inputData.maxRetries; attempt += 1) {
+      const suffix = attempt === 0 ? undefined : `plan-gate-revision-${attempt}`;
+      const deterministicResults = taskPlanDeterministicResults({
+        repoPath: inputData.repoPath,
+        taskPlan,
+      });
+      checks.push(...checkSummaries(deterministicResults, suffix));
+      const taskPlanJudge = await judgeDeliveryArtifact({
+        mastra,
+        repoPath: inputData.repoPath,
+        rubricName: 'task-plan',
+        subjectName,
+        subject: taskPlan,
+        deterministicResults,
+        slug: attempt === 0 ? 'task-plan' : `task-plan-plan-gate-revision-${attempt}`,
+      });
+      const taskPlanJudgment = taskPlanJudge.judgment;
+      artifacts.push(taskPlanJudge.judgeOutputPath, taskPlanJudge.judgmentPath);
+      judgments.push(taskPlanJudge.ref);
+
+      const planContext = {
+        repoPath: inputData.repoPath,
+        maxRetries: inputData.maxRetries,
+        deployMode: inputData.deployMode,
+        reviewMode: inputData.reviewMode,
+        taskPlan,
+      };
+
+      if (shouldSuspendForPlannerQuestions(inputData.readout, taskPlan)) {
+        return {
+          ...planContext,
+          status: 'blocked_on_questions' as const,
+          runId: inputData.runId,
+          summary: inputData.readout.recommended_next_step,
+          artifacts,
+          checks,
+          judgments,
+          questions: inputData.readout.blocking_ambiguities,
+          nextSteps: ['Answer the blocking questions, then rerun or resume delivery planning.'],
+        };
+      }
+
+      const remediation = planGateRevisionRemediation({ deterministicResults, judgment: taskPlanJudgment });
+      if (!remediation.length) {
+        return {
+          ...planContext,
+          status: 'planned' as const,
+          runId: inputData.runId,
+          summary: taskPlan.scope,
+          artifacts,
+          checks,
+          judgments,
+          questions: inputData.readout.blocking_ambiguities,
+          nextSteps: [
+            ...inputData.readout.blocking_ambiguities.map((question) => `Deferred question: ${question}`),
+            `Run architecture review against ${subjectName}.`,
+            'Continue through the native architect review, build, release-gate, and deployment stages.',
+          ],
+        };
+      }
+
+      if (attempt >= inputData.maxRetries) {
+        const deterministicFailed = deterministicResults.some((check) => !check.passed);
+        return {
+          ...planContext,
+          status: 'stuck' as const,
+          runId: inputData.runId,
+          summary: deterministicFailed
+            ? 'Planner produced artifacts, but deterministic plan checks failed after repair attempts.'
+            : 'Planner produced artifacts, but the task-plan rubric judgment failed after repair attempts.',
+          artifacts,
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: remediation,
+        };
+      }
+
+      const revision = await reviseTaskPlanFromPlanGate({
+        mastra,
+        repoPath: inputData.repoPath,
+        taskPlan,
+        deterministicResults,
+        judgment: taskPlanJudgment,
+        revisionNumber: attempt + 1,
+      });
+      taskPlan = revision.taskPlan;
+      subjectName = revision.path;
+      artifacts.push(revision.path);
+    }
+
+    return {
       repoPath: inputData.repoPath,
       maxRetries: inputData.maxRetries,
       deployMode: inputData.deployMode,
       reviewMode: inputData.reviewMode,
-      taskPlan: inputData.taskPlan,
-    };
-
-    if (shouldSuspendForPlannerQuestions(inputData.readout, inputData.taskPlan)) {
-      return {
-        ...planContext,
-        status: 'blocked_on_questions' as const,
-        runId: inputData.runId,
-        summary: inputData.readout.recommended_next_step,
-        artifacts,
-        checks,
-        judgments,
-        questions: inputData.readout.blocking_ambiguities,
-        nextSteps: ['Answer the blocking questions, then rerun or resume delivery planning.'],
-      };
-    }
-
-    if (checks.some((check) => !check.passed)) {
-      return {
-        ...planContext,
-        status: 'stuck' as const,
-        runId: inputData.runId,
-        summary: 'Planner produced artifacts, but deterministic plan checks failed.',
-        artifacts,
-        checks,
-        judgments,
-        questions: [],
-        nextSteps: checks.filter((check) => !check.passed).map((check) => check.reason),
-      };
-    }
-
-    if (!taskPlanJudgment.passed) {
-      return {
-        ...planContext,
-        status: 'stuck' as const,
-        runId: inputData.runId,
-        summary: 'Planner produced artifacts, but the task-plan rubric judgment failed.',
-        artifacts,
-        checks,
-        judgments,
-        questions: [],
-        nextSteps: taskPlanJudgment.remediation,
-      };
-    }
-
-    return {
-      ...planContext,
-      status: 'planned' as const,
+      taskPlan,
+      status: 'stuck' as const,
       runId: inputData.runId,
-      summary: inputData.taskPlan.scope,
+      summary: 'Planner could not produce a task plan before the retry budget ended.',
       artifacts,
       checks,
       judgments,
-      questions: inputData.readout.blocking_ambiguities,
-      nextSteps: [
-        ...inputData.readout.blocking_ambiguities.map((question) => `Deferred question: ${question}`),
-        'Run architecture review against .delivery/artifacts/task-plan.json.',
-        'Continue through the native architect review, build, release-gate, and deployment stages.',
-      ],
+      questions: [],
+      nextSteps: ['Inspect the plan-gate judgments and task-plan revision artifacts.'],
     };
   },
 });
