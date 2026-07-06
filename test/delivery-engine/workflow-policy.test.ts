@@ -37,6 +37,7 @@ import {
   outOfPlanVerificationFailurePaths,
   priorStoppedBuildTaskIds,
   projectScaffoldHygiene,
+  readBudgetBlockedToolCount,
   repairStaleDownstreamVerificationSurfaces,
   releaseGateForInvalidTesterOutput,
   releaseGateEvidenceCommandPlan,
@@ -1952,6 +1953,40 @@ test('latestSuccessfulWorkspaceWriteEventTimestamp ignores read-only stages', ()
   assert.equal(timestamp, undefined);
 });
 
+test('readBudgetBlockedToolCount tracks pre-write read-budget events in the latest stage attempt', () => {
+  const events = [
+    { type: 'stage_start', stage: 'build:T2', role: 'engineer', ts: '2026-07-06T10:00:00.000Z' },
+    {
+      type: 'tool_use',
+      stage: 'build:T2',
+      tool: 'mastra_workspace_read_file',
+      ok: false,
+      error: 'Build stage build:T2 already used 6 read/list tool calls before any write. Stop investigating.',
+      ts: '2026-07-06T10:00:10.000Z',
+    },
+    { type: 'stage_end', stage: 'build:T2', reason: 'max_turns', ts: '2026-07-06T10:00:20.000Z' },
+    { type: 'stage_start', stage: 'build:T2', role: 'engineer', ts: '2026-07-06T10:01:00.000Z' },
+    {
+      type: 'tool_use',
+      stage: 'build:T2',
+      tool: 'mastra_workspace_list_files',
+      ok: false,
+      error: 'Build stage build:T2 already used 6 read/list tool calls before any write. Stop investigating.',
+      ts: '2026-07-06T10:01:10.000Z',
+    },
+    {
+      type: 'tool_use',
+      stage: 'build:T2',
+      tool: 'mastra_workspace_read_file',
+      ok: false,
+      error: 'Build stage build:T2 already used 6 read/list tool calls before any write. Stop investigating.',
+      ts: '2026-07-06T10:01:20.000Z',
+    },
+  ];
+
+  assert.equal(readBudgetBlockedToolCount(events, { stage: 'build:T2' }), 2);
+});
+
 test('implementation retry mode classifies deterministic failure families', () => {
   const missingSurfaceRemediation = ['DETERMINISTIC owned_surfaces_present failed: missing owned surfaces: src/routes/runs.ts'];
   assert.equal(implementationFailureClass(missingSurfaceRemediation), 'missing_surface');
@@ -2008,6 +2043,25 @@ test('implementation retry mode classifies deterministic failure families', () =
   assert.equal(
     implementationFailureClass(['T2 build attempt made no tool calls after 60000ms. Make a focused write.']),
     'model_no_action',
+  );
+
+  const readBudgetRemediation = [
+    'READ_BUDGET_EXCEEDED T8: the build attempt exhausted the pre-write read/list budget before creating owned surfaces.',
+  ];
+  assert.equal(implementationFailureClass(readBudgetRemediation), 'read_budget');
+  assert.equal(
+    implementationRetryMode({
+      remediation: readBudgetRemediation,
+      missingSurfaces: ['src/routes/profiles.ts'],
+    }),
+    'write-first',
+  );
+  assert.equal(
+    implementationRetryMode({
+      remediation: readBudgetRemediation,
+      missingSurfaces: [],
+    }),
+    'focused-repair',
   );
 
   const judgeTimeoutRemediation = [
