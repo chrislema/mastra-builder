@@ -193,6 +193,11 @@ test('release gate runtime probe planner uses the project Wrangler dev script', 
     executable: 'npm',
     args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', '8999'],
   });
+  assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999, '/tmp/state'), {
+    command: 'npm run dev -- --ip 127.0.0.1 --port 8999 --persist-to /tmp/state',
+    executable: 'npm',
+    args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', '8999', '--persist-to', '/tmp/state'],
+  });
 
   const plan = releaseGateRuntimeProbePlan(repoPath);
   assert.equal(plan?.required, true);
@@ -203,6 +208,52 @@ test('release gate runtime probe planner uses the project Wrangler dev script', 
       { path: '/', expectedStatus: undefined, statusBelow: 500 },
       { path: '/health', expectedStatus: 200, statusBelow: undefined },
     ],
+  );
+});
+
+test('release gate runtime probe planner covers common Worker API state and error routes', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-probes-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "src/index.ts"\n');
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      "if (pathname === '/profiles') {}",
+      "if (pathname === '/runs') {}",
+      "if (pathname === '/latest') {}",
+      "if (pathname === '/health') {}",
+    ].join('\n'),
+  );
+
+  const probes = releaseGateRuntimeProbePlan(repoPath)?.probes ?? [];
+  assert.deepEqual(
+    probes.map((probe) => `${probe.method} ${probe.path}`),
+    [
+      'GET /',
+      'GET /health',
+      'GET /latest',
+      'POST /runs',
+      'POST /runs',
+      'POST /profiles',
+      'POST /profiles',
+      'POST /profiles',
+      'POST /profiles',
+      'GET /profiles',
+    ],
+  );
+  assert.equal(probes.some((probe) => probe.body?.type === 'multipart-profile'), true);
+  assert.equal(
+    probes.some((probe) =>
+      probe.jsonArrayAssertions?.some(
+        (assertion) =>
+          assertion.type === 'countObjects' &&
+          assertion.count === 1 &&
+          assertion.where.kind === 'audience_segments' &&
+          assertion.where.isActive === true,
+      ),
+    ),
+    true,
   );
 });
 

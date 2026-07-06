@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -1316,12 +1316,15 @@ type ReleaseGateProcessCommand = {
 };
 
 type ReleaseGateHttpProbePlan = {
-  method: 'GET';
+  method: 'GET' | 'POST';
   path: string;
   expected: string;
   expectedStatus?: number;
   statusBelow?: number;
   jsonContains?: Record<string, string | number | boolean | null>;
+  jsonArrayAssertions?: ReleaseGateJsonArrayAssertion[];
+  body?: ReleaseGateHttpRequestBody;
+  headers?: Record<string, string>;
   reason: string;
 };
 
@@ -1343,6 +1346,22 @@ type ReleaseGateHttpProbeResult = {
   response_summary?: string;
   error?: string;
 };
+
+type ReleaseGateHttpRequestBody =
+  | { type: 'json'; value: unknown }
+  | { type: 'text'; value: string; contentType?: string }
+  | {
+      type: 'multipart-profile';
+      kind: 'audience_segments' | 'voice_profile';
+      filename: string;
+      markdown: string;
+      setActive?: boolean;
+    };
+
+type ReleaseGateJsonArrayAssertion =
+  | { type: 'minLength'; min: number }
+  | { type: 'containsObject'; where: Record<string, string | number | boolean | null> }
+  | { type: 'countObjects'; where: Record<string, string | number | boolean | null>; count: number };
 
 function firstTomlStringValue(text: string, key: string) {
   const match = new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, 'm').exec(text);
@@ -1394,24 +1413,30 @@ function releaseGateRepoHasRoute(repoPath: string, route: string) {
   return sourceTreeContainsText(join(root, 'src'), route);
 }
 
-export function releaseGateWorkerDevCommand(repoPath: string, port: number | '<port>' = '<port>') {
+export function releaseGateWorkerDevCommand(
+  repoPath: string,
+  port: number | '<port>' = '<port>',
+  persistTo?: string | '<persist-to>',
+) {
   if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
 
   const scripts = packageScripts(repoPath);
   const devScript = scripts.dev;
   const portValue = String(port);
+  const persistArgs = persistTo ? ['--persist-to', String(persistTo)] : [];
+  const persistCommand = persistTo ? ` --persist-to ${String(persistTo)}` : '';
   if (typeof devScript === 'string' && /\bwrangler\s+dev\b/.test(devScript)) {
     return {
-      command: `npm run dev -- --ip 127.0.0.1 --port ${portValue}`,
+      command: `npm run dev -- --ip 127.0.0.1 --port ${portValue}${persistCommand}`,
       executable: 'npm',
-      args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', portValue],
+      args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', portValue, ...persistArgs],
     } satisfies ReleaseGateProcessCommand;
   }
 
   return {
-    command: `npx wrangler dev --ip 127.0.0.1 --port ${portValue}`,
+    command: `npx wrangler dev --ip 127.0.0.1 --port ${portValue}${persistCommand}`,
     executable: 'npx',
-    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', portValue],
+    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', portValue, ...persistArgs],
   } satisfies ReleaseGateProcessCommand;
 }
 
@@ -1438,6 +1463,114 @@ export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntim
       jsonContains: { status: 'ok' },
       reason: 'A health route was present in the source tree.',
     });
+  }
+
+  if (releaseGateRepoHasRoute(repoPath, '/latest')) {
+    probes.push({
+      method: 'GET',
+      path: '/latest',
+      expected: 'GET /latest returns an actionable 404 when no completed transcript exists.',
+      expectedStatus: 404,
+      jsonContains: { error: 'no_transcript_available' },
+      reason: 'A latest transcript route was present and should fail closed before any run has completed.',
+    });
+  }
+
+  if (releaseGateRepoHasRoute(repoPath, '/runs')) {
+    probes.push(
+      {
+        method: 'POST',
+        path: '/runs',
+        expected: 'POST /runs rejects invalid JSON with HTTP 400 and error "invalid_json".',
+        expectedStatus: 400,
+        body: { type: 'text', value: '{not-json', contentType: 'application/json' },
+        jsonContains: { error: 'invalid_json' },
+        reason: 'The run creation route was present and should give actionable malformed-body feedback.',
+      },
+      {
+        method: 'POST',
+        path: '/runs',
+        expected: 'POST /runs without active profiles returns HTTP 409 and error "missing_active_profile".',
+        expectedStatus: 409,
+        body: { type: 'json', value: {} },
+        jsonContains: { error: 'missing_active_profile' },
+        reason: 'The run creation route depends on active profiles and should fail closed in a clean local state.',
+      },
+    );
+  }
+
+  if (releaseGateRepoHasRoute(repoPath, '/profiles')) {
+    probes.push(
+      {
+        method: 'POST',
+        path: '/profiles',
+        expected: 'POST /profiles rejects non-multipart requests with HTTP 400.',
+        expectedStatus: 400,
+        body: { type: 'json', value: { kind: 'audience_segments' } },
+        jsonContains: { error: 'Request must be multipart/form-data' },
+        reason: 'The profile upload route was present and should validate request shape before storage writes.',
+      },
+      {
+        method: 'POST',
+        path: '/profiles',
+        expected: 'POST /profiles stores an active audience profile through D1 and R2.',
+        expectedStatus: 201,
+        body: {
+          type: 'multipart-profile',
+          kind: 'audience_segments',
+          filename: 'audience-one.md',
+          markdown: '# Audience\n\n- Segment: Founders\n- Pain: Need concise execution guidance.\n',
+          setActive: true,
+        },
+        jsonContains: { kind: 'audience_segments', filename: 'audience-one.md', isActive: true },
+        reason: 'A valid audience profile upload proves the route can write profile markdown to R2 and metadata to D1.',
+      },
+      {
+        method: 'POST',
+        path: '/profiles',
+        expected: 'POST /profiles stores an active voice profile through D1 and R2.',
+        expectedStatus: 201,
+        body: {
+          type: 'multipart-profile',
+          kind: 'voice_profile',
+          filename: 'voice.md',
+          markdown: '# Voice\n\nDirect, practical, warm, with specific examples.\n',
+          setActive: true,
+        },
+        jsonContains: { kind: 'voice_profile', filename: 'voice.md', isActive: true },
+        reason: 'A valid voice profile upload proves both required profile kinds can be persisted.',
+      },
+      {
+        method: 'POST',
+        path: '/profiles',
+        expected: 'Uploading a second active audience profile deactivates the first same-kind profile.',
+        expectedStatus: 201,
+        body: {
+          type: 'multipart-profile',
+          kind: 'audience_segments',
+          filename: 'audience-two.md',
+          markdown: '# Audience\n\n- Segment: Operators\n- Pain: Need repeatable systems.\n',
+          setActive: true,
+        },
+        jsonContains: { kind: 'audience_segments', filename: 'audience-two.md', isActive: true },
+        reason: 'Profile activation uniqueness is acceptance-critical for later run selection.',
+      },
+      {
+        method: 'GET',
+        path: '/profiles',
+        expected: 'GET /profiles shows persisted profiles with one active audience profile and one active voice profile.',
+        expectedStatus: 200,
+        jsonArrayAssertions: [
+          { type: 'minLength', min: 3 },
+          { type: 'containsObject', where: { kind: 'audience_segments', filename: 'audience-one.md', isActive: false } },
+          { type: 'containsObject', where: { kind: 'audience_segments', filename: 'audience-two.md', isActive: true } },
+          { type: 'containsObject', where: { kind: 'voice_profile', filename: 'voice.md', isActive: true } },
+          { type: 'countObjects', where: { kind: 'audience_segments', isActive: true }, count: 1 },
+          { type: 'countObjects', where: { kind: 'voice_profile', isActive: true }, count: 1 },
+        ],
+        reason: 'Listing profiles after uploads verifies D1 persistence and same-kind activation state.',
+      },
+    );
   }
 
   return {
@@ -1636,17 +1769,95 @@ function jsonContainsExpected(
   return { ok: true };
 }
 
+function recordContainsExpected(
+  record: Record<string, unknown>,
+  expected: Record<string, string | number | boolean | null>,
+) {
+  return Object.entries(expected).every(([key, value]) => record[key] === value);
+}
+
+function jsonArrayAssertionsExpected(body: string, assertions: ReleaseGateJsonArrayAssertion[]) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch (error) {
+    return { ok: false, error: `Response was not valid JSON: ${compactDiagnostic(error, 300)}` };
+  }
+
+  if (!Array.isArray(parsed)) {
+    return { ok: false, error: 'Response JSON was not an array.' };
+  }
+
+  const records = parsed.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item));
+  for (const assertion of assertions) {
+    if (assertion.type === 'minLength' && parsed.length < assertion.min) {
+      return { ok: false, error: `Expected JSON array length at least ${assertion.min}, received ${parsed.length}.` };
+    }
+
+    if (assertion.type === 'containsObject' && !records.some((record) => recordContainsExpected(record, assertion.where))) {
+      return { ok: false, error: `Expected JSON array to contain object fields ${JSON.stringify(assertion.where)}.` };
+    }
+
+    if (assertion.type === 'countObjects') {
+      const count = records.filter((record) => recordContainsExpected(record, assertion.where)).length;
+      if (count !== assertion.count) {
+        return {
+          ok: false,
+          error: `Expected ${assertion.count} JSON array object(s) matching ${JSON.stringify(assertion.where)}, received ${count}.`,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+function requestInitForProbe(probe: ReleaseGateHttpProbePlan): RequestInit {
+  const init: RequestInit = {
+    method: probe.method,
+    headers: probe.headers,
+    signal: AbortSignal.timeout(5_000),
+  };
+
+  if (!probe.body) return init;
+
+  if (probe.body.type === 'json') {
+    return {
+      ...init,
+      headers: { 'content-type': 'application/json', ...probe.headers },
+      body: JSON.stringify(probe.body.value),
+    };
+  }
+
+  if (probe.body.type === 'text') {
+    return {
+      ...init,
+      headers: { 'content-type': probe.body.contentType ?? 'text/plain', ...probe.headers },
+      body: probe.body.value,
+    };
+  }
+
+  const form = new FormData();
+  form.set('kind', probe.body.kind);
+  form.set('setActive', String(probe.body.setActive ?? true));
+  form.set('file', new Blob([probe.body.markdown], { type: 'text/markdown' }), probe.body.filename);
+  return {
+    ...init,
+    body: form,
+  };
+}
+
 async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): Promise<ReleaseGateHttpProbeResult> {
   const url = new URL(probe.path, baseUrl).toString();
   try {
-    const response = await fetch(url, {
-      method: probe.method,
-      signal: AbortSignal.timeout(3_000),
-    });
+    const response = await fetch(url, requestInitForProbe(probe));
     const body = await response.text();
     const statusOk = probeStatusMatches(probe, response.status);
     const jsonCheck = probe.jsonContains ? jsonContainsExpected(body, probe.jsonContains) : { ok: true };
-    const ok = statusOk && jsonCheck.ok;
+    const jsonArrayCheck = probe.jsonArrayAssertions
+      ? jsonArrayAssertionsExpected(body, probe.jsonArrayAssertions)
+      : { ok: true };
+    const ok = statusOk && jsonCheck.ok && jsonArrayCheck.ok;
     const summary = [
       `HTTP ${response.status}`,
       response.headers.get('content-type') ? `content-type ${response.headers.get('content-type')}` : undefined,
@@ -1665,7 +1876,7 @@ async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): P
       response_summary: summary,
       error: ok
         ? undefined
-        : jsonCheck.error ?? `Expected ${probe.expected}, received HTTP ${response.status}.`,
+        : jsonCheck.error ?? jsonArrayCheck.error ?? `Expected ${probe.expected}, received HTTP ${response.status}.`,
     };
   } catch (error) {
     return {
@@ -1692,7 +1903,11 @@ async function runReleaseGateRuntimeProbe({
   if (!plan) return undefined;
 
   const port = await availableTcpPort();
-  const command = releaseGateWorkerDevCommand(repoPath, port);
+  const stateRoot = join(resolve(repoPath), '.delivery', 'tmp');
+  mkdirSync(stateRoot, { recursive: true });
+  const persistTo = join(stateRoot, `wrangler-state-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`);
+  mkdirSync(persistTo, { recursive: true });
+  const command = releaseGateWorkerDevCommand(repoPath, port, persistTo);
   if (!command) return undefined;
 
   let output = '';
