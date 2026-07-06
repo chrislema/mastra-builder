@@ -1822,6 +1822,51 @@ test('Worker release gate fails closed when Wrangler config is missing', () => {
   assert.match(staticResult?.error ?? '', /No Wrangler config file exists/);
 });
 
+test('Worker config hygiene requires a service name and existing entrypoint', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-entrypoint-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc'] }]).tasks;
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo worker',
+        main: 'src/missing.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const gaps = workerConfigHygieneGaps(repoPath, task);
+  assert.match(gaps.join('\n'), /name "demo worker"/);
+  assert.match(gaps.join('\n'), /main "src\/missing\.ts" does not exist/);
+
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo_worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
+});
+
 test('Worker config hygiene aligns Cloudflare binding names with Env declarations', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-env-align-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

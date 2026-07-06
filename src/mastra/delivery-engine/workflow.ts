@@ -2031,6 +2031,22 @@ function observabilityConfigGaps(observability: Record<string, unknown> | undefi
   return gaps;
 }
 
+function workerNameGaps(name: unknown) {
+  if (typeof name !== 'string' || !name.trim()) {
+    return ['name is missing; set it to the Cloudflare Worker service name used by Wrangler.'];
+  }
+
+  if (name !== name.trim()) {
+    return [`name "${name}" has leading or trailing whitespace; use "${name.trim()}".`];
+  }
+
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+    return [`name "${name}" must be a single Worker service name using only letters, numbers, underscores, and hyphens.`];
+  }
+
+  return [];
+}
+
 function workerMainEntrypointGaps(repoPath: string, main: unknown) {
   if (typeof main !== 'string' || !main.trim()) {
     return ['main is missing; set it to the Worker entrypoint file used by Wrangler local validation.'];
@@ -2263,6 +2279,7 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
   const gaps: string[] = [];
 
   if (configPath.endsWith('.toml')) {
+    gaps.push(...workerNameGaps(firstTomlStringValue(text, 'name')));
     gaps.push(...workerMainEntrypointGaps(repoPath, firstTomlStringValue(text, 'main')));
     gaps.push(...workerCompatibilityDateGaps(firstTomlStringValue(text, 'compatibility_date')));
     if (!tomlArrayStringValues(text, 'compatibility_flags').includes('nodejs_compat')) {
@@ -2293,6 +2310,7 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
     gaps.push('$schema must be "./node_modules/wrangler/config-schema.json" so Wrangler/editor validation resolves locally.');
   }
 
+  gaps.push(...workerNameGaps(config.name));
   gaps.push(...workerMainEntrypointGaps(repoPath, config.main));
   gaps.push(...workerCompatibilityDateGaps(config.compatibility_date));
 
