@@ -2048,11 +2048,11 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
 
   assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
   assert.deepEqual(workerConfigHygieneGaps(repoPath), []);
-  assert.equal(
-    releaseGateStaticEvidenceResults(repoPath).find((result) => result.command === 'static check: Worker config hygiene')
-      ?.ok,
-    true,
+  const workerConfigEvidence = releaseGateStaticEvidenceResults(repoPath).find(
+    (result) => result.command === 'static check: Worker config hygiene',
   );
+  assert.equal(workerConfigEvidence?.tier, 'api');
+  assert.equal(workerConfigEvidence?.ok, true);
 });
 
 test('Worker release gate fails closed when Wrangler config is missing', () => {
@@ -2070,6 +2070,7 @@ test('Worker release gate fails closed when Wrangler config is missing', () => {
   const requiredStaticFailures = releaseGateRequiredStaticEvidenceFailures(releaseGateStaticEvidenceResults(repoPath));
 
   assert.equal(staticResult?.ok, false);
+  assert.equal(staticResult?.tier, 'api');
   assert.equal(staticResult?.required, true);
   assert.match(staticResult?.error ?? '', /No Wrangler config file exists/);
   assert.deepEqual(

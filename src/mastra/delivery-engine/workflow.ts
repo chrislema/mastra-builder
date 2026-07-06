@@ -4320,7 +4320,7 @@ export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateE
   if (releaseGateWorkerConfigPath(repoPath) || workerConfigGaps.length) {
     const ok = workerConfigGaps.length === 0;
     results.push({
-      tier: 'runtime',
+      tier: 'api',
       command: 'static check: Worker config hygiene',
       ok,
       required: true,
