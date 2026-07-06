@@ -9,9 +9,9 @@
     "eval:delivery": "node --import tsx scripts/run-delivery-evals.ts",
     "eval:delivery:gate": "node --import tsx scripts/run-delivery-eval-gate.ts",
     "ci:delivery": "npm test && npm run eval:delivery:gate",
-    "dev": "mastra dev",
-    "build": "MASTRA_TELEMETRY_DISABLED=1 npm_config_prefer_offline=true npm_config_fetch_retries=0 npm_config_fetch_timeout=10000 mastra build",
-    "start": "mastra start"
+    "dev": "node --env-file-if-exists=.env node_modules/.bin/mastra dev",
+    "build": "MASTRA_TELEMETRY_DISABLED=1 npm_config_prefer_offline=true npm_config_fetch_retries=0 npm_config_fetch_timeout=10000 node --env-file-if-exists=.env node_modules/.bin/mastra build",
+    "start": "node --env-file-if-exists=.env node_modules/.bin/mastra start"
   },
   "keywords": [],
   "author": "",
