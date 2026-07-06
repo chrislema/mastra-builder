@@ -3085,6 +3085,21 @@ test('task plan schema describes explicit Worker environment commands', () => {
   assert.match(descriptions, /wrangler dev --env staging/);
   assert.match(descriptions, /wrangler deploy --env production/);
   assert.match(descriptions, /env\.staging\/env\.production|env\.staging and env\.production/);
+  assert.match(descriptions, /root scaffold task owns package\.json, \.gitignore, wrangler\.jsonc/);
+});
+
+test('agent and task-plan template describe root Worker config scaffold', () => {
+  const agentInstructions = readFileSync(join(process.cwd(), 'src/mastra/delivery-engine/agents.ts'), 'utf8');
+  const taskPlanTemplate = readFileSync(
+    join(process.cwd(), 'src/mastra/delivery-engine/templates/task-plan.md'),
+    'utf8',
+  );
+
+  assert.match(agentInstructions, /package\.json, \.gitignore, wrangler\.jsonc/);
+  assert.match(agentInstructions, /Wrangler dry-run validation can run from the first build slice/);
+  assert.match(taskPlanTemplate, /package\.json`/);
+  assert.match(taskPlanTemplate, /`\.gitignore`, `wrangler\.jsonc`/);
+  assert.match(taskPlanTemplate, /Wrangler dry-run\s+validation can run from the first build slice/);
 });
 
 test('Worker package scaffold hygiene requires current Wrangler tooling and config-based scripts', () => {

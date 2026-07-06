@@ -116,8 +116,8 @@ such as package.json, tsconfig.json when TypeScript is used, wrangler.toml, src/
 own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
 Do not put public/** files in engineer-owned tasks.
 When the target folder has no package.json, the root scaffold must be explicit and runnable:
-a first root engineer task owns package.json, .gitignore, and at least one concrete Worker source input such
-as src/index.js or workers/app.js. Include tsconfig.json only when the Worker source is TypeScript. Worker runtime/config/source/static asset/migration tasks depend on it unless they own those scaffold files themselves.
+a first root engineer task owns package.json, .gitignore, wrangler.jsonc, and at least one concrete Worker source input such
+as src/index.js or workers/app.js so Wrangler dry-run validation can run from the first build slice. Include tsconfig.json only when the Worker source is TypeScript. D1 migrations, extra runtime/source files, and static asset tasks depend on it unless they own those scaffold files themselves.
 New Worker package scripts must use Wrangler through config: scripts.dev is "wrangler dev --env staging",
 and scripts.deploy is "wrangler deploy --env production".
 Task owners must be engineer or designer; verification belongs to the later tester stage.
@@ -245,6 +245,7 @@ Cloudflare architecture defaults:
 - Use Pages Functions only when the existing repo or spec explicitly requires Pages.
 - Do not introduce Node HTTP servers, Express-style servers, generic server/ directories, or filesystem-backed runtime state.
 - New Worker package scripts use Wrangler through config: scripts.dev is "wrangler dev --env staging", and scripts.deploy is "wrangler deploy --env production".
+- In a brand-new Worker project, the root scaffold task owns package.json, .gitignore, wrangler.jsonc, and the Worker entrypoint together so implementation can validate the first slice with Wrangler dry-run immediately.
 - For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml or the task explicitly owns TOML.
 - New Worker config must define Wrangler env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments. Production deploys use wrangler deploy --env production after human approval.
 - Use Cloudflare Worker runtime APIs and bindings: D1, KV, R2, Queues, Durable Objects, Workflows, service bindings, and scheduled handlers when appropriate.

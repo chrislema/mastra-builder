@@ -16,6 +16,9 @@
 Use concrete Worker project paths only. New Worker projects should prefer `wrangler.jsonc`
 unless an existing repo or source document already uses `wrangler.toml`. UI work belongs in
 vanilla `public/*.html`, `public/*.css`, and `public/*.js` files, not React or framework files.
+For a brand-new Worker project, the first root engineer scaffold task owns `package.json`,
+`.gitignore`, `wrangler.jsonc`, and the Worker entrypoint together so Wrangler dry-run
+validation can run from the first build slice. D1 migrations belong in later engineer tasks.
 New Worker config must define `env.staging` and `env.production`; mirror required bindings
 and vars inside both because Wrangler does not inherit them across environments.
 New Worker package scripts must target those environments through config: `scripts.dev`
