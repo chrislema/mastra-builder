@@ -4121,6 +4121,10 @@ export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateE
   return results;
 }
 
+export function releaseGateRequiredStaticEvidenceFailures(results: ReleaseGateEvidenceResult[]) {
+  return results.filter((result) => result.required && !result.ok);
+}
+
 async function recordReleaseGateStaticEvidenceResult({
   repoPath,
   mastra,
@@ -4569,6 +4573,8 @@ async function collectReleaseGateEvidence({
   const runtimePlan = releaseGateRuntimeProbePlan(repoPath);
   const runtimePersistTo = runtimePlan ? createReleaseGateRuntimeStatePath(repoPath) : undefined;
   const plan = releaseGateEvidenceCommandPlan(repoPath, runtimePersistTo);
+  const staticResults = releaseGateStaticEvidenceResults(repoPath);
+  const requiredStaticFailures = releaseGateRequiredStaticEvidenceFailures(staticResults);
   const notes: string[] = [];
   if (!plan.some((command) => command.tier === 'smoke')) {
     notes.push('No package verification script was available; smoke tier must be marked not_required or blocked with a reason.');
@@ -4582,6 +4588,13 @@ async function collectReleaseGateEvidence({
   if (releaseGateTranscriptFixtureAvailable(repoPath)) {
     notes.push(
       'Release gate seeds D1 with a completed run containing original and regenerated transcript versions, then probes GET /latest against the same local Wrangler state.',
+    );
+  }
+  if (requiredStaticFailures.length) {
+    notes.push(
+      `Skipped dynamic Worker API evidence because required static release-gate checks failed: ${requiredStaticFailures
+        .map((result) => result.command)
+        .join(', ')}.`,
     );
   }
   notes.push('No browser E2E harness is started by this workflow; E2E and full_matrix tiers should be not_required unless cited evidence exists.');
@@ -4598,15 +4611,21 @@ async function collectReleaseGateEvidence({
       error: dependencyInstall.error,
     });
   }
-  for (const command of plan) {
+  const dynamicPlan = plan.filter((command) => command.tier !== 'smoke');
+  for (const command of plan.filter((item) => item.tier === 'smoke')) {
     commands.push(await runReleaseGateEvidenceCommand({ repoPath, mastra, stage, command }));
   }
-  for (const result of releaseGateStaticEvidenceResults(repoPath)) {
+  for (const result of staticResults) {
     await recordReleaseGateStaticEvidenceResult({ repoPath, mastra, stage, result });
     commands.push(result);
   }
-  const runtimeResult = await runReleaseGateRuntimeProbe({ repoPath, mastra, stage, persistTo: runtimePersistTo });
-  if (runtimeResult) commands.push(runtimeResult);
+  if (!requiredStaticFailures.length) {
+    for (const command of dynamicPlan) {
+      commands.push(await runReleaseGateEvidenceCommand({ repoPath, mastra, stage, command }));
+    }
+    const runtimeResult = await runReleaseGateRuntimeProbe({ repoPath, mastra, stage, persistTo: runtimePersistTo });
+    if (runtimeResult) commands.push(runtimeResult);
+  }
 
   return {
     artifact_type: 'test-evidence',

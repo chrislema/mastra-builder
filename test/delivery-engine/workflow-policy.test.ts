@@ -54,6 +54,7 @@ import {
   releaseGateLocalD1DatabaseName,
   releaseGateRuntimeProbePlan,
   releaseGateRequiredEvidencePassed,
+  releaseGateRequiredStaticEvidenceFailures,
   releaseGateStaticEvidenceResults,
   releaseGateTranscriptFixtureSchemaGaps,
   releaseGateWorkerDevCommand,
@@ -1816,10 +1817,15 @@ test('Worker release gate fails closed when Wrangler config is missing', () => {
   const staticResult = releaseGateStaticEvidenceResults(repoPath).find(
     (result) => result.command === 'static check: Worker config hygiene',
   );
+  const requiredStaticFailures = releaseGateRequiredStaticEvidenceFailures(releaseGateStaticEvidenceResults(repoPath));
 
   assert.equal(staticResult?.ok, false);
   assert.equal(staticResult?.required, true);
   assert.match(staticResult?.error ?? '', /No Wrangler config file exists/);
+  assert.deepEqual(
+    requiredStaticFailures.map((result) => result.command),
+    ['static check: Worker config hygiene'],
+  );
 });
 
 test('Worker config hygiene requires a service name and existing entrypoint', () => {
