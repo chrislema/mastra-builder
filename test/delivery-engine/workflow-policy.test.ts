@@ -42,6 +42,7 @@ import {
   profileContractDependencyHygiene,
   profileKindContractGaps,
   profileKindTaskPacketPolicy,
+  profileKindTaskPacketPolicyForTask,
   outOfPlanVerificationFailurePaths,
   priorStoppedBuildTaskIds,
   projectScaffoldHygiene,
@@ -66,6 +67,7 @@ import {
   workersAiBindingGaps,
   workerConfigHygieneGaps,
   workerConfigTaskPacketPolicy,
+  workerConfigTaskPacketPolicyForTask,
   workerPackageScaffoldGaps,
   wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
@@ -459,10 +461,61 @@ test('profile kind contract treats profileKinds module as the producer surface',
   assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
 });
 
+test('profile kind contract treats root domain module as the producer surface', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-root-domain-contract-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src', 'domain.ts'),
+    'export const PROFILE_KINDS = ["audience_segments", "voice_profile"] as const;\n',
+  );
+
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/domain.ts', 'src/validation.ts'],
+    },
+  ]);
+
+  assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
+
+  writeFileSync(
+    join(repoPath, 'src', 'domain.ts'),
+    'export const PROFILE_KINDS = ["voice", "audience", "topic"] as const;\n',
+  );
+
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /audience_segments, voice_profile/);
+});
+
 test('profile kind task packet policy names required persistent kinds', () => {
   assert.deepEqual(profileKindTaskPacketPolicy().required_persistent_kinds, ['audience_segments', 'voice_profile']);
   assert.equal(profileKindTaskPacketPolicy().producer_surfaces.includes('src/domain/profileKinds.ts'), true);
   assert.match(profileKindTaskPacketPolicy().guidance, /Do not substitute generic creator/);
+});
+
+test('task packet policies are scoped to owning tasks', () => {
+  const [scaffoldTask, configTask, profileTask] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'tsconfig.json', 'src/index.ts', 'src/env.ts'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['wrangler.jsonc'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['src/domain.ts', 'src/validation.ts'],
+    },
+  ]).tasks;
+
+  assert.equal(workerConfigTaskPacketPolicyForTask(scaffoldTask), null);
+  assert.equal(profileKindTaskPacketPolicyForTask(scaffoldTask), null);
+  assert.equal(workerConfigTaskPacketPolicyForTask(configTask)?.schema, './node_modules/wrangler/config-schema.json');
+  assert.equal(workerConfigTaskPacketPolicyForTask(configTask)?.compatibility_date, currentCompatibilityDate());
+  assert.deepEqual(profileKindTaskPacketPolicyForTask(profileTask)?.required_persistent_kinds, [
+    'audience_segments',
+    'voice_profile',
+  ]);
 });
 
 test('profile kind contract drift can use domain profile contract source', () => {

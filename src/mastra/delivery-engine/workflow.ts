@@ -737,6 +737,7 @@ function taskCanSafelyDependOn(taskPlan: TaskPlan, taskId: string, dependencyId:
 const requiredTalkingHeadProfileKinds = ['audience_segments', 'voice_profile'];
 const profileContractProducerSurfaces = [
   'src/validation.ts',
+  'src/domain.ts',
   'src/domain/profileKinds.ts',
   'src/domain/profile.ts',
   'src/domain/profiles.ts',
@@ -1936,6 +1937,10 @@ export function workerConfigTaskPacketPolicy() {
   };
 }
 
+export function workerConfigTaskPacketPolicyForTask(task: Task) {
+  return taskOwnsWorkerConfigFile(task) ? workerConfigTaskPacketPolicy() : null;
+}
+
 export function profileKindTaskPacketPolicy() {
   return {
     required_persistent_kinds: requiredTalkingHeadProfileKinds,
@@ -1943,6 +1948,12 @@ export function profileKindTaskPacketPolicy() {
     guidance:
       'Use audience_segments and voice_profile as persistent profile kinds. Do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.',
   };
+}
+
+export function profileKindTaskPacketPolicyForTask(task: Task) {
+  return taskOwnsProfileContractProducer(task) || taskOwnsProfileMigration(task) || taskOwnsProfileStorage(task)
+    ? profileKindTaskPacketPolicy()
+    : null;
 }
 
 function workerCompatibilityDateGaps(value: unknown) {
@@ -6428,8 +6439,8 @@ const executeBuildTaskAttemptStep = createStep({
       package_manifest_owned: packageManifestOwned,
       existing_package_dependencies: existingPackageDependencies,
       focused_repair_file_context: focusedRepairFileContext,
-      worker_config_policy: workerConfigTaskPacketPolicy(),
-      profile_kind_policy: profileKindTaskPacketPolicy(),
+      worker_config_policy: workerConfigTaskPacketPolicyForTask(task),
+      profile_kind_policy: profileKindTaskPacketPolicyForTask(task),
       platform_policy_findings: [
         ...workersAiBindingGaps(inputData.repoPath, task),
         ...workerConfigHygieneGaps(inputData.repoPath, task),
@@ -6465,9 +6476,10 @@ Execution rules:
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
-- For Worker config, use worker_config_policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", and explicit observability enabled with head_sampling_rate.
+- When worker_config_policy is not null, use it exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", and explicit observability enabled with head_sampling_rate.
 - For Worker scaffold package.json, use current Cloudflare tooling: Wrangler "latest" or v4+, @cloudflare/workers-types "latest" or a recent dated v4 release, scripts.dev as "wrangler dev", scripts.deploy as "wrangler deploy", and scripts.typecheck as "tsc --noEmit".
-- For profile contract producer surfaces, use profile_kind_policy exactly: PROFILE_KINDS must include audience_segments and voice_profile as the persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.
+- For placeholder Worker route/error responses, include actionable next steps such as available route expectations, pending setup, or the next implementation surface instead of only returning "not found".
+- When profile_kind_policy is not null, use it exactly: PROFILE_KINDS must include audience_segments and voice_profile as the persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
 - For route tasks, integrate new endpoints through the existing Worker router/barrel/middleware path. Do not import route handlers into src/index.ts and dispatch them before routeRequest when routeRequest already exists.
 - If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.
