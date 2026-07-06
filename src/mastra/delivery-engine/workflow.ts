@@ -2007,6 +2007,56 @@ function workerSourceContainsText(repoPath: string, needle: string) {
   return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeContainsText(sourceRoot, needle, scanned));
 }
 
+function sourceTextContainsRouteLiteral(text: string, route: string) {
+  const escaped = route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp("(['\"`])" + escaped + '\\1').test(text);
+}
+
+function sourceTreeContainsRouteLiteral(rootPath: string, route: string, scanned = { count: 0 }): boolean {
+  if (!existsSync(rootPath) || scanned.count > 150) return false;
+
+  const rootStat = statSync(rootPath);
+  if (rootStat.isFile()) {
+    if (!/\.[cm]?[jt]sx?$/.test(rootPath)) return false;
+    scanned.count += 1;
+    if (scanned.count > 150) return false;
+    try {
+      return sourceTextContainsRouteLiteral(readFileSync(rootPath, 'utf8'), route);
+    } catch {
+      return false;
+    }
+  }
+
+  if (!rootStat.isDirectory()) return false;
+
+  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.delivery') continue;
+
+    const path = join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      if (sourceTreeContainsRouteLiteral(path, route, scanned)) return true;
+      continue;
+    }
+
+    if (!/\.[cm]?[jt]sx?$/.test(entry.name)) continue;
+    scanned.count += 1;
+    if (scanned.count > 150) return false;
+
+    try {
+      if (sourceTextContainsRouteLiteral(readFileSync(path, 'utf8'), route)) return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function workerSourceContainsRouteLiteral(repoPath: string, route: string) {
+  const scanned = { count: 0 };
+  return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeContainsRouteLiteral(sourceRoot, route, scanned));
+}
+
 function repoSourceUsesWorkersAi(repoPath: string) {
   const needles = [
     'env.AI',
@@ -4108,6 +4158,8 @@ type ReleaseGateEvidence = {
   notes: string[];
 };
 
+type ReleaseGateJsonExpectation = Record<string, string | number | boolean | null>;
+
 type ReleaseGateProcessCommand = {
   command: string;
   executable: string;
@@ -4121,7 +4173,8 @@ type ReleaseGateHttpProbePlan = {
   expectedStatus?: number;
   statusBelow?: number;
   textContains?: string;
-  jsonContains?: Record<string, string | number | boolean | null>;
+  jsonContains?: ReleaseGateJsonExpectation;
+  jsonContainsAny?: ReleaseGateJsonExpectation[];
   jsonArrayAssertions?: ReleaseGateJsonArrayAssertion[];
   body?: ReleaseGateHttpRequestBody;
   headers?: Record<string, string>;
@@ -4359,7 +4412,19 @@ function releaseGateRepoHasRoute(repoPath: string, route: string) {
   ) {
     return true;
   }
-  return workerSourceContainsText(repoPath, route);
+  if (
+    route === '/api/health' &&
+    ['src/routes/api/health.ts', 'src/routes/api/health.js', 'src/routes/api/health.mjs'].some((path) =>
+      existsSync(join(root, path)),
+    )
+  ) {
+    return true;
+  }
+  return workerSourceContainsRouteLiteral(repoPath, route);
+}
+
+function releaseGateHealthRoutes(repoPath: string) {
+  return ['/api/health', '/health'].filter((route) => releaseGateRepoHasRoute(repoPath, route));
 }
 
 function releaseGateMigrationText(repoPath: string) {
@@ -4624,14 +4689,14 @@ export function releaseGateRuntimeProbePlan(
     if (assetProbe) probes.push(assetProbe);
   }
 
-  if (releaseGateRepoHasRoute(repoPath, '/health')) {
+  for (const healthRoute of releaseGateHealthRoutes(repoPath)) {
     probes.push({
       method: 'GET',
-      path: '/health',
-      expected: 'GET /health returns HTTP 200 JSON with status "ok".',
+      path: healthRoute,
+      expected: `GET ${healthRoute} returns HTTP 200 JSON health status.`,
       expectedStatus: 200,
-      jsonContains: { status: 'ok' },
-      reason: 'A health route was present in the source tree.',
+      jsonContainsAny: [{ status: 'ok' }, { ok: true }],
+      reason: `A ${healthRoute} health route was present in the source tree.`,
     });
   }
 
@@ -5136,7 +5201,7 @@ function probeStatusMatches(probe: ReleaseGateHttpProbePlan, status: number) {
 
 function jsonContainsExpected(
   body: string,
-  expected: Record<string, string | number | boolean | null>,
+  expected: ReleaseGateJsonExpectation,
 ): { ok: boolean; error?: string } {
   let parsed: unknown;
   try {
@@ -5157,6 +5222,18 @@ function jsonContainsExpected(
   }
 
   return { ok: true };
+}
+
+function jsonContainsAnyExpected(body: string, expectedOptions: ReleaseGateJsonExpectation[]) {
+  const failures = expectedOptions.map((expected) => jsonContainsExpected(body, expected));
+  if (failures.some((result) => result.ok)) return { ok: true };
+
+  return {
+    ok: false,
+    error: `Expected response JSON to match one of ${JSON.stringify(expectedOptions)}. ${
+      failures.find((result) => result.error)?.error ?? ''
+    }`.trim(),
+  };
 }
 
 function textContainsExpected(body: string, expected: string) {
@@ -5250,10 +5327,11 @@ async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): P
     const statusOk = probeStatusMatches(probe, response.status);
     const textCheck = probe.textContains ? textContainsExpected(body, probe.textContains) : { ok: true };
     const jsonCheck = probe.jsonContains ? jsonContainsExpected(body, probe.jsonContains) : { ok: true };
+    const jsonAnyCheck = probe.jsonContainsAny ? jsonContainsAnyExpected(body, probe.jsonContainsAny) : { ok: true };
     const jsonArrayCheck = probe.jsonArrayAssertions
       ? jsonArrayAssertionsExpected(body, probe.jsonArrayAssertions)
       : { ok: true };
-    const ok = statusOk && textCheck.ok && jsonCheck.ok && jsonArrayCheck.ok;
+    const ok = statusOk && textCheck.ok && jsonCheck.ok && jsonAnyCheck.ok && jsonArrayCheck.ok;
     const summary = [
       `HTTP ${response.status}`,
       response.headers.get('content-type') ? `content-type ${response.headers.get('content-type')}` : undefined,
@@ -5274,6 +5352,7 @@ async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): P
         ? undefined
         : textCheck.error ??
           jsonCheck.error ??
+          jsonAnyCheck.error ??
           jsonArrayCheck.error ??
           `Expected ${probe.expected}, received HTTP ${response.status}.`,
     };

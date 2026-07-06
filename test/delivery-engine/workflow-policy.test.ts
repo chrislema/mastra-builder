@@ -2130,6 +2130,31 @@ test('release gate runtime probe planner uses Wrangler CLI directly', () => {
   );
 });
 
+test('release gate runtime probe planner discovers Worker API health routes', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-api-health-'));
+  mkdirSync(join(repoPath, 'workers'), { recursive: true });
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "workers/app.js"\n');
+  writeFileSync(
+    join(repoPath, 'workers/app.js'),
+    [
+      "if (url.pathname === '/api/health') {",
+      '  return new Response(JSON.stringify({ ok: true }));',
+      '}',
+    ].join('\n'),
+  );
+
+  const probes = releaseGateRuntimeProbePlan(repoPath)?.probes ?? [];
+  assert.deepEqual(
+    probes.map((probe) => `${probe.method} ${probe.path}`),
+    ['GET /', 'GET /api/health'],
+  );
+  assert.deepEqual(probes.find((probe) => probe.path === '/api/health')?.jsonContainsAny, [
+    { status: 'ok' },
+    { ok: true },
+  ]);
+});
+
 test('release gate runtime probe targets staging when the Worker config defines it', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-staging-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
