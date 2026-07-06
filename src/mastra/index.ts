@@ -29,7 +29,7 @@ export const mastra = new Mastra({
   workspace: deliveryWorkspace,
   storage: new LibSQLStore({
     id: "mastra-storage",
-    url: "file:./mastra.db",
+    url: process.env.MASTRA_STORAGE_URL ?? "file:./mastra.db",
   }),
   logger: new ConsoleLogger({
     name: 'Mastra',
