@@ -3223,21 +3223,22 @@ async function ensureNodeDependencies({
   repoPath: string;
   mastra: any;
   stage: string;
-}) {
+}): Promise<{ command: string; ok: boolean; reason: string; output_summary?: string; error?: string } | undefined> {
   const root = resolve(repoPath);
   const packagePath = join(root, 'package.json');
   const packageLockPath = join(root, 'package-lock.json');
   const nodeModulesPath = join(root, 'node_modules');
-  if (!existsSync(packagePath)) return;
+  if (!existsSync(packagePath)) return undefined;
   if (existsSync(nodeModulesPath) && existsSync(packageLockPath)) {
     try {
-      if (statSync(packageLockPath).mtimeMs >= statSync(packagePath).mtimeMs) return;
+      if (statSync(packageLockPath).mtimeMs >= statSync(packagePath).mtimeMs) return undefined;
     } catch {
       // Fall through to npm install when mtimes cannot be read.
     }
   }
 
   const command = 'npm install';
+  const reason = 'Node dependencies were missing or stale before local validation, so npm install is required evidence.';
   await recordRunCodeStart({ repoPath, mastra, stage, command, timeoutMs: 180_000 });
   try {
     const result = await execFileAsync('npm', ['install'], {
@@ -3257,7 +3258,14 @@ async function ensureNodeDependencies({
         output_summary: compactDiagnostic(`${result.stdout}\n${result.stderr}`, 500),
       },
     });
+    return {
+      command,
+      ok: true,
+      reason,
+      output_summary: compactDiagnostic(`${result.stdout}\n${result.stderr}`, 500),
+    };
   } catch (error) {
+    const failure = commandFailureSummary(error, 1000);
     await appendDeliveryEventState({
       repoPath,
       mastra,
@@ -3266,9 +3274,15 @@ async function ensureNodeDependencies({
         stage,
         command,
         ok: false,
-        error: commandFailureSummary(error, 1000),
+        error: failure,
       },
     });
+    return {
+      command,
+      ok: false,
+      reason,
+      error: failure,
+    };
   }
 }
 
@@ -4495,7 +4509,7 @@ async function collectReleaseGateEvidence({
   mastra: any;
   stage: string;
 }): Promise<ReleaseGateEvidence> {
-  await ensureNodeDependencies({ repoPath, mastra, stage });
+  const dependencyInstall = await ensureNodeDependencies({ repoPath, mastra, stage });
 
   const runtimePlan = releaseGateRuntimeProbePlan(repoPath);
   const runtimePersistTo = runtimePlan ? createReleaseGateRuntimeStatePath(repoPath) : undefined;
@@ -4518,6 +4532,17 @@ async function collectReleaseGateEvidence({
   notes.push('No browser E2E harness is started by this workflow; E2E and full_matrix tiers should be not_required unless cited evidence exists.');
 
   const commands: ReleaseGateEvidenceResult[] = [];
+  if (dependencyInstall) {
+    commands.push({
+      tier: 'smoke',
+      command: dependencyInstall.command,
+      ok: dependencyInstall.ok,
+      required: true,
+      reason: dependencyInstall.reason,
+      output_summary: dependencyInstall.output_summary,
+      error: dependencyInstall.error,
+    });
+  }
   for (const command of plan) {
     commands.push(await runReleaseGateEvidenceCommand({ repoPath, mastra, stage, command }));
   }
