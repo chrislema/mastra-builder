@@ -3743,6 +3743,7 @@ type ReleaseGateHttpProbePlan = {
   expected: string;
   expectedStatus?: number;
   statusBelow?: number;
+  textContains?: string;
   jsonContains?: Record<string, string | number | boolean | null>;
   jsonArrayAssertions?: ReleaseGateJsonArrayAssertion[];
   body?: ReleaseGateHttpRequestBody;
@@ -4097,6 +4098,28 @@ export function releaseGateWorkerDeployDryRunCommand(repoPath: string) {
   return wranglerProcessCommand(repoPath, 'deploy --dry-run', ['deploy', '--dry-run']);
 }
 
+function releaseGateStaticAssetTextMarker(repoPath: string, relativePath: string) {
+  const assetPath = join(resolve(repoPath), relativePath);
+  if (!existsSync(assetPath)) return undefined;
+  const text = readFileSync(assetPath, 'utf8').trim();
+  return text ? text.slice(0, 120) : undefined;
+}
+
+function releaseGatePublicAssetProbe(repoPath: string, file: 'index.html' | 'styles.css' | 'app.js') {
+  const route = file === 'index.html' ? '/' : `/${file}`;
+  const marker = releaseGateStaticAssetTextMarker(repoPath, `public/${file}`);
+  if (!marker) return undefined;
+
+  return {
+    method: 'GET',
+    path: route,
+    expected: `GET ${route} serves public/${file} from Workers Static Assets.`,
+    expectedStatus: 200,
+    textContains: marker,
+    reason: `public/${file} exists, so local Wrangler validation should prove the static asset is deployed and served by the Worker.`,
+  } satisfies ReleaseGateHttpProbePlan;
+}
+
 export function releaseGateRuntimeProbePlan(
   repoPath: string,
   adminToken = releaseGateLocalAdminToken,
@@ -4104,16 +4127,23 @@ export function releaseGateRuntimeProbePlan(
   const command = releaseGateWorkerDevCommand(repoPath);
   if (!command) return undefined;
   const adminHeaders = releaseGateAdminHeaders(adminToken);
+  const indexAssetProbe = releaseGatePublicAssetProbe(repoPath, 'index.html');
+  const defaultRootProbe: ReleaseGateHttpProbePlan = {
+    method: 'GET',
+    path: '/',
+    expected: 'Local Worker runtime responds with an HTTP status below 500.',
+    statusBelow: 500,
+    reason: 'A non-5xx response proves wrangler dev started and can serve local Worker requests.',
+  };
 
-  const probes: ReleaseGateHttpProbePlan[] = [
-    {
-      method: 'GET',
-      path: '/',
-      expected: 'Local Worker runtime responds with an HTTP status below 500.',
-      statusBelow: 500,
-      reason: 'A non-5xx response proves wrangler dev started and can serve local Worker requests.',
-    },
-  ];
+  const probes: ReleaseGateHttpProbePlan[] = [indexAssetProbe ?? defaultRootProbe];
+
+  for (const assetProbe of [
+    releaseGatePublicAssetProbe(repoPath, 'styles.css'),
+    releaseGatePublicAssetProbe(repoPath, 'app.js'),
+  ]) {
+    if (assetProbe) probes.push(assetProbe);
+  }
 
   if (releaseGateRepoHasRoute(repoPath, '/health')) {
     probes.push({
@@ -4599,6 +4629,11 @@ function jsonContainsExpected(
   return { ok: true };
 }
 
+function textContainsExpected(body: string, expected: string) {
+  if (body.includes(expected)) return { ok: true };
+  return { ok: false, error: `Expected response body to include ${JSON.stringify(expected)}.` };
+}
+
 function recordContainsExpected(
   record: Record<string, unknown>,
   expected: Record<string, string | number | boolean | null>,
@@ -4683,11 +4718,12 @@ async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): P
     const response = await fetch(url, requestInitForProbe(probe));
     const body = await response.text();
     const statusOk = probeStatusMatches(probe, response.status);
+    const textCheck = probe.textContains ? textContainsExpected(body, probe.textContains) : { ok: true };
     const jsonCheck = probe.jsonContains ? jsonContainsExpected(body, probe.jsonContains) : { ok: true };
     const jsonArrayCheck = probe.jsonArrayAssertions
       ? jsonArrayAssertionsExpected(body, probe.jsonArrayAssertions)
       : { ok: true };
-    const ok = statusOk && jsonCheck.ok && jsonArrayCheck.ok;
+    const ok = statusOk && textCheck.ok && jsonCheck.ok && jsonArrayCheck.ok;
     const summary = [
       `HTTP ${response.status}`,
       response.headers.get('content-type') ? `content-type ${response.headers.get('content-type')}` : undefined,
@@ -4706,7 +4742,10 @@ async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): P
       response_summary: summary,
       error: ok
         ? undefined
-        : jsonCheck.error ?? jsonArrayCheck.error ?? `Expected ${probe.expected}, received HTTP ${response.status}.`,
+        : textCheck.error ??
+          jsonCheck.error ??
+          jsonArrayCheck.error ??
+          `Expected ${probe.expected}, received HTTP ${response.status}.`,
     };
   } catch (error) {
     return {

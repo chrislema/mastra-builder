@@ -1627,6 +1627,42 @@ test('release gate runtime probe planner uses Wrangler CLI directly', () => {
   );
 });
 
+test('release gate runtime probe planner verifies public Worker assets', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-assets-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, 'public'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default { fetch: () => new Response("api") };\n');
+  writeFileSync(join(repoPath, 'public/index.html'), '<!doctype html><title>Demo</title>\n');
+  writeFileSync(join(repoPath, 'public/styles.css'), 'body { color: #111; }\n');
+  writeFileSync(join(repoPath, 'public/app.js'), 'window.appReady = true;\n');
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        assets: { directory: './public', binding: 'ASSETS' },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const probes = releaseGateRuntimeProbePlan(repoPath)?.probes ?? [];
+  assert.deepEqual(
+    probes.map((probe) => `${probe.method} ${probe.path}`),
+    ['GET /', 'GET /styles.css', 'GET /app.js'],
+  );
+  assert.equal(probes[0].expectedStatus, 200);
+  assert.equal(probes[0].textContains, '<!doctype html><title>Demo</title>');
+  assert.equal(probes[1].textContains, 'body { color: #111; }');
+  assert.equal(probes[2].textContains, 'window.appReady = true;');
+});
+
 test('release gate runtime probe planner covers common Worker API state and error routes', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-probes-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
