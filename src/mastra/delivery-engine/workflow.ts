@@ -750,7 +750,9 @@ function profileContractProducerTask(taskPlan: TaskPlan) {
 }
 
 function profileContractConsumerTasks(taskPlan: TaskPlan) {
-  return taskPlan.tasks.filter((task) => taskOwnsAnyExactSurface(task, profileContractConsumerSurfaces));
+  return taskPlan.tasks.filter(
+    (task) => taskOwnsAnyExactSurface(task, profileContractConsumerSurfaces) || taskOwnsD1MigrationFile(task),
+  );
 }
 
 export function normalizeTaskPlanProfileContractDependencies(taskPlan: TaskPlan): TaskPlan {
@@ -1677,7 +1679,15 @@ function storageProfileKinds(repoPath: string) {
 }
 
 function migrationProfileKinds(repoPath: string) {
-  const source = repoTextIfExists(repoPath, 'migrations/0001_schema.sql');
+  const migrationsDir = join(resolve(repoPath), 'migrations');
+  if (!existsSync(migrationsDir)) return [];
+
+  const sources = readdirSync(migrationsDir)
+    .filter((file) => file.endsWith('.sql'))
+    .sort()
+    .map((file) => readFileSync(join(migrationsDir, file), 'utf8'));
+
+  const source = sources.join('\n');
   if (!source) return [];
   const table = source.match(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+profile_artifacts\s*\([\s\S]*?\n\);/i)?.[0] ?? source;
   const match = table.match(/CHECK\s*\(\s*kind\s+IN\s*\(([^)]*)\)\s*\)/i);
@@ -1697,7 +1707,7 @@ function taskOwnsProfileContractProducer(task: Task) {
 }
 
 function taskOwnsProfileMigration(task: Task) {
-  return effectiveOwnedSurfaces(task).some((surface) => concreteOwnedSurfacePath(surface) === 'migrations/0001_schema.sql');
+  return taskOwnsD1MigrationFile(task);
 }
 
 function taskOwnsProfileStorage(task: Task) {
@@ -1729,7 +1739,7 @@ export function profileKindContractGaps(repoPath: string, task: Task) {
     const missing = missingProfileKinds(expected, migrationProfileKinds(repoPath));
     if (missing.length) {
       gaps.push(
-        `migrations/0001_schema.sql profile_artifacts.kind omits profile contract kind(s): ${missing.join(', ')}. Keep schema kind values aligned with PROFILE_KINDS or ProfileKind from the validation/domain profile contract.`,
+        `migrations/*.sql profile_artifacts.kind omits profile contract kind(s): ${missing.join(', ')}. Keep schema kind values aligned with PROFILE_KINDS or ProfileKind from the validation/domain profile contract.`,
       );
     }
   }
@@ -2012,6 +2022,180 @@ function relativeWorkerConfigPath(repoPath: string, configPath: string) {
   return configPath.startsWith(`${root}/`) ? configPath.slice(root.length + 1) : configPath;
 }
 
+type WorkerBindingKind = 'ai' | 'd1' | 'durable_object' | 'hyperdrive' | 'kv' | 'queue' | 'r2' | 'service' | 'vectorize' | 'workflow';
+
+interface WorkerBindingDeclaration {
+  name: string;
+  kind: WorkerBindingKind;
+  source: string;
+}
+
+function workerEnvBindingKind(typeText: string): WorkerBindingKind | undefined {
+  if (/\bAi\b/.test(typeText)) return 'ai';
+  if (/\bD1Database\b/.test(typeText)) return 'd1';
+  if (/\bDurableObjectNamespace\b/.test(typeText)) return 'durable_object';
+  if (/\bFetcher\b|\bService\b/.test(typeText)) return 'service';
+  if (/\bHyperdrive\b/.test(typeText)) return 'hyperdrive';
+  if (/\bKVNamespace\b/.test(typeText)) return 'kv';
+  if (/\bQueue\b/.test(typeText)) return 'queue';
+  if (/\bR2Bucket\b/.test(typeText)) return 'r2';
+  if (/\bVectorizeIndex\b/.test(typeText)) return 'vectorize';
+  if (/\bWorkflow\b/.test(typeText)) return 'workflow';
+  return undefined;
+}
+
+function workerEnvSourcePath(repoPath: string) {
+  return ['src/env.ts', 'src/index.ts'].map((path) => join(resolve(repoPath), path)).find((path) => existsSync(path));
+}
+
+function workerEnvBindingDeclarations(repoPath: string): WorkerBindingDeclaration[] {
+  const envPath = workerEnvSourcePath(repoPath);
+  if (!envPath) return [];
+
+  const source = readFileSync(envPath, 'utf8');
+  const body = source.match(/\bexport\s+interface\s+Env\s*\{([\s\S]*?)\n\}/)?.[1];
+  if (!body) return [];
+
+  return Array.from(body.matchAll(/^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)\??\s*:\s*([^;]+);/gm)).flatMap(
+    (match) => {
+      const name = match[1];
+      const kind = workerEnvBindingKind(match[2]);
+      return kind ? [{ name, kind, source: relativeWorkerConfigPath(repoPath, envPath) }] : [];
+    },
+  );
+}
+
+function pushJsonBinding(
+  declarations: WorkerBindingDeclaration[],
+  value: unknown,
+  kind: WorkerBindingKind,
+  key: 'binding' | 'name' = 'binding',
+) {
+  if (!Array.isArray(value)) return;
+  for (const item of value) {
+    const record = recordValue(item);
+    const name = record?.[key];
+    if (typeof name === 'string' && name.trim()) {
+      declarations.push({ name, kind, source: 'wrangler config' });
+    }
+  }
+}
+
+function workerJsonConfigBindingDeclarations(config: Record<string, unknown>): WorkerBindingDeclaration[] {
+  const declarations: WorkerBindingDeclaration[] = [];
+
+  const ai = recordValue(config.ai);
+  if (typeof ai?.binding === 'string' && ai.binding.trim()) {
+    declarations.push({ name: ai.binding, kind: 'ai', source: 'wrangler config' });
+  }
+
+  pushJsonBinding(declarations, config.d1_databases, 'd1');
+  pushJsonBinding(declarations, config.durable_objects && recordValue(config.durable_objects)?.bindings, 'durable_object', 'name');
+  pushJsonBinding(declarations, config.hyperdrive, 'hyperdrive');
+  pushJsonBinding(declarations, config.kv_namespaces, 'kv');
+  pushJsonBinding(declarations, config.r2_buckets, 'r2');
+  pushJsonBinding(declarations, config.services, 'service');
+  pushJsonBinding(declarations, config.vectorize, 'vectorize');
+  pushJsonBinding(declarations, config.workflows, 'workflow');
+
+  const queues = recordValue(config.queues);
+  pushJsonBinding(declarations, queues?.producers, 'queue');
+
+  return declarations;
+}
+
+function tomlArrayTableBodies(text: string, tableName: string) {
+  const bodies: string[] = [];
+  const lines = text.split(/\r?\n/);
+  let current: string[] | undefined;
+
+  for (const line of lines) {
+    const arrayTable = line.match(/^\s*\[\[([^\]]+)\]\]\s*$/);
+    const table = line.match(/^\s*\[([^\]]+)\]\s*$/);
+
+    if (arrayTable || table) {
+      if (current) bodies.push(current.join('\n'));
+      current = arrayTable?.[1] === tableName ? [] : undefined;
+      continue;
+    }
+
+    if (current) current.push(line);
+  }
+
+  if (current) bodies.push(current.join('\n'));
+  return bodies;
+}
+
+function pushTomlBindings(
+  declarations: WorkerBindingDeclaration[],
+  text: string,
+  tableName: string,
+  kind: WorkerBindingKind,
+  key = 'binding',
+) {
+  for (const body of tomlArrayTableBodies(text, tableName)) {
+    const name = firstTomlStringValue(body, key);
+    if (name) declarations.push({ name, kind, source: 'wrangler config' });
+  }
+}
+
+function workerTomlConfigBindingDeclarations(text: string): WorkerBindingDeclaration[] {
+  const declarations: WorkerBindingDeclaration[] = [];
+
+  const aiBody = tomlSectionBody(text, 'ai');
+  const aiBinding = aiBody ? firstTomlStringValue(aiBody, 'binding') : undefined;
+  if (aiBinding) declarations.push({ name: aiBinding, kind: 'ai', source: 'wrangler config' });
+
+  pushTomlBindings(declarations, text, 'd1_databases', 'd1');
+  pushTomlBindings(declarations, text, 'durable_objects.bindings', 'durable_object', 'name');
+  pushTomlBindings(declarations, text, 'hyperdrive', 'hyperdrive');
+  pushTomlBindings(declarations, text, 'kv_namespaces', 'kv');
+  pushTomlBindings(declarations, text, 'queues.producers', 'queue');
+  pushTomlBindings(declarations, text, 'r2_buckets', 'r2');
+  pushTomlBindings(declarations, text, 'services', 'service');
+  pushTomlBindings(declarations, text, 'vectorize', 'vectorize');
+  pushTomlBindings(declarations, text, 'workflows', 'workflow');
+
+  return declarations;
+}
+
+function workerConfigBindingDeclarations(repoPath: string): WorkerBindingDeclaration[] {
+  const configPath = releaseGateWorkerConfigPath(repoPath);
+  if (!configPath) return [];
+
+  const text = readFileSync(configPath, 'utf8');
+  if (configPath.endsWith('.toml')) return workerTomlConfigBindingDeclarations(text);
+
+  const config = parseWranglerJsonConfig(text);
+  return config ? workerJsonConfigBindingDeclarations(config) : [];
+}
+
+export function workerEnvBindingAlignmentGaps(repoPath: string) {
+  const envBindings = workerEnvBindingDeclarations(repoPath);
+  if (!envBindings.length || !releaseGateWorkerConfigPath(repoPath)) return [];
+
+  const configBindings = workerConfigBindingDeclarations(repoPath);
+  const configKeySet = new Set(configBindings.map((binding) => `${binding.kind}:${binding.name}`));
+  const envKeySet = new Set(envBindings.map((binding) => `${binding.kind}:${binding.name}`));
+  const gaps: string[] = [];
+
+  for (const binding of envBindings) {
+    if (configKeySet.has(`${binding.kind}:${binding.name}`)) continue;
+    gaps.push(
+      `${binding.source} declares ${binding.name} as a ${binding.kind} binding, but Wrangler config has no matching ${binding.kind} binding named "${binding.name}". Use identical binding names across Env and Wrangler config.`,
+    );
+  }
+
+  for (const binding of configBindings) {
+    if (envKeySet.has(`${binding.kind}:${binding.name}`)) continue;
+    gaps.push(
+      `Wrangler config declares ${binding.name} as a ${binding.kind} binding, but src/env.ts has no matching ${binding.kind} Env property named "${binding.name}". Use identical binding names across Env and Wrangler config.`,
+    );
+  }
+
+  return gaps;
+}
+
 export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
   if (task && !taskBoundaryCanConfigureWorkerConfig(repoPath, task)) return [];
 
@@ -2040,6 +2224,8 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
       );
     }
 
+    gaps.push(...workerEnvBindingAlignmentGaps(repoPath));
+
     return gaps.map((gap) => `${configName}: ${gap}`);
   }
 
@@ -2057,6 +2243,7 @@ export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
   }
 
   gaps.push(...observabilityConfigGaps(recordValue(config.observability)));
+  gaps.push(...workerEnvBindingAlignmentGaps(repoPath));
 
   return gaps.map((gap) => `${configName}: ${gap}`);
 }
@@ -6476,7 +6663,7 @@ Execution rules:
 - If verification says a module cannot be found, prefer the existing Worker/router pattern or native Web/Cloudflare APIs over adding a new dependency.
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
-- When worker_config_policy is not null, use it exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", and explicit observability enabled with head_sampling_rate.
+- When worker_config_policy is not null, read src/env.ts if it exists and use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, and Wrangler binding names that exactly match Env binding property names.
 - For Worker scaffold package.json, use current Cloudflare tooling: Wrangler "latest" or v4+, @cloudflare/workers-types "latest" or a recent dated v4 release, scripts.dev as "wrangler dev", scripts.deploy as "wrangler deploy", and scripts.typecheck as "tsc --noEmit".
 - For placeholder Worker route/error responses, include actionable next steps such as available route expectations, pending setup, or the next implementation surface instead of only returning "not found".
 - When profile_kind_policy is not null, use it exactly: PROFILE_KINDS must include audience_segments and voice_profile as the persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.

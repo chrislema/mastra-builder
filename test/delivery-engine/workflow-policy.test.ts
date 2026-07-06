@@ -66,6 +66,7 @@ import {
   workflowStepIntegrationGaps,
   workersAiBindingGaps,
   workerConfigHygieneGaps,
+  workerEnvBindingAlignmentGaps,
   workerConfigTaskPacketPolicy,
   workerConfigTaskPacketPolicyForTask,
   workerPackageScaffoldGaps,
@@ -397,7 +398,7 @@ test('profile kind contract drift is caught for schema and storage tasks', () =>
     },
   ]);
 
-  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /migrations\/0001_schema\.sql.*speaker/);
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /migrations\/\*\.sql.*speaker/);
   assert.match(profileKindContractGaps(repoPath, plan.tasks[1]).join('\n'), /src\/storage\/profiles\.ts.*speaker/);
 
   writeFileSync(
@@ -411,6 +412,54 @@ test('profile kind contract drift is caught for schema and storage tasks', () =>
 
   assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
   assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[1]), []);
+});
+
+test('profile kind contract drift is caught for arbitrary migration filenames', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-profile-migration-contract-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, 'migrations'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src', 'domain.ts'),
+    'export const PROFILE_KINDS = ["audience_segments", "voice_profile"] as const;\n',
+  );
+  writeFileSync(
+    join(repoPath, 'migrations', '0001_initial_schema.sql'),
+    "CREATE TABLE IF NOT EXISTS profile_artifacts (\n  kind TEXT NOT NULL CHECK (kind IN ('profile_markdown', 'profile_snapshot'))\n);\n",
+  );
+
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_initial_schema.sql'],
+    },
+  ]);
+
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /migrations\/\*\.sql.*audience_segments/);
+
+  writeFileSync(
+    join(repoPath, 'migrations', '0001_initial_schema.sql'),
+    "CREATE TABLE IF NOT EXISTS profile_artifacts (\n  kind TEXT NOT NULL CHECK (kind IN ('audience_segments', 'voice_profile'))\n);\n",
+  );
+
+  assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
+});
+
+test('profile contract consumers normalize behind arbitrary migration tasks', () => {
+  const plan = taskPlan([
+    {
+      id: 'T-domain',
+      depends_on: [],
+      owned_surfaces: ['src/domain.ts', 'src/validation.ts'],
+    },
+    {
+      id: 'T-migration',
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_initial_schema.sql'],
+    },
+  ]);
+
+  assert.equal(profileContractDependencyHygiene(plan).passed, false);
+  assert.deepEqual(normalizeTaskPlanProfileContractDependencies(plan).tasks[1].depends_on, ['T-domain']);
 });
 
 test('profile kind producer contract requires audience and voice profile kinds', () => {
@@ -1442,6 +1491,82 @@ test('Worker config hygiene requires current JSONC schema date flags and observa
       ?.ok,
     true,
   );
+});
+
+test('Worker config hygiene aligns Cloudflare binding names with Env declarations', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-env-align-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc'] }]).tasks;
+
+  writeFileSync(
+    join(repoPath, 'src', 'env.ts'),
+    [
+      'export interface Env {',
+      '  DB: D1Database;',
+      '  PROFILE_BUCKET: R2Bucket;',
+      '  ARTIFACT_BUCKET: R2Bucket;',
+      '  AI: Ai;',
+      '  PROCESSING_WORKFLOW: Workflow;',
+      '  BOOKMARKS: Fetcher;',
+      '  ADMIN_TOKEN: string;',
+      '}',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        services: [{ binding: 'BOOKMARKS', service: 'bookmarks' }],
+        d1_databases: [{ binding: 'DB', database_name: 'demo-db', database_id: 'demo-db' }],
+        r2_buckets: [{ binding: 'ARTIFACTS', bucket_name: 'artifacts' }],
+        workflows: [{ binding: 'WEEKLY_WORKFLOW', name: 'weekly', class_name: 'WeeklyWorkflow' }],
+        ai: { binding: 'AI' },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const gaps = workerEnvBindingAlignmentGaps(repoPath);
+  assert.match(gaps.join('\n'), /PROFILE_BUCKET.*r2 binding/);
+  assert.match(gaps.join('\n'), /ARTIFACT_BUCKET.*r2 binding/);
+  assert.match(gaps.join('\n'), /PROCESSING_WORKFLOW.*workflow binding/);
+  assert.match(gaps.join('\n'), /ARTIFACTS.*no matching r2 Env property/);
+  assert.match(gaps.join('\n'), /WEEKLY_WORKFLOW.*no matching workflow Env property/);
+  assert.match(workerConfigHygieneGaps(repoPath, task).join('\n'), /PROFILE_BUCKET/);
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        services: [{ binding: 'BOOKMARKS', service: 'bookmarks' }],
+        d1_databases: [{ binding: 'DB', database_name: 'demo-db', database_id: 'demo-db' }],
+        r2_buckets: [
+          { binding: 'PROFILE_BUCKET', bucket_name: 'profiles' },
+          { binding: 'ARTIFACT_BUCKET', bucket_name: 'artifacts' },
+        ],
+        workflows: [{ binding: 'PROCESSING_WORKFLOW', name: 'weekly', class_name: 'WeeklyWorkflow' }],
+        ai: { binding: 'AI' },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(workerEnvBindingAlignmentGaps(repoPath), []);
+  assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
 });
 
 test('Worker config task packet policy carries the exact current compatibility date', () => {
