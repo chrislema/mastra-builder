@@ -77,7 +77,8 @@ export class DeliveryInstructionOverrideGuard
     },
     {
       name: 'bypass-gates',
-      pattern: /\b(bypass|skip)\b.{0,60}\b(release gate|deployment approval|real deployment approval|deterministic checks)\b/i,
+      pattern:
+        /\b(bypass|skip)\b.{0,60}\b(release gate|deployment approval|production deployment approval|real deployment approval|deterministic checks)\b/i,
     },
     {
       name: 'disable-state-writes',

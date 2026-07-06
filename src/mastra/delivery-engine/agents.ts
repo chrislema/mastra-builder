@@ -370,7 +370,7 @@ Must not:
 Deployment policy:
 - Use local git plus the gh CLI for repository operations such as commits, pushes, and pull requests.
 - Do not create, trigger, or rely on GitHub Actions for deployment.
-- In real deploy mode, deploy with Wrangler CLI or an existing project script that directly wraps Wrangler.
+- In production deploy mode, deploy with Wrangler CLI or an existing project script that directly wraps Wrangler.
 - Record the exact Wrangler command or script, deployed revision, target, and live verification results.
 
 Always read and record the release gate before deployment. Always produce direct live verification evidence.
@@ -442,7 +442,7 @@ Delegation guidance:
 Workflow guidance:
 - Use delivery-workflow for full runs instead of manually recreating plan/review/build/test/deploy.
 - Require repoPath, visionPath, and specPath before starting delivery-workflow.
-- Surface suspend/resume needs plainly when planner questions or real deployment approvals occur.
+- Surface suspend/resume needs plainly when planner questions or production deployment approvals occur.
 - For status, use the native delivery tools; they read Mastra storage first and fall back to .delivery.
 
 Do not use deprecated agent network behavior. Coordinate through supervisor delegation,

@@ -71,7 +71,7 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
     visionPath: 'docs/vision.md',
     specPath: 'docs/spec.md',
     maxRetries: 1,
-    deployMode: 'mock',
+    deployMode: 'local',
     reviewMode: 'fast',
   });
 
@@ -86,7 +86,7 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
     visionPath: 'docs/vision.md',
     specPath: 'docs/spec.md',
     maxRetries: 1,
-    deployMode: 'mock',
+    deployMode: 'local',
     reviewMode: 'fast',
   });
   assert.equal(captured.startOptions?.requestContext.get('repoPath'), repoPath);
@@ -146,15 +146,15 @@ test('delivery workflow runner accepts local and production deploy aliases', asy
 
   await startDeliveryWorkflowRunWithKey(host, {
     repoPath: '/tmp/delivery-target',
-    deployMode: 'local',
+    deployMode: 'mock',
   });
   await startDeliveryWorkflowRunWithKey(host, {
     repoPath: '/tmp/delivery-target',
-    deployMode: 'production',
+    deployMode: 'real',
   });
 
-  assert.equal(starts[0].deployMode, 'mock');
-  assert.equal(starts[1].deployMode, 'real');
+  assert.equal(starts[0].deployMode, 'local');
+  assert.equal(starts[1].deployMode, 'production');
 });
 
 test('delivery workflow runner closes initialized delivery state after a failed workflow result', async () => {
@@ -267,7 +267,7 @@ test('delivery workflow async runner starts without waiting for completion', asy
 
   const response = await startDeliveryWorkflowRunAsyncWithKey(host, {
     repoPath: '/tmp/delivery-target',
-    deployMode: 'mock',
+    deployMode: 'local',
   });
 
   assert.equal(startCalled, false);

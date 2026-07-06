@@ -13,10 +13,10 @@ export { createDeliveryRequestContext as createDeliveryWorkflowRequestContext } 
 const deliveryDeployModeSchema = z.preprocess((value) => {
   if (typeof value !== 'string') return value;
   const normalized = value.trim().toLowerCase();
-  if (['local', 'mock', 'preview'].includes(normalized)) return 'mock';
-  if (['production', 'prod', 'real'].includes(normalized)) return 'real';
+  if (['local', 'mock', 'preview'].includes(normalized)) return 'local';
+  if (['production', 'prod', 'real'].includes(normalized)) return 'production';
   return value;
-}, z.enum(['mock', 'real']).default('mock'));
+}, z.enum(['local', 'production']).default('local'));
 
 export const deliveryWorkflowRunInputSchema = z.object({
   repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),

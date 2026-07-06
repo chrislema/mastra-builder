@@ -59,10 +59,10 @@ const execFileAsync = promisify(execFile);
 const deliveryDeployModeSchema = z.preprocess((value) => {
   if (typeof value !== 'string') return value;
   const normalized = value.trim().toLowerCase();
-  if (['local', 'mock', 'preview'].includes(normalized)) return 'mock';
-  if (['production', 'prod', 'real'].includes(normalized)) return 'real';
+  if (['local', 'mock', 'preview'].includes(normalized)) return 'local';
+  if (['production', 'prod', 'real'].includes(normalized)) return 'production';
   return value;
-}, z.enum(['mock', 'real']).default('mock'));
+}, z.enum(['local', 'production']).default('local'));
 
 const workflowInputSchema = z.object({
   repoPath: z.string().describe('Absolute path to the target repo.'),
@@ -347,7 +347,7 @@ const checkSummarySchema = z.object({ check: z.string(), passed: z.boolean(), re
 const workflowOutputSchema = z.object({
   repoPath: z.string().optional(),
   maxRetries: z.number().int().min(0).optional(),
-  deployMode: z.enum(['mock', 'real']).optional(),
+  deployMode: z.enum(['local', 'production']).optional(),
   reviewMode: z.enum(['fast', 'thorough']).optional(),
   status: workflowStatusSchema,
   runId: z.string(),
@@ -365,7 +365,7 @@ const deliveryWorkflowStateSchema = z.object({
   status: workflowStatusSchema.optional(),
   summary: z.string().optional(),
   maxRetries: z.number().int().min(0).optional(),
-  deployMode: z.enum(['mock', 'real']).optional(),
+  deployMode: z.enum(['local', 'production']).optional(),
   reviewMode: z.enum(['fast', 'thorough']).optional(),
   artifacts: z.array(z.string()).default([]),
   checks: z.array(checkSummarySchema).default([]),
@@ -381,7 +381,7 @@ const deliveryWorkflowStateSchema = z.object({
 const deliveryStageOutputSchema = workflowOutputSchema.extend({
   repoPath: z.string(),
   maxRetries: z.number().int().min(0),
-  deployMode: z.enum(['mock', 'real']),
+  deployMode: z.enum(['local', 'production']),
   reviewMode: z.enum(['fast', 'thorough']).default('fast'),
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
@@ -424,7 +424,7 @@ const deploymentApprovalResumeSchema = z.object({
 });
 const deploymentApprovalSuspendSchema = z.object({
   reason: z.string(),
-  deployMode: z.literal('real'),
+  deployMode: z.literal('production'),
   releaseGatePath: z.string(),
   releaseGateSummary: z.string(),
   blockers: z.array(z.string()),
@@ -8241,7 +8241,7 @@ const createDeploymentReportStep = createStep({
     const releaseGatePath = latestArtifactPath(artifacts, 'release-gate', '.delivery/artifacts/release-gate.json');
     const evidencePath = latestReleaseGateEvidencePath(artifacts);
 
-    if (inputData.deployMode === 'real' && !resumeData) {
+    if (inputData.deployMode === 'production' && !resumeData) {
       await appendDeliveryEventState({
         repoPath: inputData.repoPath,
         mastra,
@@ -8255,8 +8255,8 @@ const createDeploymentReportStep = createStep({
 
       return await suspend(
         {
-          reason: 'Real deployment requires human approval before the deployer runs.',
-          deployMode: 'real' as const,
+          reason: 'Production deployment requires human approval before the deployer runs.',
+          deployMode: 'production' as const,
           releaseGatePath,
           releaseGateSummary: inputData.releaseGate.summary,
           blockers: inputData.releaseGate.blockers,
@@ -8266,7 +8266,7 @@ const createDeploymentReportStep = createStep({
       );
     }
 
-    if (inputData.deployMode === 'real' && resumeData?.approved === false) {
+    if (inputData.deployMode === 'production' && resumeData?.approved === false) {
       await appendDeliveryEventState({
         repoPath: inputData.repoPath,
         mastra,
@@ -8282,12 +8282,12 @@ const createDeploymentReportStep = createStep({
       return {
         ...inputData,
         status: 'failed' as const,
-        summary: 'Real deployment was rejected by human approval.',
-        nextSteps: resumeData.notes ? [resumeData.notes] : ['Deployment rejected before any real deploy command ran.'],
+        summary: 'Production deployment was rejected by human approval.',
+        nextSteps: resumeData.notes ? [resumeData.notes] : ['Deployment rejected before any production deploy command ran.'],
       };
     }
 
-    if (inputData.deployMode === 'real' && resumeData?.approved) {
+    if (inputData.deployMode === 'production' && resumeData?.approved) {
       await appendDeliveryEventState({
         repoPath: inputData.repoPath,
         mastra,
@@ -8318,7 +8318,7 @@ const createDeploymentReportStep = createStep({
       },
     });
 
-    if (inputData.deployMode === 'mock') {
+    if (inputData.deployMode === 'local') {
       const evidence = readReleaseGateEvidenceArtifact(inputData.repoPath, artifacts);
       await appendDeliveryEventState({
         repoPath: inputData.repoPath,
@@ -8400,8 +8400,8 @@ Deploy mode: ${inputData.deployMode}
 
 Rules:
 - Do not deploy unless the release gate is PASS with zero blockers.
-- In mock mode, start the application locally or its closest runnable form, record a deploy event, run direct probes, and record live_verify events.
-- In real mode, use Wrangler CLI or an existing project script that directly wraps Wrangler. Do not use GitHub Actions as the deployment path.
+- In local mode, start the application locally or its closest runnable form, record a deploy event, run direct probes, and record live_verify events.
+- In production mode, use Wrangler CLI or an existing project script that directly wraps Wrangler. Do not use GitHub Actions as the deployment path.
 - Local git and gh CLI may be used for source-control operations such as commit, push, or PR metadata, but deployment evidence must come from Wrangler and live probes.
 - Verification must include at least one happy path and one error path when the app shape allows it.
 - Return a deployment report with exact revision, verification results, issues, next action, and rollback steps.
