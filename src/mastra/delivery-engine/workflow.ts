@@ -4571,14 +4571,49 @@ export function implementationDeterministicRemediation(results: DeterministicGat
     });
 }
 
+export function releaseGateRequiredEvidencePassed(evidence?: ReleaseGateEvidence): DeterministicGateResult {
+  if (!evidence) {
+    return {
+      id: 'required_evidence_passed',
+      check: 'required_evidence_passed',
+      passed: false,
+      reason: 'release gate evidence artifact was not available',
+    };
+  }
+
+  const required = evidence.commands.filter((command) => command.required);
+  const failed = required.filter((command) => !command.ok);
+  if (failed.length) {
+    return {
+      id: 'required_evidence_passed',
+      check: 'required_evidence_passed',
+      passed: false,
+      reason: `required release-gate evidence failed: ${failed
+        .map((command) => `${command.command}: ${command.error ?? 'failed'}`)
+        .join('; ')}`,
+    };
+  }
+
+  return {
+    id: 'required_evidence_passed',
+    check: 'required_evidence_passed',
+    passed: true,
+    reason: required.length
+      ? `all required release-gate evidence passed: ${required.map((command) => command.command).join(', ')}`
+      : 'no required release-gate evidence commands were planned',
+  };
+}
+
 function releaseGateDeterministicResults({
   stage,
   gate,
   events,
+  evidence,
 }: {
   stage: string;
   gate: ReleaseGate;
   events: DeliveryEvent[];
+  evidence?: ReleaseGateEvidence;
 }): DeterministicGateResult[] {
   return [
     { id: 'decision_explicit', check: 'plan_schema_complete', ...planSchemaComplete(gate) },
@@ -4593,6 +4628,7 @@ function releaseGateDeterministicResults({
       check: 'harness_run_before_findings',
       ...runDeterministicCheck({ name: 'harness_run_before_findings', events, stage }),
     },
+    releaseGateRequiredEvidencePassed(evidence),
   ];
 }
 
@@ -7802,6 +7838,7 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
       stage,
       gate,
       events: deliveryEvents,
+      evidence,
     });
     checks.push(...checkSummaries(deterministicResults, `release-gate.a${attemptNumber}`));
 

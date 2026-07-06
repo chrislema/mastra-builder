@@ -53,6 +53,7 @@ import {
   releaseGateEvidenceCommandPlan,
   releaseGateLocalD1DatabaseName,
   releaseGateRuntimeProbePlan,
+  releaseGateRequiredEvidencePassed,
   releaseGateStaticEvidenceResults,
   releaseGateWorkerDevCommand,
   routeMiddlewareBypassGaps,
@@ -1279,6 +1280,65 @@ test('release gate evidence planner uses wrangler.jsonc D1 config for required l
         required: true,
       },
     ],
+  );
+});
+
+test('release gate deterministic checks fail closed on failed required local evidence', () => {
+  assert.deepEqual(
+    releaseGateRequiredEvidencePassed({
+      artifact_type: 'test-evidence',
+      stage: 'test:a1',
+      notes: [],
+      commands: [
+        {
+          tier: 'smoke',
+          command: 'npm run typecheck',
+          ok: true,
+          required: true,
+          reason: 'Project typecheck is required.',
+        },
+        {
+          tier: 'api',
+          command: 'npx wrangler d1 migrations apply demo-db --local',
+          ok: false,
+          required: true,
+          reason: 'Local D1 migration validation is required.',
+          error: 'migration failed',
+        },
+        {
+          tier: 'api',
+          command: 'optional diagnostic',
+          ok: false,
+          required: false,
+          reason: 'Optional diagnostic.',
+          error: 'optional failure',
+        },
+      ],
+    }),
+    {
+      id: 'required_evidence_passed',
+      check: 'required_evidence_passed',
+      passed: false,
+      reason: 'required release-gate evidence failed: npx wrangler d1 migrations apply demo-db --local: migration failed',
+    },
+  );
+
+  assert.equal(
+    releaseGateRequiredEvidencePassed({
+      artifact_type: 'test-evidence',
+      stage: 'test:a1',
+      notes: [],
+      commands: [
+        {
+          tier: 'api',
+          command: 'npx wrangler dev --ip 127.0.0.1 --port 8787',
+          ok: true,
+          required: true,
+          reason: 'Local runtime probes are required.',
+        },
+      ],
+    }).passed,
+    true,
   );
 });
 

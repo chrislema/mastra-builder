@@ -31,6 +31,14 @@
       "check": "llm"
     },
     {
+      "id": "required_evidence_passed",
+      "description": "Every required local evidence command passed, including typecheck, required Wrangler D1 migration validation, static Worker config checks, and local Wrangler runtime probes. A PASS decision cannot override failed required evidence.",
+      "severity": "critical",
+      "on_fail": "cap",
+      "cap_value": 0.0,
+      "check": { "deterministic": "required_evidence_passed" }
+    },
+    {
       "id": "decision_explicit",
       "description": "Exactly one decision, PASS or FAIL, stated.",
       "severity": "minor",
