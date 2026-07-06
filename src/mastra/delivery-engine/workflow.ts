@@ -1679,10 +1679,17 @@ export function routeMiddlewareBypassGaps(repoPath: string, task: Task) {
   const routeSurfaces = routeOwnedSurfaces(task);
   if (!routeSurfaces.length) return [];
 
-  const indexPath = join(resolve(repoPath), 'src/index.ts');
-  const routerPath = join(resolve(repoPath), 'src/http/router.ts');
-  if (!existsSync(indexPath) || !existsSync(routerPath)) return [];
+  const indexSurface = firstExistingRepoPath(
+    repoPath,
+    moduleSourceExtensions.map((extension) => `src/index.${extension}`),
+  );
+  const routerSurface = firstExistingRepoPath(
+    repoPath,
+    moduleSourceExtensions.map((extension) => `src/http/router.${extension}`),
+  );
+  if (!indexSurface || !routerSurface) return [];
 
+  const indexPath = join(resolve(repoPath), indexSurface);
   const indexSource = readFileSync(indexPath, 'utf8');
   if (!/\brouteRequest\s*\(/.test(indexSource)) return [];
 
@@ -1691,12 +1698,12 @@ export function routeMiddlewareBypassGaps(repoPath: string, task: Task) {
     if (!slug) return [];
 
     const routeImportPattern = new RegExp(
-      `\\bfrom\\s+['"]\\.\\/routes\\/${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`,
+      `\\bfrom\\s+['"]\\.\\/routes\\/${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\.(?:js|mjs|cjs|ts|mts|cts))?['"]`,
     );
     if (!routeImportPattern.test(indexSource)) return [];
 
     return [
-      `Route surface ${surface} is imported directly from src/index.ts while the existing routeRequest router is present; register it through the router/barrel/middleware path instead of dispatching before routeRequest.`,
+      `Route surface ${surface} is imported directly from ${indexSurface} while the existing routeRequest router is present; register it through the router/barrel/middleware path instead of dispatching before routeRequest.`,
     ];
   });
 }
