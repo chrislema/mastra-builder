@@ -32,6 +32,7 @@ judge models are `openai/gpt-5.5`; Z.ai / GLM can still be selected per slot wit
 
 ```shell
 npm install
+npm run typecheck
 npm test
 npm run ci:delivery
 npm run build
@@ -224,6 +225,7 @@ they are inspectable as native Mastra resources.
 Use:
 
 ```shell
+npm run typecheck
 npm test
 npm run eval:delivery:gate
 npm run ci:delivery

@@ -1,6 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { deliveryRoles } from './boundaries';
+import { deliveryRoles, type DeliveryRole } from './boundaries';
 import { deliveryRepoPathFromRequestContext, deliveryRequestContextSchema } from './context';
 import { runDeterministicCheck } from './checks';
 import { aggregateJudgment } from './judgment';
@@ -24,7 +24,7 @@ import {
 } from './state-service';
 import { writeDeliveryArtifact } from './state';
 
-const roleSchema = z.enum(deliveryRoles as [string, ...string[]]);
+const roleSchema = z.enum(deliveryRoles as [DeliveryRole, ...DeliveryRole[]]);
 const deliveryToolRequestContextConfig = {
   requestContextSchema: deliveryRequestContextSchema.partial(),
 };
@@ -90,7 +90,7 @@ export const endDeliveryStageTool = createTool({
   inputSchema: z.object({
     repoPath: repoPathField,
     stage: z.string(),
-    reason: z.enum(['complete_stage', 'escalation', 'max_turns']),
+    reason: z.enum(['complete_stage', 'escalation', 'max_turns', 'failed']),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input, context) =>

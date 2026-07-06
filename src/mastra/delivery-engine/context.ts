@@ -6,7 +6,9 @@ export const deliveryRequestContextSchema = z.object({
   repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
 });
 
-export type DeliveryRequestContext = z.infer<typeof deliveryRequestContextSchema>;
+export type DeliveryRequestContext = {
+  repoPath: string;
+};
 
 function contextValue(requestContext: unknown, key: string) {
   const ctx = requestContext as { get?: (name: string) => unknown; [name: string]: unknown } | undefined;
@@ -22,5 +24,5 @@ export function deliveryRepoPathFromRequestContext(requestContext: unknown) {
 }
 
 export function createDeliveryRequestContext(repoPath: string) {
-  return new RequestContext([['repoPath', resolve(repoPath)]]);
+  return new RequestContext<unknown>([['repoPath', resolve(repoPath)]]);
 }

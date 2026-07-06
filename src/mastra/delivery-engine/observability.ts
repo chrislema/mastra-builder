@@ -550,7 +550,7 @@ export async function readDeliverySnapshotFromMastraStorage({
   const run = data?.run as DeliveryRun | undefined;
   if (!run?.run_id) return undefined;
 
-  const embeddedEvents = data.events as DeliveryEvent[] | undefined;
+  const embeddedEvents = data?.events as DeliveryEvent[] | undefined;
   if (Array.isArray(embeddedEvents)) return { run, events: embeddedEvents };
 
   const events = logs

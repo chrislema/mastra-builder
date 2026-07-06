@@ -23,6 +23,7 @@ import {
   writeDeliveryRunProjection,
   type DeliveryBoundary,
   type DeliveryRun,
+  type DeliveryStageEndReason,
   type DeliveryRunStatus,
   type DeliveryTaskStatus,
 } from './state';
@@ -210,7 +211,7 @@ export async function endDeliveryStageState({
 }: {
   repoPath: string;
   stage: string;
-  reason: 'complete_stage' | 'escalation' | 'max_turns';
+  reason: DeliveryStageEndReason;
   mastra?: MastraLike;
 }) {
   const repo = resolve(repoPath);

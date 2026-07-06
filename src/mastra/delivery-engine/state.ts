@@ -7,6 +7,7 @@ import { repoRelativeExistingFile } from './paths';
 
 export type DeliveryTaskStatus = 'pending' | 'building' | 'judging' | 'complete' | 'stuck' | 'blocked';
 export type DeliveryRunStatus = 'running' | 'complete' | 'failed' | 'stuck';
+export type DeliveryStageEndReason = 'complete_stage' | 'escalation' | 'max_turns' | 'failed';
 
 export type DeliveryRun = {
   run_id: string;
@@ -172,7 +173,7 @@ export function endDeliveryStage({
 }: {
   repoPath: string;
   stage: string;
-  reason: 'complete_stage' | 'escalation' | 'max_turns';
+  reason: DeliveryStageEndReason;
 }) {
   const repo = resolve(repoPath);
   rmSync(boundaryPath(repo), { force: true });
