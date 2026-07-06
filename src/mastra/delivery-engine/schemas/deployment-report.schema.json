@@ -29,7 +29,7 @@
       }
     },
     "issues": {
-      "description": "Every anomaly or uncertainty, each with operational impact and the monitor/rollback/proceed call.",
+      "description": "Every anomaly or uncertainty, each with operational impact and the monitor/rollback/proceed/fix call.",
       "type": "array",
       "items": {
         "type": "object",
@@ -41,7 +41,7 @@
         }
       }
     },
-    "next_action": { "enum": ["monitor", "rollback", "proceed"] },
+    "next_action": { "enum": ["monitor", "rollback", "proceed", "fix"] },
     "rollback": {
       "type": "object",
       "required": ["prior_revision", "steps"],

@@ -67,7 +67,7 @@
       "anchors": {
         "1": "Issues section empty despite anomalies visible in the verification evidence.",
         "3": "Issues listed without operational impact or owner.",
-        "5": "Every anomaly or uncertainty named with impact and the monitor/rollback/proceed call — 'hide operational uncertainty' is the Must Not this grades."
+        "5": "Every anomaly or uncertainty named with impact and the monitor/rollback/proceed/fix call — 'hide operational uncertainty' is the Must Not this grades."
       },
       "model": "default",
       "surface": "artifact"

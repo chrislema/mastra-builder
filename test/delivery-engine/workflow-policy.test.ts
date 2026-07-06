@@ -45,6 +45,8 @@ import {
   profileKindTaskPacketPolicyForTask,
   outOfPlanVerificationFailurePaths,
   priorStoppedBuildTaskIds,
+  productionDeploymentReportFromWranglerResult,
+  productionWranglerDeployCommand,
   projectScaffoldHygiene,
   readBudgetBlockedToolCount,
   repairStaleDownstreamVerificationSurfaces,
@@ -1257,9 +1259,99 @@ test('local deployment report blocks next action when required local evidence fa
   });
 
   assert.equal(report.result, 'failure');
-  assert.match(report.next_action, /fix required local validation failures/);
+  assert.equal(report.next_action, 'fix');
   assert.equal(report.issues.length, 1);
   assert.match(report.issues[0].action, /production approval/);
+});
+
+test('production deploy command uses Wrangler directly without GitHub Actions', () => {
+  const scriptedRepo = mkdtempSync(join(tmpdir(), 'delivery-production-scripted-deploy-'));
+  writeFileSync(
+    join(scriptedRepo, 'package.json'),
+    JSON.stringify({ scripts: { deploy: 'wrangler deploy' } }, null, 2),
+  );
+
+  assert.deepEqual(productionWranglerDeployCommand(scriptedRepo), {
+    command: 'npm run deploy',
+    executable: 'npm',
+    args: ['run', 'deploy'],
+  });
+
+  const directRepo = mkdtempSync(join(tmpdir(), 'delivery-production-direct-deploy-'));
+  mkdirSync(join(directRepo, 'node_modules/.bin'), { recursive: true });
+  writeFileSync(join(directRepo, 'node_modules/.bin/wrangler'), '#!/usr/bin/env node\n');
+
+  const command = productionWranglerDeployCommand(directRepo);
+  assert.equal(command.command, './node_modules/.bin/wrangler deploy');
+  assert.equal(command.args.join(' '), 'deploy');
+});
+
+test('production deployment report records native Wrangler deploy evidence', () => {
+  const releaseGate = {
+    artifact_type: 'release-gate' as const,
+    decision: 'pass' as const,
+    event_type: 'pre_deployment' as const,
+    tiers: [
+      { tier: 'smoke' as const, status: 'passed' as const, run_ref: 'npm run typecheck' },
+      { tier: 'api' as const, status: 'passed' as const, run_ref: 'wrangler dev probes' },
+      { tier: 'e2e' as const, status: 'not_required' as const, reason: 'No browser harness.' },
+      { tier: 'full_matrix' as const, status: 'not_required' as const, reason: 'No production matrix.' },
+    ],
+    critical_areas: [
+      { area: 'auth' as const, status: 'not_applicable' as const, reason: 'No auth surface.' },
+      { area: 'billing' as const, status: 'not_applicable' as const, reason: 'No billing surface.' },
+      { area: 'state_integrity' as const, status: 'verified' as const, evidence: 'Local D1 migration passed.' },
+      { area: 'data_safety' as const, status: 'verified' as const, evidence: 'Local probes passed.' },
+      { area: 'deployment_correctness' as const, status: 'verified' as const, evidence: 'Wrangler local probe passed.' },
+      { area: 'error_responses' as const, status: 'verified' as const, evidence: 'Invalid JSON probe returned 400.' },
+    ],
+    blockers: [],
+    cosmetic_issues: [],
+    summary: 'Ready for production.',
+  };
+
+  const report = productionDeploymentReportFromWranglerResult({
+    runId: 'run-prod-1',
+    releaseGate,
+    releaseGatePath: '.delivery/artifacts/release-gate.json',
+    evidencePath: '.delivery/artifacts/test-evidence.a1.json',
+    deployCommand: 'npm run deploy',
+    deployOk: true,
+    deployOutput: 'Published demo-worker https://demo-worker.example.workers.dev Version ID: abcdefgh',
+    liveVerification: {
+      check: 'GET https://demo-worker.example.workers.dev',
+      expected: 'Production Worker responds with an HTTP status below 500.',
+      actual: 'HTTP 200',
+      passed: true,
+    },
+    revision: 'wrangler:abcdefgh',
+  });
+
+  assert.equal(report.environment, 'production');
+  assert.equal(report.result, 'success');
+  assert.equal(report.next_action, 'monitor');
+  assert.equal(report.revision, 'wrangler:abcdefgh');
+  assert.equal(report.config_changes.some((change) => /GitHub Actions not used/.test(change)), true);
+  assert.equal(report.verification.some((row) => row.check === 'npm run deploy' && row.passed), true);
+
+  const failed = productionDeploymentReportFromWranglerResult({
+    runId: 'run-prod-fail',
+    releaseGate,
+    releaseGatePath: '.delivery/artifacts/release-gate.json',
+    deployCommand: 'npm run deploy',
+    deployOk: false,
+    deployError: 'authentication failed',
+    liveVerification: {
+      check: 'production live verification',
+      expected: 'Production live verification runs after deploy.',
+      actual: 'Skipped because deploy failed.',
+      passed: false,
+    },
+  });
+
+  assert.equal(failed.result, 'failure');
+  assert.equal(failed.next_action, 'fix');
+  assert.match(failed.issues.map((issue) => issue.action).join('\n'), /request production approval again/);
 });
 
 test('release gate evidence planner uses bounded local commands', () => {

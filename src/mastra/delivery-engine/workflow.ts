@@ -51,7 +51,7 @@ import {
   deliveryReviewStepScorers,
 } from './scorers';
 import { safePersistDeliveryStateWithMastra } from './observability';
-import { deliveryStructuredOutputOptions, deliveryToolStructuredOutputOptions } from './models';
+import { deliveryStructuredOutputOptions } from './models';
 import { parseDeliveryStructuredOutput } from './structured-output';
 
 const execFileAsync = promisify(execFile);
@@ -208,7 +208,7 @@ const deploymentReportSchema = z.object({
       action: z.string(),
     }),
   ),
-  next_action: z.enum(['monitor', 'rollback', 'proceed']),
+  next_action: z.enum(['monitor', 'rollback', 'proceed', 'fix']),
   rollback: z.object({
     prior_revision: z.string(),
     steps: z.string(),
@@ -268,10 +268,6 @@ function readCachedPlannerOutput({
 
 const testerOutputSchema = z.object({
   gate: releaseGateSchema,
-});
-
-const deployerOutputSchema = z.object({
-  report: deploymentReportSchema,
 });
 
 const plannerRevisionOutputSchema = z.object({
@@ -5272,16 +5268,268 @@ export function localDeploymentReportFromReleaseGateEvidence({
           },
         ],
     issues,
-    next_action:
-      result === 'success'
-        ? 'proceed'
-        : 'fix required local validation failures and rerun the release gate before production approval',
+    next_action: result === 'success' ? 'proceed' : 'fix',
     rollback: {
       prior_revision: 'none (local validation only)',
       steps: 'No production rollback is required because no Wrangler production deploy command ran.',
       data_caveats: 'Local Wrangler/D1/R2 state is validation-only and may live under .delivery/tmp.',
     },
   };
+}
+
+export function productionWranglerDeployCommand(repoPath: string): ReleaseGateProcessCommand {
+  const deployScript = packageScripts(repoPath).deploy;
+  if (typeof deployScript === 'string' && /\bwrangler\s+deploy\b/.test(deployScript)) {
+    return {
+      command: 'npm run deploy',
+      executable: 'npm',
+      args: ['run', 'deploy'],
+    };
+  }
+
+  return wranglerProcessCommand(repoPath, 'deploy', ['deploy']);
+}
+
+function wranglerDeployUrls(output: string) {
+  return Array.from(new Set(output.match(/https:\/\/[^\s"'<>]+/g) ?? [])).map((url) => url.replace(/[),.;]+$/, ''));
+}
+
+function wranglerDeployRevision(output: string, runId: string) {
+  const version = /\b(?:Version ID|Version|version)\s*[:=]\s*([A-Za-z0-9_-]{8,})\b/.exec(output)?.[1];
+  return version ? `wrangler:${version}` : `production:${runId}`;
+}
+
+async function productionLiveVerification(urls: string[]): Promise<DeploymentReport['verification'][number]> {
+  const url = urls[0];
+  if (!url) {
+    return {
+      check: 'production live URL',
+      expected: 'Wrangler deploy completes and emits a live URL when available.',
+      actual: 'Wrangler deploy completed; no live URL was parsed from output.',
+      passed: true,
+    };
+  }
+
+  try {
+    const response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(10_000) });
+    const body = compactDiagnostic(await response.text(), 300);
+    return {
+      check: `GET ${url}`,
+      expected: 'Production Worker responds with an HTTP status below 500.',
+      actual: `HTTP ${response.status}${body ? `; body ${body}` : ''}`,
+      passed: response.status < 500,
+    };
+  } catch (error) {
+    return {
+      check: `GET ${url}`,
+      expected: 'Production Worker responds with an HTTP status below 500.',
+      actual: compactDiagnostic(error, 500),
+      passed: false,
+    };
+  }
+}
+
+export function productionDeploymentReportFromWranglerResult({
+  runId,
+  releaseGate,
+  evidence,
+  releaseGatePath,
+  evidencePath,
+  deployCommand,
+  deployOk,
+  deployOutput,
+  deployError,
+  liveVerification,
+  revision,
+}: {
+  runId: string;
+  releaseGate: ReleaseGate;
+  evidence?: ReleaseGateEvidence;
+  releaseGatePath: string;
+  evidencePath?: string;
+  deployCommand: string;
+  deployOk: boolean;
+  deployOutput?: string;
+  deployError?: string;
+  liveVerification: DeploymentReport['verification'][number];
+  revision?: string;
+}): DeploymentReport {
+  const evidenceVerification = releaseGateEvidenceVerification(evidence);
+  const issues = releaseGateEvidenceIssues(evidence);
+  const releaseGatePassed = releaseGate.decision === 'pass' && releaseGate.blockers.length === 0;
+  const liveOk = liveVerification.passed !== false;
+
+  if (!deployOk) {
+    issues.push({
+      description: `Wrangler production deploy failed: ${deployCommand}`,
+      impact: 'Production was not updated.',
+      action: 'Fix the deploy failure, rerun local release validation, then request production approval again.',
+    });
+  } else if (!liveOk) {
+    issues.push({
+      description: 'Production live verification failed after Wrangler deploy.',
+      impact: 'The deployed Worker may be serving errors in production.',
+      action: 'Inspect Wrangler deployment logs and rollback if the failure affects users.',
+    });
+  }
+
+  const hasRequiredIssue = issues.some((issue) => /Required/.test(issue.impact));
+  const result = releaseGatePassed && deployOk && liveOk && !hasRequiredIssue ? 'success' : 'failure';
+
+  return {
+    artifact_type: 'deployment-report',
+    environment: 'production',
+    revision: revision ?? wranglerDeployRevision(deployOutput ?? '', runId),
+    migrations_applied: [],
+    config_changes: [
+      `Production deployment executed with Wrangler command: ${deployCommand}`,
+      'GitHub Actions not used as the deployment path.',
+      `Release gate: ${releaseGatePath}`,
+      ...(evidencePath ? [`Evidence: ${evidencePath}`] : []),
+    ],
+    result,
+    verification: [
+      ...evidenceVerification,
+      {
+        check: deployCommand,
+        expected: 'Wrangler production deploy command exits successfully.',
+        actual: deployOk ? (deployOutput ?? 'deploy completed') : (deployError ?? 'deploy failed'),
+        passed: deployOk,
+      },
+      liveVerification,
+    ],
+    issues,
+    next_action: result === 'success' ? 'monitor' : deployOk ? 'rollback' : 'fix',
+    rollback: {
+      prior_revision: 'previous Cloudflare Worker deployment',
+      steps: deployOk
+        ? 'Use Wrangler versions/rollback for the Worker if live verification or monitoring shows production impact.'
+        : 'No production rollback is required because the Wrangler deploy command did not complete successfully.',
+      data_caveats: evidence?.commands.some((command) => /\bwrangler\s+d1\b/.test(command.command))
+        ? 'Release-gate database evidence was local; verify any production D1 migration state separately before rollback.'
+        : undefined,
+    },
+  };
+}
+
+async function runProductionWranglerDeployment({
+  repoPath,
+  mastra,
+  stage,
+  runId,
+  releaseGate,
+  releaseGatePath,
+  evidence,
+  evidencePath,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+  runId: string;
+  releaseGate: ReleaseGate;
+  releaseGatePath: string;
+  evidence?: ReleaseGateEvidence;
+  evidencePath?: string;
+}) {
+  const command = productionWranglerDeployCommand(repoPath);
+  await recordRunCodeStart({ repoPath, mastra, stage, command: command.command, timeoutMs: 300_000 });
+
+  try {
+    const result = await execFileAsync(command.executable, command.args, {
+      cwd: resolve(repoPath),
+      timeout: 300_000,
+      maxBuffer: 2_000_000,
+      env: {
+        ...process.env,
+        CI: process.env.CI ?? '1',
+        NO_COLOR: '1',
+        WRANGLER_SEND_METRICS: 'false',
+      },
+    });
+    const rawOutput = `${result.stdout}\n${result.stderr}`;
+    const outputSummary = compactDiagnostic(rawOutput.trim() || 'Wrangler deploy completed.', 1_200);
+    const revision = wranglerDeployRevision(rawOutput, runId);
+    const urls = wranglerDeployUrls(rawOutput);
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'deploy',
+        stage,
+        target: 'production',
+        revision,
+        command: command.command,
+        ok: true,
+        output_summary: outputSummary,
+        urls,
+      },
+    });
+
+    const liveVerification = await productionLiveVerification(urls);
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'live_verify',
+        stage,
+        target: 'production',
+        revision,
+        command: liveVerification.check,
+        ok: liveVerification.passed !== false,
+        output_summary: liveVerification.actual,
+        urls,
+      },
+    });
+
+    return productionDeploymentReportFromWranglerResult({
+      runId,
+      releaseGate,
+      evidence,
+      releaseGatePath,
+      evidencePath,
+      deployCommand: command.command,
+      deployOk: true,
+      deployOutput: outputSummary,
+      liveVerification,
+      revision,
+    });
+  } catch (error) {
+    const failure = commandFailureSummary(error, 1_200);
+    const revision = `production:${runId}`;
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'deploy',
+        stage,
+        target: 'production',
+        revision,
+        command: command.command,
+        ok: false,
+        error: failure,
+      },
+    });
+
+    const liveVerification: DeploymentReport['verification'][number] = {
+      check: 'production live verification',
+      expected: 'Production live verification runs after a successful Wrangler deploy.',
+      actual: 'Skipped because the Wrangler deploy command failed.',
+      passed: false,
+    };
+
+    return productionDeploymentReportFromWranglerResult({
+      runId,
+      releaseGate,
+      evidence,
+      releaseGatePath,
+      evidencePath,
+      deployCommand: command.command,
+      deployOk: false,
+      deployError: failure,
+      liveVerification,
+      revision,
+    });
+  }
 }
 
 const requiredAgent = (mastra: any, id: string) => {
@@ -5296,8 +5544,6 @@ const structuredNoToolOptions = {
   activeTools: [] as string[],
   maxSteps: 1,
 };
-
-const deployerAgentMaxSteps = 8;
 
 const implementationWorkspaceTools = [
   WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES,
@@ -8580,44 +8826,17 @@ const createDeploymentReportStep = createStep({
       };
     }
 
-    const deployer = requiredAgent(mastra, 'deployer');
-    const deployResponse = await runWithDeliveryStageTimeout({
+    const evidence = readReleaseGateEvidenceArtifact(inputData.repoPath, artifacts);
+    const report = await runProductionWranglerDeployment({
       repoPath: inputData.repoPath,
       mastra,
       stage,
-      timeoutMs: deliveryAgentTimeouts.build,
-      operation: (abortSignal) =>
-        deployer.generate(
-          `Deploy the approved build.
-
-Release gate path: ${releaseGatePath}
-Deploy mode: ${inputData.deployMode}
-
-Rules:
-- Do not deploy unless the release gate is PASS with zero blockers.
-- In local mode, start the application locally or its closest runnable form, record a deploy event, run direct probes, and record live_verify events.
-- In production mode, use Wrangler CLI or an existing project script that directly wraps Wrangler. Do not use GitHub Actions as the deployment path.
-- Local git and gh CLI may be used for source-control operations such as commit, push, or PR metadata, but deployment evidence must come from Wrangler and live probes.
-- Verification must include at least one happy path and one error path when the app shape allows it.
-- Return a deployment report with exact revision, verification results, issues, next action, and rollback steps.
-
-Release gate:
-${JSON.stringify(inputData.releaseGate, null, 2)}`,
-          {
-            abortSignal,
-            requestContext: createDeliveryRequestContext(inputData.repoPath),
-            maxSteps: deployerAgentMaxSteps,
-            toolCallConcurrency: 1,
-            structuredOutput: {
-              schema: deployerOutputSchema,
-              ...deliveryToolStructuredOutputOptions,
-              instructions: 'Return only { "report": <deployment-report> } after deployment and live verification.',
-            },
-          },
-        ),
+      runId: inputData.runId,
+      releaseGate: inputData.releaseGate,
+      releaseGatePath,
+      evidence,
+      evidencePath,
     });
-
-    const { report } = parseDeliveryStructuredOutput(deployerOutputSchema, deployResponse, 'deployer');
     const reportPath = '.delivery/artifacts/deployment-report.json';
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
