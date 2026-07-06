@@ -16,6 +16,7 @@ import {
   judgeUnavailableRemediation,
   missingOwnedSurfacePaths,
   openDecisionHygiene,
+  ownedSurfaceHygiene,
   priorStoppedBuildTaskIds,
   repairStaleDownstreamVerificationSurfaces,
   releaseGateForInvalidTesterOutput,
@@ -102,6 +103,26 @@ test('task plan open decisions must be decision-shaped blockers', () => {
   ];
   assert.equal(openDecisionHygiene(unblockedPlan).passed, false);
   assert.match(openDecisionHygiene(unblockedPlan).reason, /safe assumption or risk|does not explain what implementation work it blocks/);
+});
+
+test('task plan owned surfaces must be concrete repo paths or explicit unknowns', () => {
+  const concretePlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['wrangler.toml', 'src/index.ts', 'src/workflows/steps/fetch-bookmarks.ts', 'unknown: generated migration name depends on existing migration sequence'],
+    },
+  ]);
+  assert.deepEqual(ownedSurfaceHygiene(concretePlan), { passed: true, reason: 'ok' });
+
+  const conceptualPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['wrangler configuration', 'Worker Env types', 'Workflow binding registration'],
+    },
+  ]);
+  const result = ownedSurfaceHygiene(conceptualPlan);
+  assert.equal(result.passed, false);
+  assert.match(result.reason, /conceptual surface/);
 });
 
 test('judge provider overloads synthesize bounded failing judge output', () => {
@@ -191,6 +212,23 @@ test('owned surface presence normalizes annotated paths and ignores globs', () =
   ]).tasks;
 
   assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), ['src/ai/client.ts']);
+});
+
+test('conceptual owned surfaces do not become missing file paths', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-conceptual-surfaces-'));
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['wrangler configuration', 'Worker Env types', 'Workflow binding registration'],
+    },
+  ]).tasks;
+
+  assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), []);
+  assert.deepEqual(taskBoundarySurfaces(repoPath, task), [
+    'wrangler configuration',
+    'Worker Env types',
+    'Workflow binding registration',
+  ]);
 });
 
 test('missing owned surface preflight creates compile-safe stubs', async () => {

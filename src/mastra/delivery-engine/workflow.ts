@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'open-decisions-hygiene-v2';
+const plannerPolicyVersion = 'owned-surfaces-hygiene-v3';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -248,6 +248,7 @@ function readCachedPlannerOutput({
   if (cache.success && cache.data.sourceFingerprint !== sourceFingerprint) return undefined;
   if (cache.success && cache.data.policyVersion !== plannerPolicyVersion) return undefined;
   if (!openDecisionHygiene(taskPlan.data).passed) return undefined;
+  if (!ownedSurfaceHygiene(taskPlan.data).passed) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
 }
@@ -540,10 +541,53 @@ export function openDecisionHygiene(taskPlan: TaskPlan) {
   return { passed: true, reason: 'ok' };
 }
 
+const knownRootPathSurfaces = new Set([
+  '.env.example',
+  '.gitignore',
+  'package.json',
+  'package-lock.json',
+  'README.md',
+  'tsconfig.json',
+  'vite.config.ts',
+  'vitest.config.ts',
+  'wrangler.json',
+  'wrangler.jsonc',
+  'wrangler.toml',
+]);
+
+function looksLikeRepoPathReference(surface: string) {
+  const path = normalizeDeliveryPathReference(surface);
+  if (!path || /\s/.test(path)) return false;
+  if (knownRootPathSurfaces.has(path)) return true;
+  if (path.includes('/')) return true;
+  return /^[A-Za-z0-9_.-]+\.[A-Za-z0-9]+$/.test(path);
+}
+
+function ownedSurfaceReferenceIsConcrete(surface: string) {
+  const normalized = normalizeDeliveryPathReference(surface);
+  if (/^unknown:\s*\S/i.test(normalized)) return true;
+  return looksLikeRepoPathReference(normalized);
+}
+
+export function ownedSurfaceHygiene(taskPlan: TaskPlan) {
+  for (const task of taskPlan.tasks) {
+    for (const surface of task.owned_surfaces) {
+      if (ownedSurfaceReferenceIsConcrete(surface)) continue;
+      return {
+        passed: false,
+        reason: `${task.id} owned_surfaces contains conceptual surface "${surface}". Use concrete repo paths/globs like wrangler.toml, src/index.ts, public/settings.html, migrations/0001_schema.sql, or "unknown: <reason>".`,
+      };
+    }
+  }
+
+  return { passed: true, reason: 'ok' };
+}
+
 const taskPlanDeterministicResults = (taskPlan: TaskPlan): DeterministicGateResult[] => [
   { id: 'tasks_structurally_complete', check: 'plan_schema_complete', ...planSchemaComplete(taskPlan) },
   { id: 'no_circular_dependencies', check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(taskPlan) },
   { id: 'open_decisions_hygiene', check: 'open_decision_hygiene', ...openDecisionHygiene(taskPlan) },
+  { id: 'owned_surfaces_concrete', check: 'owned_surface_hygiene', ...ownedSurfaceHygiene(taskPlan) },
 ];
 
 function topoOrderTasks(tasks: Task[]) {
@@ -720,6 +764,7 @@ function existingOwnedFiles(repoPath: string, task: Task) {
 function concreteOwnedSurfacePath(surface: string) {
   const trimmed = normalizeDeliveryPathReference(surface);
   if (!trimmed || trimmed.includes('*') || /^unknown\b/i.test(trimmed)) return undefined;
+  if (!looksLikeRepoPathReference(trimmed)) return undefined;
   return trimmed;
 }
 
@@ -3310,6 +3355,10 @@ const createPlannerArtifactsStep = createStep({
 Do not write code. Ask only blocking questions. Record safe assumptions in the readout.
 Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
 Every task must have checkable acceptance criteria and owned_surfaces.
+Owned-surface hygiene:
+- Every owned_surfaces entry must be a concrete repo path or glob, for example wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
+- Do not use conceptual labels such as "Worker Env types", "wrangler configuration", "Workflow binding registration", "API routes", or "UI assets".
+- If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
@@ -3801,6 +3850,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
 
 Return a full replacement taskPlan object. Preserve concrete deliverables, checkable acceptance criteria, dependencies, and owned surfaces.
 Do not write implementation code.
+Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path or glob, not a conceptual label. Use "unknown: <why>" only when the file truly cannot be known.
 Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks. Safe defaults belong in the readout on the next full planning pass, so do not add them to taskPlan.open_decisions here.
 Every taskPlan.open_decisions entry must use this exact field shape:
 "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
