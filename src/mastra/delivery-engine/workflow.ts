@@ -1034,6 +1034,42 @@ export function staleDownstreamVerificationSurfacePaths({
   });
 }
 
+export function outOfPlanVerificationFailurePaths({
+  repoPath,
+  taskPlan,
+  failure,
+}: {
+  repoPath: string;
+  taskPlan: TaskPlan;
+  failure: string;
+}) {
+  const allPlannedSurfaces = taskPlan.tasks
+    .flatMap((task) => taskBoundarySurfaces(repoPath, task))
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path));
+
+  return verificationFailurePaths(failure).filter((path) => {
+    if (!existsSync(join(resolve(repoPath), path))) return false;
+    return !matchesAny(path, allPlannedSurfaces);
+  });
+}
+
+function staleWorkspaceVerificationRemediation({
+  repoPath,
+  taskPlan,
+  failure,
+}: {
+  repoPath: string;
+  taskPlan?: TaskPlan;
+  failure: string;
+}) {
+  if (!taskPlan) return undefined;
+  const paths = outOfPlanVerificationFailurePaths({ repoPath, taskPlan, failure });
+  if (!paths.length) return undefined;
+
+  return `STALE_WORKSPACE_VERIFICATION: repo-wide verification failed in existing file(s) outside the current task plan: ${paths.join(', ')}. Start from a clean project baseline, archive stale generated files, or revise the plan so those files are owned before retrying. Original failure: ${compactDiagnostic(failure, 500)}`;
+}
+
 export async function repairStaleDownstreamVerificationSurfaces({
   repoPath,
   mastra,
@@ -1143,6 +1179,10 @@ function remediationHasVerificationFailure(remediation: string[]) {
   );
 }
 
+function remediationHasStaleWorkspaceVerificationFailure(remediation: string[]) {
+  return remediation.some((item) => /\bSTALE_WORKSPACE_VERIFICATION\b/i.test(item));
+}
+
 function remediationHasImplementationJudgmentFailure(remediation: string[]) {
   return remediation.some((item) => /\b(GATE|DIMENSION|JUDGE|implementation judgment)\b/i.test(item));
 }
@@ -1175,6 +1215,7 @@ export function implementationFailureClass(remediation: string[]) {
   if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
   if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
   if (remediationHasUnreplacedPreflightStubFailure(remediation)) return 'preflight_stub' as const;
+  if (remediationHasStaleWorkspaceVerificationFailure(remediation)) return 'stale_workspace_verification' as const;
   if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
   if (remediationHasPolicyBoundaryFailure(remediation)) return 'policy_boundary' as const;
   if (remediationHasImplementationJudgmentFailure(remediation)) return 'judge_quality' as const;
@@ -1516,6 +1557,14 @@ async function runBuildVerification({
 
     if (allowRepair && (await applyBuildVerificationRepair({ repoPath, mastra, stage, taskPlan, taskIndex, failure }))) {
       return runBuildVerification({ repoPath, mastra, stage, taskPlan, taskIndex, allowRepair: false });
+    }
+
+    const staleWorkspaceFailure = staleWorkspaceVerificationRemediation({ repoPath, taskPlan, failure });
+    if (staleWorkspaceFailure) {
+      return {
+        performed: [] as string[],
+        missing: [`${command} failed: ${staleWorkspaceFailure}`],
+      };
     }
 
     return {
@@ -4612,6 +4661,9 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
         task,
         events: deliveryEvents,
       });
+      const staleWorkspaceVerification = deterministicRemediation.filter((item) =>
+        /\bSTALE_WORKSPACE_VERIFICATION\b/i.test(item),
+      );
       await appendDeliveryEventState({
         repoPath: inputData.repoPath,
         mastra,
@@ -4625,6 +4677,41 @@ ${inputData.remediation.map((item) => `  - ${item}`).join('\n')}
           engine_policy_mismatch: enginePolicyMismatch,
         },
       });
+
+      if (staleWorkspaceVerification.length) {
+        await updateDeliveryTaskState({
+          repoPath: inputData.repoPath,
+          id: task.id,
+          status: 'stuck',
+          owner: role,
+          note: staleWorkspaceVerification.join(' | ').slice(0, 300),
+          mastra,
+        });
+
+        return {
+          repoPath: inputData.repoPath,
+          maxRetries: inputData.maxRetries,
+          deployMode: inputData.deployMode,
+          taskPlan,
+          releaseGate: inputData.releaseGate,
+          status: 'stuck' as const,
+          runId: inputData.runId,
+          summary: `Build task ${task.id} stopped because repo-wide verification failed outside the current task plan.`,
+          artifacts,
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: staleWorkspaceVerification,
+          taskId: task.id,
+          taskStatus: 'stuck' as const,
+          task,
+          taskIndex: inputData.taskIndex,
+          skipped: false,
+          attempt,
+          terminal: true,
+          remediation: staleWorkspaceVerification,
+        };
+      }
 
       if (enginePolicyMismatch.length) {
         const remediation = [...enginePolicyMismatch, ...deterministicRemediation];

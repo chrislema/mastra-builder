@@ -17,6 +17,7 @@ import {
   missingOwnedSurfacePaths,
   openDecisionHygiene,
   ownedSurfaceHygiene,
+  outOfPlanVerificationFailurePaths,
   priorStoppedBuildTaskIds,
   repairStaleDownstreamVerificationSurfaces,
   releaseGateForInvalidTesterOutput,
@@ -535,6 +536,29 @@ test('stale downstream verification repair resets only future failed task surfac
   );
   assert.equal(readFileSync(join(repoPath, 'src/workflows/steps/score-candidates.ts'), 'utf8'), 'export const score = 1;\n');
   assert.match(readFileSync(join(repoPath, 'src/workflows/steps/generate-transcript.ts'), 'utf8'), /Delivery preflight stub/);
+});
+
+test('out-of-plan verification failures are classified as stale workspace contamination', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-stale-out-of-plan-'));
+  mkdirSync(join(repoPath, 'src/workflows/steps'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/env.ts'), 'export interface Env { AI: Ai }\n');
+  writeFileSync(
+    join(repoPath, 'src/workflows/steps/fetch-content.ts'),
+    'import type { Env } from "../../env";\nexport const fetchContent = (env: Env) => env.BROWSER;\n',
+  );
+  const plan = taskPlan([{ depends_on: [], owned_surfaces: ['src/env.ts'] }]);
+  const failure =
+    'src/workflows/steps/fetch-content.ts(2,55): error TS2339: Property BROWSER does not exist on type Env.';
+
+  assert.deepEqual(outOfPlanVerificationFailurePaths({ repoPath, taskPlan: plan, failure }), [
+    'src/workflows/steps/fetch-content.ts',
+  ]);
+  assert.equal(
+    implementationFailureClass([
+      'DETERMINISTIC verification_passed failed: STALE_WORKSPACE_VERIFICATION: repo-wide verification failed in existing file(s) outside the current task plan: src/workflows/steps/fetch-content.ts',
+    ]),
+    'stale_workspace_verification',
+  );
 });
 
 test('task boundaries include existing sibling TypeScript barrel files', () => {
