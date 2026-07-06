@@ -121,9 +121,9 @@ as src/index.js or workers/app.js so Wrangler dry-run validation can run from th
 New Worker package scripts must use Wrangler through config: scripts.dev is "wrangler dev --env staging",
 and scripts.deploy is "wrangler deploy --env production".
 Task owners must be engineer or designer; verification belongs to the later tester stage.
-Architecture defaults are Workers-first: use standalone Cloudflare Workers unless the
-existing repo or spec explicitly calls for Pages Functions. Never split one feature set
-across both deployment models.
+Architecture defaults are Workers-first: use standalone Cloudflare Workers unless
+vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions. Never split
+one feature set across both deployment models.
 For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml
 or the source docs explicitly require TOML.
 New Worker config must define Wrangler env.staging and env.production. Mirror any required
@@ -242,7 +242,7 @@ Must not:
 
 Cloudflare architecture defaults:
 - Target projects are standalone Cloudflare Workers projects with vanilla HTML/CSS/JS frontends.
-- Use Pages Functions only when the existing repo or spec explicitly requires Pages.
+- Use Pages Functions only when vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
 - Do not introduce Node HTTP servers, Express-style servers, generic server/ directories, or filesystem-backed runtime state.
 - New Worker package scripts use Wrangler through config: scripts.dev is "wrangler dev --env staging", and scripts.deploy is "wrangler deploy --env production".
 - In a brand-new Worker project, the root scaffold task owns package.json, .gitignore, wrangler.jsonc, and the Worker entrypoint together so implementation can validate the first slice with Wrangler dry-run immediately.

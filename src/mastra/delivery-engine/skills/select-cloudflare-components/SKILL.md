@@ -15,7 +15,7 @@ Evaluates a feature set against Cloudflare's infrastructure options and selects 
 2. Determine the deployment model:
    - Default to standalone Workers.
    - If any feature requires Workflows, Durable Objects, Queues, scheduled work, service bindings, or repeated independent iteration, the deployment model is Workers.
-   - Use Pages Functions only when the existing repo or spec explicitly requires Pages and every feature fits that model.
+   - Use Pages Functions only when `vision.md` or `spec.md` declaratively requires Cloudflare Pages or Pages Functions and every feature fits that model.
    - Verify the consistency principle: no features split between Pages Functions and Workers.
 3. For each feature with multi-step processing, evaluate whether it needs Workflows. Apply the dependency chain test: if one operation's output feeds into another's input (A then B then C), use Workflows. If operations are independent (even if long-running), do not use Workflows.
 4. Assign infrastructure services to each feature using the service selection table. Map data storage, compute, caching, and communication needs.
@@ -37,13 +37,13 @@ Chris's default is standalone Workers. The decision is not "which is simpler for
 - You want one consistent Cloudflare compute model.
 
 **Use Pages Functions only when:**
-- The existing repo is already a Pages Functions project, or the spec explicitly asks for Pages.
+- The vision or spec declaratively says to use Cloudflare Pages or Pages Functions.
 - The work is tightly coupled to a static Pages site and does not need Worker-specific services.
 - The whole feature set can remain in Pages Functions without exceptions.
 
 ### The Consistency Principle
 
-Never split features between Pages Functions and Workers. If any feature belongs in Workers, the cohesive system goes Workers-first. If an existing project is truly Pages Functions, all features stay in Functions. This applies to everything: forms, logging, security. The thin proxy pattern should do the same thing everywhere — no exceptions where "this one does a little more."
+Never split features between Pages Functions and Workers. If any feature belongs in Workers, the cohesive system goes Workers-first. If the vision/spec declaratively requires Pages Functions, all features stay in Functions. This applies to everything: forms, logging, security. The thin proxy pattern should do the same thing everywhere — no exceptions where "this one does a little more."
 
 ### Workflows
 
@@ -75,8 +75,8 @@ Duration is not the deciding factor. Dependency chains are.
 
 When uncertain:
 1. Default to standalone Workers.
-2. Ask only when choosing Pages vs. Workers would materially change the repo shape.
-3. Explain any Pages exception with concrete evidence from the repo or spec.
+2. Do not ask whether to use Pages; the source docs must declare that exception.
+3. Explain any Pages exception with concrete evidence from the vision or spec.
 
 ## Output
 

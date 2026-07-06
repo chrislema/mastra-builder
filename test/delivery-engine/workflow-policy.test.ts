@@ -41,6 +41,7 @@ import {
   operatorDocumentationHygiene,
   openDecisionHygiene,
   ownedSurfaceHygiene,
+  pagesFunctionsExceptionHygiene,
   profileContractDependencyHygiene,
   profileKindContractGaps,
   profileKindTaskPacketPolicy,
@@ -70,6 +71,7 @@ import {
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
+  sourceDocumentsDeclarePages,
   staleDownstreamVerificationSurfacePaths,
   taskOwnedSurfaceRoleHygiene,
   taskBoundarySurfaces,
@@ -292,6 +294,44 @@ test('task plan owned surfaces must be concrete repo paths or explicit unknowns'
   const wildcardResult = ownedSurfaceHygiene(wildcardPlan);
   assert.equal(wildcardResult.passed, false);
   assert.match(wildcardResult.reason, /wildcard surface/);
+});
+
+test('Pages Functions are allowed only when source docs declaratively require Pages', () => {
+  assert.equal(
+    sourceDocumentsDeclarePages([
+      { path: 'vision.md', content: 'Build a Cloudflare Worker with vanilla public assets.' },
+      { path: 'spec.md', content: 'No Pages Functions unless explicitly requested.' },
+    ]),
+    false,
+  );
+  assert.equal(
+    sourceDocumentsDeclarePages([
+      { path: 'vision.md', content: 'Should this be Cloudflare Pages or Workers?' },
+      { path: 'spec.md', content: 'Default to standalone Workers.' },
+    ]),
+    false,
+  );
+  assert.equal(
+    sourceDocumentsDeclarePages([
+      { path: 'vision.md', content: 'Deployment: Cloudflare Pages. Use Pages Functions for API routes.' },
+      { path: 'spec.md', content: 'The static site must stay on Pages.' },
+    ]),
+    true,
+  );
+
+  const pagesPlan = taskPlan([{ depends_on: [], owned_surfaces: ['functions/api/submit.js'] }]);
+  assert.equal(pagesFunctionsExceptionHygiene(pagesPlan, { pagesRequired: false }).passed, false);
+  assert.match(
+    pagesFunctionsExceptionHygiene(pagesPlan, { pagesRequired: false }).reason,
+    /did not declaratively require Cloudflare Pages/,
+  );
+  assert.deepEqual(pagesFunctionsExceptionHygiene(pagesPlan, { pagesRequired: true }), { passed: true, reason: 'ok' });
+  assert.deepEqual(
+    pagesFunctionsExceptionHygiene(taskPlan([{ depends_on: [], owned_surfaces: ['workers/submit.js'] }]), {
+      pagesRequired: false,
+    }),
+    { passed: true, reason: 'ok' },
+  );
 });
 
 test('bare Worker project plans require package scaffold before runtime surfaces', () => {

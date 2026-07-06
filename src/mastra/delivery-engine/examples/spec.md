@@ -60,6 +60,6 @@ the app small enough to read in one sitting.
 
 - Keep the Worker route layer thin: parse request, call helpers or D1, log enough context,
   and return actionable responses.
-- No Pages Functions unless explicitly requested.
+- No Pages Functions unless vision.md or spec.md declaratively requires Cloudflare Pages or Pages Functions.
 - No React, JSX/TSX, frontend frameworks, preprocessors, Node HTTP server, Express,
   filesystem-backed runtime state, or new frontend build step.

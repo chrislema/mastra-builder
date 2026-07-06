@@ -221,7 +221,11 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'worker-first-local-v13';
+const plannerPolicyVersion = 'worker-first-local-v14';
+
+const sourcePolicySchema = z.object({
+  pagesRequired: z.boolean().default(false),
+});
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -242,9 +246,11 @@ function readJsonArtifact(repoPath: string, artifactPath: string) {
 function readCachedPlannerOutput({
   repoPath,
   sourceFingerprint,
+  sourcePolicy,
 }: {
   repoPath: string;
   sourceFingerprint: string;
+  sourcePolicy: SourcePolicy;
 }) {
   if (process.env.DELIVERY_REUSE_PLAN_CACHE === '0') return undefined;
 
@@ -258,6 +264,7 @@ function readCachedPlannerOutput({
   if (!openDecisionHygiene(taskPlan.data).passed) return undefined;
   if (!ownedSurfaceHygiene(taskPlan.data).passed) return undefined;
   if (!taskOwnedSurfaceRoleHygiene(taskPlan.data).passed) return undefined;
+  if (!pagesFunctionsExceptionHygiene(taskPlan.data, sourcePolicy).passed) return undefined;
   if (!projectScaffoldHygiene(repoPath, taskPlan.data).passed) return undefined;
   if (!configSchemaTaskSplitHygiene(taskPlan.data).passed) return undefined;
   if (!operatorDocumentationHygiene(taskPlan.data).passed) return undefined;
@@ -298,6 +305,7 @@ const plannerArtifactsSchema = initializedSchema.extend({
   readout: readoutSchema,
   taskPlan: taskPlanSchema,
   artifacts: z.array(z.string()),
+  sourcePolicy: sourcePolicySchema,
 });
 
 const plannerQuestionAnswerSchema = z.object({
@@ -368,6 +376,7 @@ const deliveryWorkflowStateSchema = z.object({
   judgments: z.array(judgmentRefSchema).default([]),
   questions: z.array(z.string()).default([]),
   nextSteps: z.array(z.string()).default([]),
+  sourcePolicy: sourcePolicySchema.optional(),
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
   deploymentReport: deploymentReportSchema.optional(),
@@ -379,6 +388,7 @@ const deliveryStageOutputSchema = workflowOutputSchema.extend({
   maxRetries: z.number().int().min(0),
   deployMode: z.enum(['local', 'production']),
   reviewMode: z.enum(['fast', 'thorough']).default('fast'),
+  sourcePolicy: sourcePolicySchema.optional(),
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
 });
@@ -435,6 +445,7 @@ type ReleaseGate = z.infer<typeof releaseGateSchema>;
 type DeploymentReport = z.infer<typeof deploymentReportSchema>;
 type JudgmentRef = z.infer<typeof judgmentRefSchema>;
 type Task = z.infer<typeof taskSchema>;
+type SourcePolicy = z.infer<typeof sourcePolicySchema>;
 type DeliveryWorkflowState = z.infer<typeof deliveryWorkflowStateSchema>;
 
 type CheckSummary = { check: string; passed: boolean; reason: string };
@@ -452,6 +463,7 @@ const normalizeDeliveryWorkflowState = (state?: Partial<DeliveryWorkflowState>):
   judgments: state?.judgments ?? [],
   questions: state?.questions ?? [],
   nextSteps: state?.nextSteps ?? [],
+  sourcePolicy: state?.sourcePolicy,
   taskPlan: state?.taskPlan,
   releaseGate: state?.releaseGate,
   deploymentReport: state?.deploymentReport,
@@ -492,6 +504,7 @@ async function syncDeliveryWorkflowState({
     judgments: output.judgments ?? current.judgments,
     questions: output.questions ?? current.questions,
     nextSteps: output.nextSteps ?? current.nextSteps,
+    sourcePolicy: output.sourcePolicy ?? current.sourcePolicy,
     taskPlan: output.taskPlan ?? current.taskPlan,
     releaseGate: output.releaseGate ?? current.releaseGate,
     deploymentReport: output.deploymentReport ?? current.deploymentReport,
@@ -598,6 +611,59 @@ export function openDecisionHygiene(taskPlan: TaskPlan) {
   }
 
   return { passed: true, reason: 'ok' };
+}
+
+function sourceLineNegatesPages(line: string) {
+  return (
+    /\b(?:no|not|never|avoid|without|forbid|forbidden|ban|banned|do\s+not|don't)\b.{0,80}\b(?:Cloudflare\s+Pages|Pages\s+Functions?|PAGES)\b/i.test(
+      line,
+    ) ||
+    /\b(?:Cloudflare\s+Pages|Pages\s+Functions?|PAGES)\b.{0,80}\b(?:not|unsupported|forbidden|banned)\b/i.test(
+      line,
+    )
+  );
+}
+
+function sourceLineDeclaresPages(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.includes('?') || sourceLineNegatesPages(trimmed)) return false;
+
+  const pagesProduct = String.raw`(?:Cloudflare\s+Pages|Pages\s+Functions?|PAGES)`;
+  return [
+    new RegExp(String.raw`\b(?:use|using|target|platform|deploy(?:ment)?|host(?:ing)?|build|create|implement|must|require[sd]?)\b.{0,100}\b${pagesProduct}\b`, 'i'),
+    new RegExp(String.raw`\b${pagesProduct}\b.{0,100}\b(?:use|using|target|platform|deploy(?:ment)?|host(?:ing)?|must|require[sd]?)\b`, 'i'),
+    new RegExp(String.raw`\b(?:deployment|target platform|platform)\s*:\s*${pagesProduct}\b`, 'i'),
+  ].some((pattern) => pattern.test(trimmed));
+}
+
+export function sourceDocumentsDeclarePages(sourceDocuments: Array<{ path: string; content: string }>) {
+  return sourceDocuments.some((document) => document.content.split(/\r?\n/).some(sourceLineDeclaresPages));
+}
+
+function sourcePolicyFromDocuments(sourceDocuments: Array<{ path: string; content: string }>): SourcePolicy {
+  return {
+    pagesRequired: sourceDocumentsDeclarePages(sourceDocuments),
+  };
+}
+
+function taskPlanPagesFunctionSurfaces(taskPlan: TaskPlan) {
+  return taskPlan.tasks.flatMap((task) =>
+    effectiveOwnedSurfaces(task)
+      .map(normalizeDeliveryPathReference)
+      .filter((surface) => surface === 'functions' || surface.startsWith('functions/'))
+      .map((surface) => `${task.id}:${surface}`),
+  );
+}
+
+export function pagesFunctionsExceptionHygiene(taskPlan: TaskPlan, sourcePolicy?: SourcePolicy) {
+  const pagesSurfaces = taskPlanPagesFunctionSurfaces(taskPlan);
+  if (!pagesSurfaces.length) return { passed: true, reason: 'ok' };
+  if (sourcePolicy?.pagesRequired) return { passed: true, reason: 'ok' };
+
+  return {
+    passed: false,
+    reason: `Task plan owns Pages Functions surfaces (${pagesSurfaces.join(', ')}), but vision/spec did not declaratively require Cloudflare Pages. Use standalone Worker routes under src/ or workers/ unless the source docs explicitly say to use Pages.`,
+  };
 }
 
 const knownRootPathSurfaces = new Set([
@@ -1359,15 +1425,18 @@ function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): Tas
 const taskPlanDeterministicResults = ({
   repoPath,
   taskPlan,
+  sourcePolicy,
 }: {
   repoPath: string;
   taskPlan: TaskPlan;
+  sourcePolicy?: SourcePolicy;
 }): DeterministicGateResult[] => [
   { id: 'tasks_structurally_complete', check: 'plan_schema_complete', ...planSchemaComplete(taskPlan) },
   { id: 'no_circular_dependencies', check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(taskPlan) },
   { id: 'open_decisions_hygiene', check: 'open_decision_hygiene', ...openDecisionHygiene(taskPlan) },
   { id: 'owned_surfaces_concrete', check: 'owned_surface_hygiene', ...ownedSurfaceHygiene(taskPlan) },
   { id: 'owned_surfaces_match_roles', check: 'task_owned_surfaces_in_role_boundary', ...taskOwnedSurfaceRoleHygiene(taskPlan) },
+  { id: 'pages_functions_source_declared', check: 'pages_functions_exception', ...pagesFunctionsExceptionHygiene(taskPlan, sourcePolicy) },
   { id: 'root_project_scaffolded', check: 'project_scaffold_hygiene', ...projectScaffoldHygiene(repoPath, taskPlan) },
   { id: 'config_schema_tasks_split', check: 'config_schema_task_split_hygiene', ...configSchemaTaskSplitHygiene(taskPlan) },
   { id: 'operator_documentation_planned', check: 'operator_documentation_hygiene', ...operatorDocumentationHygiene(taskPlan) },
@@ -6938,9 +7007,11 @@ const createPlannerArtifactsStep = createStep({
       tsconfigJson: existsSync(join(inputData.repoPath, 'tsconfig.json')) ? 'present' : 'missing',
     };
     const sourceFingerprint = plannerSourceFingerprint(sourceDocuments);
+    const sourcePolicy = sourcePolicyFromDocuments(sourceDocuments);
     const cachedOutput = readCachedPlannerOutput({
       repoPath: inputData.repoPath,
       sourceFingerprint,
+      sourcePolicy,
     });
 
     const output = cachedOutput
@@ -6961,7 +7032,7 @@ const createPlannerArtifactsStep = createStep({
 Do not write code. Ask only blocking questions. Record safe assumptions in the readout.
 Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
 Project policy:
-- This harness is for Chris's standalone Cloudflare Worker projects. Do not plan desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages unless the source docs explicitly require them.
+- This harness is for Chris's standalone Cloudflare Worker projects. Do not plan desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
 - Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require TypeScript.
 - Prefer wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - New Worker config must define env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments.
@@ -6984,13 +7055,14 @@ Role-boundary hygiene:
 - Engineer tasks own Worker config/source/migration files such as package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml, src/**, workers/**, and migrations/**.
 - Designer tasks own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
 - Do not put public/** files in engineer-owned tasks; create or reuse a designer task for vanilla HTML/CSS/JS UI work.
+- Do not plan functions/** owned surfaces unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
 Root scaffold hygiene:
 - Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
 - If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, .gitignore, wrangler.jsonc, and at least one concrete Worker source entry such as src/index.js or workers/app.js. Include tsconfig.json only when the Worker source is TypeScript.
 - Worker runtime/config/source/static asset/migration tasks must depend on that scaffold task unless they own package.json and the Worker source entry themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
-- Do not stop for preferences the harness already settles: Worker over Pages, vanilla UI over frameworks, Wrangler over GitHub Actions deploy, local validation before production, or Workers AI binding shape.
+- Do not stop for preferences the harness already settles: Worker over Pages unless source docs declaratively require Pages, vanilla UI over frameworks, Wrangler over GitHub Actions deploy, local validation before production, or Workers AI binding shape.
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
 - If an unknown is a non-blocking delivery concern, put it in taskPlan.risks.
 - The BOOKMARKS service API shape is not a human blocker. Default to an env.BOOKMARKS.fetch adapter in src/bookmarkClient.ts with a date-window request and normalized Bookmark[] response, then record contract mismatch as a risk.
@@ -7095,6 +7167,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
           status: 'blocked_on_questions',
           summary: output.readout.recommended_next_step,
           artifacts: ['.delivery/artifacts/readout.json', '.delivery/artifacts/task-plan.json'],
+          sourcePolicy,
           questions: output.readout.blocking_ambiguities,
           nextSteps: ['Answer the blocking questions, then resume delivery planning.'],
           taskPlan: output.taskPlan,
@@ -7118,6 +7191,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
       readout: output.readout,
       taskPlan: output.taskPlan,
       artifacts: ['.delivery/artifacts/readout.json', '.delivery/artifacts/task-plan.json'],
+      sourcePolicy,
     };
     await syncDeliveryWorkflowState({
       state,
@@ -7129,6 +7203,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
         deployMode: plannerOutput.deployMode,
         reviewMode: plannerOutput.reviewMode,
         artifacts: plannerOutput.artifacts,
+        sourcePolicy: plannerOutput.sourcePolicy,
         taskPlan: plannerOutput.taskPlan,
         questions: output.readout.blocking_ambiguities,
       },
@@ -7204,7 +7279,7 @@ async function reviseTaskPlanFromPlanGate({
 Return a full replacement taskPlan object. Do not write implementation code. Do not ask new human questions unless no executable Worker scaffold can be planned.
 
 Project policy:
-- This harness is for Chris's standalone Cloudflare Worker projects, not desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages.
+- This harness is for Chris's standalone Cloudflare Worker projects, not desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
 - Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require it.
 - Use wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - New Worker config must define env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments.
@@ -7221,6 +7296,7 @@ Task-plan quality requirements:
 - Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.
 - Every consumes-output relation must be declared by task ID. If a later task uses storage, prompts, routes, services, generated types, bindings, or workflow steps from an earlier slice, add the dependency edge explicitly.
 - Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
+- Do not plan functions/** owned surfaces unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
 - Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks.
 - The BOOKMARKS service API shape is not a human blocker. Default to an env.BOOKMARKS.fetch adapter in src/bookmarkClient.ts with a date-window request and normalized Bookmark[] response, then record contract mismatch as a risk.
 - Every taskPlan.open_decisions entry must use this exact field shape:
@@ -7324,6 +7400,7 @@ const createPlanGateStep = createStep({
       const deterministicResults = taskPlanDeterministicResults({
         repoPath: inputData.repoPath,
         taskPlan,
+        sourcePolicy: inputData.sourcePolicy,
       });
       checks.push(...checkSummaries(deterministicResults, suffix));
       const taskPlanJudge = await judgeDeliveryArtifact({
@@ -7344,6 +7421,7 @@ const createPlanGateStep = createStep({
         maxRetries: inputData.maxRetries,
         deployMode: inputData.deployMode,
         reviewMode: inputData.reviewMode,
+        sourcePolicy: inputData.sourcePolicy,
         taskPlan,
       };
 
@@ -7746,6 +7824,7 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
     const revisedDeterministicResults = taskPlanDeterministicResults({
       repoPath: inputData.repoPath,
       taskPlan: revisedTaskPlan,
+      sourcePolicy: inputData.sourcePolicy,
     });
     checks.push(...checkSummaries(revisedDeterministicResults, `revision-${revisionNumber}`));
     const failedRevisedChecks = revisedDeterministicResults.filter((check) => !check.passed);

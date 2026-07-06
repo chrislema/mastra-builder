@@ -99,9 +99,11 @@ local Wrangler validation first and human approval before production deploy.
 
 Target projects are assumed to be standalone Cloudflare Workers projects with vanilla
 JavaScript Worker modules and vanilla HTML, CSS, and JavaScript frontends. Pages Functions
-and TypeScript Worker source are explicit exceptions, not the default. The delivery agents
-should not introduce React, JSX/TSX, frontend frameworks, preprocessors, generic
-Node/Express servers, filesystem-backed runtime state, or a new frontend build step.
+are allowed only when `vision.md` or `spec.md` declaratively requires Cloudflare Pages or
+Pages Functions. TypeScript Worker source is also an explicit exception, not the default.
+The delivery agents should not introduce React, JSX/TSX, frontend frameworks,
+preprocessors, generic Node/Express servers, filesystem-backed runtime state, or a new
+frontend build step.
 
 New Worker config should define Wrangler `env.staging` and `env.production`.
 Bindings and vars required by the Worker must be mirrored inside those environments because
