@@ -213,8 +213,11 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
+const plannerPolicyVersion = 'open-decisions-hygiene-v2';
+
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
+  policyVersion: z.string().optional(),
   createdAt: z.string(),
 });
 
@@ -243,6 +246,8 @@ function readCachedPlannerOutput({
 
   const cache = plannerCacheSchema.safeParse(readJsonArtifact(repoPath, '.delivery/artifacts/plan-cache.json'));
   if (cache.success && cache.data.sourceFingerprint !== sourceFingerprint) return undefined;
+  if (cache.success && cache.data.policyVersion !== plannerPolicyVersion) return undefined;
+  if (!openDecisionHygiene(taskPlan.data).passed) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
 }
@@ -491,9 +496,54 @@ const checkSummaries = (results: DeterministicGateResult[], suffix?: string): Ch
     reason: check.reason ?? 'deterministic check',
   }));
 
+const openDecisionRequiredFields = ['topic', 'why it matters', 'options considered', 'follow-up impact'];
+
+function hasOpenDecisionField(decision: string, field: string) {
+  return new RegExp(`\\b${field.replaceAll(' ', '\\s+')}\\s*:`, 'i').test(decision);
+}
+
+function looksLikeSafeAssumptionOrRisk(decision: string) {
+  return (
+    /\bconfirm only if\b/i.test(decision) ||
+    /\bdefault assumed\b/i.test(decision) ||
+    /\bsafe assumption\b/i.test(decision) ||
+    /\bwatch\b|\brisk\b/i.test(decision) ||
+    /\bwhether\b.*\b(or simply|or only|can be|could be|should simply)\b/i.test(decision)
+  );
+}
+
+export function openDecisionHygiene(taskPlan: TaskPlan) {
+  for (const [index, decision] of taskPlan.open_decisions.entries()) {
+    const missingFields = openDecisionRequiredFields.filter((field) => !hasOpenDecisionField(decision, field));
+    if (missingFields.length) {
+      return {
+        passed: false,
+        reason: `open_decisions[${index}] is not decision-shaped; include Topic, Why it matters, Options considered, and Follow-up impact.`,
+      };
+    }
+
+    if (looksLikeSafeAssumptionOrRisk(decision)) {
+      return {
+        passed: false,
+        reason: `open_decisions[${index}] appears to be a safe assumption or risk, not a blocker; move it to readout.safe_assumptions or taskPlan.risks.`,
+      };
+    }
+
+    if (!/\b(blocks?|blocked|cannot|prevents?|required before|must be resolved before|implementation impossible)\b/i.test(decision)) {
+      return {
+        passed: false,
+        reason: `open_decisions[${index}] does not explain what implementation work it blocks.`,
+      };
+    }
+  }
+
+  return { passed: true, reason: 'ok' };
+}
+
 const taskPlanDeterministicResults = (taskPlan: TaskPlan): DeterministicGateResult[] => [
   { id: 'tasks_structurally_complete', check: 'plan_schema_complete', ...planSchemaComplete(taskPlan) },
   { id: 'no_circular_dependencies', check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(taskPlan) },
+  { id: 'open_decisions_hygiene', check: 'open_decision_hygiene', ...openDecisionHygiene(taskPlan) },
 ];
 
 function topoOrderTasks(tasks: Task[]) {
@@ -3260,6 +3310,13 @@ const createPlannerArtifactsStep = createStep({
 Do not write code. Ask only blocking questions. Record safe assumptions in the readout.
 Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
 Every task must have checkable acceptance criteria and owned_surfaces.
+Open-decision hygiene:
+- taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
+- If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
+- If an unknown is a non-blocking delivery concern, put it in taskPlan.risks.
+- Every open_decisions entry must be one string with this exact field shape:
+  "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
+- The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.
 Return only JSON matching this top-level shape: { "readout": {...}, "taskPlan": {...} }.${humanAnswers}
 
 Source documents:
@@ -3305,6 +3362,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
         artifactPath: '.delivery/artifacts/plan-cache.json',
         artifact: {
           sourceFingerprint,
+          policyVersion: plannerPolicyVersion,
           createdAt: new Date().toISOString(),
         },
       });
@@ -3743,6 +3801,10 @@ ${JSON.stringify(taskPlan, null, 2)}`,
 
 Return a full replacement taskPlan object. Preserve concrete deliverables, checkable acceptance criteria, dependencies, and owned surfaces.
 Do not write implementation code.
+Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks. Safe defaults belong in the readout on the next full planning pass, so do not add them to taskPlan.open_decisions here.
+Every taskPlan.open_decisions entry must use this exact field shape:
+"Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
+The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.
 
 Current task plan:
 ${JSON.stringify(taskPlan, null, 2)}

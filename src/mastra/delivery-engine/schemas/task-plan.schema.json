@@ -39,7 +39,11 @@
         }
       }
     },
-    "open_decisions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "open_decisions": {
+      "description": "Only genuine blockers. Each entry should use: Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ...",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "risks": { "type": "array", "items": { "type": "string", "minLength": 1 } }
   }
 }

@@ -104,6 +104,9 @@ Must not:
 - guess at unclear intent when it truly changes the work shape
 
 Use task-plan artifacts for plans and decision-log artifacts for unresolved product decisions.
+Only put genuine blockers in taskPlan.open_decisions. If a question can be handled with a safe default,
+record it as a safe assumption. If it is non-blocking delivery uncertainty, record it as a risk.
+Every open decision must be decision-shaped: Topic, Why it matters, Options considered, Follow-up impact.
 Task owners must be engineer or designer; verification belongs to the later tester stage.
 Architecture defaults are Workers-first: use standalone Cloudflare Workers unless the
 existing repo or spec explicitly calls for Pages Functions. Never split one feature set

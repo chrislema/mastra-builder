@@ -15,6 +15,7 @@ import {
   judgeUnavailableOutputForRubric,
   judgeUnavailableRemediation,
   missingOwnedSurfacePaths,
+  openDecisionHygiene,
   priorStoppedBuildTaskIds,
   repairStaleDownstreamVerificationSurfaces,
   releaseGateForInvalidTesterOutput,
@@ -70,6 +71,37 @@ test('planner questions are deferred when a task plan has an executable root tas
 
 test('planner questions suspend when no executable root task exists', () => {
   assert.equal(shouldSuspendForPlannerQuestions(readout(['Cannot start safely.']), taskPlan([])), true);
+});
+
+test('task plan open decisions must be decision-shaped blockers', () => {
+  const blockerPlan = taskPlan([{ depends_on: [] }]);
+  blockerPlan.open_decisions = [
+    [
+      'Topic: BOOKMARKS service binding call shape',
+      'Why it matters: blocks T7 bookmark fetch implementation because the workflow cannot know whether to call fetch or RPC safely',
+      'Options considered: fetch with date-window query; RPC method with explicit window arguments',
+      'Follow-up impact: T7 cannot be finalized until the binding contract is confirmed',
+    ].join(' | '),
+  ];
+
+  assert.deepEqual(openDecisionHygiene(blockerPlan), { passed: true, reason: 'ok' });
+
+  const softDecisionPlan = taskPlan([{ depends_on: [] }]);
+  softDecisionPlan.open_decisions = ['Whether the weekly cron should run on a specific day/time or simply every 7 days.'];
+  assert.equal(openDecisionHygiene(softDecisionPlan).passed, false);
+  assert.match(openDecisionHygiene(softDecisionPlan).reason, /not decision-shaped|safe assumption or risk/);
+
+  const unblockedPlan = taskPlan([{ depends_on: [] }]);
+  unblockedPlan.open_decisions = [
+    [
+      'Topic: Session duration',
+      'Why it matters: product preference may change copy',
+      'Options considered: 30 days; 7 days',
+      'Follow-up impact: confirm only if product disagrees',
+    ].join(' | '),
+  ];
+  assert.equal(openDecisionHygiene(unblockedPlan).passed, false);
+  assert.match(openDecisionHygiene(unblockedPlan).reason, /safe assumption or risk|does not explain what implementation work it blocks/);
 });
 
 test('judge provider overloads synthesize bounded failing judge output', () => {
