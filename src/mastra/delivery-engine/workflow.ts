@@ -225,6 +225,8 @@ const plannerPolicyVersion = 'worker-first-local-v14';
 
 const sourcePolicySchema = z.object({
   pagesRequired: z.boolean().default(false),
+  requiredProfileKinds: z.array(z.string()).default([]),
+  talkingHeadTranscriptRequired: z.boolean().default(false),
 });
 
 const plannerCacheSchema = z.object({
@@ -640,10 +642,47 @@ export function sourceDocumentsDeclarePages(sourceDocuments: Array<{ path: strin
   return sourceDocuments.some((document) => document.content.split(/\r?\n/).some(sourceLineDeclaresPages));
 }
 
+function sourceDocumentText(sourceDocuments: Array<{ path: string; content: string }>) {
+  return sourceDocuments.map((document) => document.content).join('\n\n');
+}
+
+export function sourceDocumentsRequiredProfileKinds(sourceDocuments: Array<{ path: string; content: string }>) {
+  const text = sourceDocumentText(sourceDocuments);
+  const requiredKinds = new Set<string>();
+  if (/\baudience_segments\b/i.test(text) || /\baudience\s+segments\s+profile\b/i.test(text)) {
+    requiredKinds.add('audience_segments');
+  }
+  if (/\bvoice_profile\b/i.test(text) || /\bvoice\s+profile\b/i.test(text)) {
+    requiredKinds.add('voice_profile');
+  }
+  return [...requiredKinds];
+}
+
+export function sourceDocumentsDeclareTalkingHeadTranscriptContract(sourceDocuments: Array<{ path: string; content: string }>) {
+  const text = sourceDocumentText(sourceDocuments);
+  return (
+    /\btalking[-\s]?head\b/i.test(text) &&
+    /\bTranscriptResult\b|\btranscript\s+result\b|\bready-to-record\b/i.test(text) &&
+    /\bGET\s+\/latest\b|\/latest\b/i.test(text) &&
+    (/\baudience_segments\b|\baudience\s+segments\s+profile\b/i.test(text) || /\bvoice_profile\b|\bvoice\s+profile\b/i.test(text))
+  );
+}
+
 function sourcePolicyFromDocuments(sourceDocuments: Array<{ path: string; content: string }>): SourcePolicy {
   return {
     pagesRequired: sourceDocumentsDeclarePages(sourceDocuments),
+    requiredProfileKinds: sourceDocumentsRequiredProfileKinds(sourceDocuments),
+    talkingHeadTranscriptRequired: sourceDocumentsDeclareTalkingHeadTranscriptContract(sourceDocuments),
   };
+}
+
+function sourcePolicyFromRepo(repoPath: string): SourcePolicy {
+  const root = resolve(repoPath);
+  const sourceDocuments = ['vision.md', 'spec.md'].flatMap((path) => {
+    const fullPath = join(root, path);
+    return existsSync(fullPath) ? [{ path, content: readFileSync(fullPath, 'utf8') }] : [];
+  });
+  return sourcePolicyFromDocuments(sourceDocuments);
 }
 
 function taskPlanPagesFunctionSurfaces(taskPlan: TaskPlan) {
@@ -861,7 +900,6 @@ function taskCanSafelyDependOn(taskPlan: TaskPlan, taskId: string, dependencyId:
   return taskId !== dependencyId && !taskDependsOn(taskPlan, dependencyId, taskId);
 }
 
-const requiredTalkingHeadProfileKinds = ['audience_segments', 'voice_profile'];
 const profileContractProducerSurfaces = [
   'src/validation.ts',
   'src/contracts.ts',
@@ -1885,19 +1923,21 @@ function taskOwnsProfileStorage(task: Task) {
 }
 
 export function profileKindContractGaps(repoPath: string, task: Task) {
+  const sourcePolicy = sourcePolicyFromRepo(repoPath);
+  const requiredProfileKinds = sourcePolicy.requiredProfileKinds;
   const expected = validationProfileKinds(repoPath);
   const gaps: string[] = [];
 
   if (taskOwnsProfileContractProducer(task)) {
-    if (!expected.length) {
+    if (requiredProfileKinds.length && !expected.length) {
       gaps.push(
-        `Profile contract producer must export PROFILE_KINDS or ProfileKind with required Talking Head profile kinds: ${requiredTalkingHeadProfileKinds.join(', ')}.`,
+        `Profile contract producer must export PROFILE_KINDS or ProfileKind with source-required profile kinds: ${requiredProfileKinds.join(', ')}.`,
       );
-    } else {
-      const missingRequired = missingProfileKinds(requiredTalkingHeadProfileKinds, expected);
+    } else if (requiredProfileKinds.length) {
+      const missingRequired = missingProfileKinds(requiredProfileKinds, expected);
       if (missingRequired.length) {
         gaps.push(
-          `Profile contract producer omits required Talking Head profile kind(s): ${missingRequired.join(', ')}. Use audience_segments and voice_profile as the persistent profile kinds; do not replace them with a generic creator kind.`,
+          `Profile contract producer omits source-required profile kind(s): ${missingRequired.join(', ')}. Use the profile kind values declared by vision.md/spec.md; do not replace them with generic R2 artifact object categories.`,
         );
       }
     }
@@ -2162,18 +2202,19 @@ export function workerConfigTaskPacketPolicyForTask(task: Task) {
   return taskOwnsWorkerConfigFile(task) ? workerConfigTaskPacketPolicy() : null;
 }
 
-export function profileKindTaskPacketPolicy() {
+export function profileKindTaskPacketPolicy(sourcePolicy: SourcePolicy) {
+  if (!sourcePolicy.requiredProfileKinds.length) return null;
   return {
-    required_persistent_kinds: requiredTalkingHeadProfileKinds,
+    required_persistent_kinds: sourcePolicy.requiredProfileKinds,
     producer_surfaces: profileContractProducerSurfaces,
-    guidance:
-      'Use audience_segments and voice_profile as persistent profile kinds. Do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.',
+    guidance: 'Use the persistent profile kind values declared by the source docs. Do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.',
   };
 }
 
-export function profileKindTaskPacketPolicyForTask(task: Task) {
-  return taskOwnsProfileContractProducer(task) || taskOwnsProfileMigration(task) || taskOwnsProfileStorage(task)
-    ? profileKindTaskPacketPolicy()
+export function profileKindTaskPacketPolicyForTask(task: Task, sourcePolicy = sourcePolicyFromDocuments([])) {
+  return (taskOwnsProfileContractProducer(task) || taskOwnsProfileMigration(task) || taskOwnsProfileStorage(task)) &&
+    sourcePolicy.requiredProfileKinds.length
+    ? profileKindTaskPacketPolicy(sourcePolicy)
     : null;
 }
 
@@ -4344,6 +4385,8 @@ function releaseGateMissingTableColumns(schema: string, tableName: string, requi
 }
 
 export function releaseGateTranscriptFixtureSchemaGaps(repoPath: string) {
+  const sourcePolicy = sourcePolicyFromRepo(repoPath);
+  if (!sourcePolicy.talkingHeadTranscriptRequired) return [];
   if (!releaseGateRepoHasRoute(repoPath, '/latest')) return [];
 
   const schema = releaseGateMigrationText(repoPath);
@@ -4417,8 +4460,10 @@ export function releaseGateTranscriptFixtureSchemaGaps(repoPath: string) {
 }
 
 function releaseGateTranscriptFixtureAvailable(repoPath: string) {
+  const sourcePolicy = sourcePolicyFromRepo(repoPath);
   const schema = releaseGateMigrationText(repoPath);
   return (
+    sourcePolicy.talkingHeadTranscriptRequired &&
     Boolean(releaseGateLocalD1DatabaseName(repoPath)) &&
     releaseGateRepoHasRoute(repoPath, '/latest') &&
     /\bCREATE\s+TABLE\s+runs\b/i.test(schema) &&
@@ -4544,6 +4589,7 @@ export function releaseGateRuntimeProbePlan(
 ): ReleaseGateRuntimeProbePlan | undefined {
   const command = releaseGateWorkerDevCommand(repoPath);
   if (!command) return undefined;
+  const sourcePolicy = sourcePolicyFromRepo(repoPath);
   const adminHeaders = releaseGateAdminHeaders(adminToken);
   const indexAssetProbe = releaseGatePublicAssetProbe(repoPath, 'index.html');
   const defaultRootProbe: ReleaseGateHttpProbePlan = {
@@ -4574,7 +4620,7 @@ export function releaseGateRuntimeProbePlan(
     });
   }
 
-  if (releaseGateRepoHasRoute(repoPath, '/latest')) {
+  if (sourcePolicy.talkingHeadTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/latest')) {
     if (releaseGateTranscriptFixtureAvailable(repoPath)) {
       probes.push({
         method: 'GET',
@@ -4602,7 +4648,7 @@ export function releaseGateRuntimeProbePlan(
     }
   }
 
-  if (releaseGateRepoHasRoute(repoPath, '/runs')) {
+  if (sourcePolicy.talkingHeadTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/runs')) {
     probes.push(
       {
         method: 'POST',
@@ -4627,7 +4673,7 @@ export function releaseGateRuntimeProbePlan(
     );
   }
 
-  if (releaseGateRepoHasRoute(repoPath, '/profiles')) {
+  if (sourcePolicy.talkingHeadTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/profiles')) {
     probes.push(
       {
         method: 'POST',
@@ -4831,6 +4877,7 @@ export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: str
 }
 
 export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateEvidenceResult[] {
+  const sourcePolicy = sourcePolicyFromRepo(repoPath);
   const aiGaps = workersAiBindingGaps(repoPath);
   const workerConfigGaps = workerConfigHygieneGaps(repoPath);
   const workerPackageGaps = workerPackageScaffoldGaps(repoPath);
@@ -4852,7 +4899,11 @@ export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateE
 	    });
   }
 
-  if (releaseGateRepoHasRoute(repoPath, '/latest') && releaseGateMigrationText(repoPath).trim()) {
+  if (
+    sourcePolicy.talkingHeadTranscriptRequired &&
+    releaseGateRepoHasRoute(repoPath, '/latest') &&
+    releaseGateMigrationText(repoPath).trim()
+  ) {
     const ok = transcriptFixtureGaps.length === 0;
     results.push({
       tier: 'api',
@@ -8323,7 +8374,7 @@ const executeBuildTaskAttemptStep = createStep({
       existing_package_dependencies: existingPackageDependencies,
       focused_repair_file_context: focusedRepairFileContext,
       worker_config_policy: workerConfigTaskPacketPolicyForTask(task),
-      profile_kind_policy: profileKindTaskPacketPolicyForTask(task),
+      profile_kind_policy: profileKindTaskPacketPolicyForTask(task, inputData.sourcePolicy),
       platform_policy_findings: [
         ...workersAiBindingGaps(inputData.repoPath, task),
         ...workerConfigHygieneGaps(inputData.repoPath, task),
@@ -8367,7 +8418,7 @@ Execution rules:
 - When TypeScript is used, configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, types includes ./worker-configuration.d.ts and node, and strict is true.
 - .gitignore must exclude node_modules/, .wrangler/, .delivery/, .dev.vars*, .env*, and *.cpuprofile.
 - For placeholder Worker route/error responses, include actionable next steps such as available route expectations, pending setup, or the next implementation surface instead of only returning "not found".
-- When profile_kind_policy is not null, use it exactly: PROFILE_KINDS must include audience_segments and voice_profile as the persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.
+- When profile_kind_policy is not null, use it exactly: PROFILE_KINDS must include every value in profile_kind_policy.required_persistent_kinds as persistent profile kind values; do not substitute generic creator, voice, audience, topic, or R2 artifact object categories.
 - For lifecycle/status storage, make state explicit: constrained status values, timestamps, query indexes, and failed/stuck states when the lifecycle can fail. Schema tasks must encode this in D1 CHECK constraints and indexes, not only TypeScript constants.
 - For route tasks, integrate new endpoints through the existing Worker router/barrel/middleware path. Do not import route handlers into the Worker entrypoint and dispatch them before routeRequest when routeRequest already exists.
 - If failure_class is judge_timeout, preserve working code and make only the smallest evidence-improving or obvious correctness edit before the workflow retries judgment.

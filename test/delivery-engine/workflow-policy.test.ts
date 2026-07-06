@@ -72,6 +72,8 @@ import {
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
   sourceDocumentsDeclarePages,
+  sourceDocumentsDeclareTalkingHeadTranscriptContract,
+  sourceDocumentsRequiredProfileKinds,
   staleDownstreamVerificationSurfacePaths,
   taskOwnedSurfaceRoleHygiene,
   taskBoundarySurfaces,
@@ -91,6 +93,32 @@ import {
 import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
 
 const currentCompatibilityDate = () => new Date().toISOString().slice(0, 10);
+
+function writeTalkingHeadSourceDocs(repoPath: string) {
+  writeFileSync(
+    join(repoPath, 'vision.md'),
+    [
+      '# Vision',
+      'Talking Head Builder turns weekly bookmarks into one ready-to-record talking-head transcript.',
+      'The creator uploads an audience segments profile and a voice profile.',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'spec.md'),
+    [
+      '# Spec',
+      'ProfileArtifact.kind values are `audience_segments` and `voice_profile`.',
+      'Expose GET /latest for the latest TranscriptResult.',
+      'Store runs, candidates, and transcripts for completed transcript regeneration.',
+    ].join('\n'),
+  );
+}
+
+const talkingHeadSourcePolicy = {
+  pagesRequired: false,
+  requiredProfileKinds: ['audience_segments', 'voice_profile'],
+  talkingHeadTranscriptRequired: true,
+};
 
 const workerEnvironmentMirrorKeys = [
   'vars',
@@ -320,18 +348,61 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
   );
 
   const pagesPlan = taskPlan([{ depends_on: [], owned_surfaces: ['functions/api/submit.js'] }]);
-  assert.equal(pagesFunctionsExceptionHygiene(pagesPlan, { pagesRequired: false }).passed, false);
+  assert.equal(
+    pagesFunctionsExceptionHygiene(pagesPlan, {
+      pagesRequired: false,
+      requiredProfileKinds: [],
+      talkingHeadTranscriptRequired: false,
+    }).passed,
+    false,
+  );
   assert.match(
-    pagesFunctionsExceptionHygiene(pagesPlan, { pagesRequired: false }).reason,
+    pagesFunctionsExceptionHygiene(pagesPlan, {
+      pagesRequired: false,
+      requiredProfileKinds: [],
+      talkingHeadTranscriptRequired: false,
+    }).reason,
     /did not declaratively require Cloudflare Pages/,
   );
-  assert.deepEqual(pagesFunctionsExceptionHygiene(pagesPlan, { pagesRequired: true }), { passed: true, reason: 'ok' });
   assert.deepEqual(
-    pagesFunctionsExceptionHygiene(taskPlan([{ depends_on: [], owned_surfaces: ['workers/submit.js'] }]), {
-      pagesRequired: false,
+    pagesFunctionsExceptionHygiene(pagesPlan, {
+      pagesRequired: true,
+      requiredProfileKinds: [],
+      talkingHeadTranscriptRequired: false,
     }),
     { passed: true, reason: 'ok' },
   );
+  assert.deepEqual(
+    pagesFunctionsExceptionHygiene(taskPlan([{ depends_on: [], owned_surfaces: ['workers/submit.js'] }]), {
+      pagesRequired: false,
+      requiredProfileKinds: [],
+      talkingHeadTranscriptRequired: false,
+    }),
+    { passed: true, reason: 'ok' },
+  );
+});
+
+test('source docs declare product-specific profile and transcript policies', () => {
+  const genericDocs = [
+    { path: 'vision.md', content: 'Build a small Worker API with a GET /latest route for status.' },
+    { path: 'spec.md', content: 'Use D1 for jobs. No creator profile artifacts are needed.' },
+  ];
+  assert.deepEqual(sourceDocumentsRequiredProfileKinds(genericDocs), []);
+  assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(genericDocs), false);
+
+  const talkingHeadDocs = [
+    {
+      path: 'vision.md',
+      content: 'Talking Head Builder creates a ready-to-record talking-head transcript from weekly bookmarks.',
+    },
+    {
+      path: 'spec.md',
+      content:
+        'ProfileArtifact.kind values are audience_segments and voice_profile. Expose GET /latest for the latest TranscriptResult.',
+    },
+  ];
+  assert.deepEqual(sourceDocumentsRequiredProfileKinds(talkingHeadDocs), ['audience_segments', 'voice_profile']);
+  assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(talkingHeadDocs), true);
 });
 
 test('bare Worker project plans require package scaffold before runtime surfaces', () => {
@@ -619,6 +690,7 @@ test('profile contract consumers normalize behind arbitrary migration tasks', ()
 
 test('profile kind producer contract requires audience and voice profile kinds', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-profile-producer-contract-'));
+  writeTalkingHeadSourceDocs(repoPath);
   mkdirSync(join(repoPath, 'src', 'domain'), { recursive: true });
   writeFileSync(join(repoPath, 'src', 'domain', 'profileArtifacts.ts'), 'export const PROFILE_KINDS = ["creator"] as const;\n');
 
@@ -630,7 +702,7 @@ test('profile kind producer contract requires audience and voice profile kinds',
   ]);
 
   assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /audience_segments, voice_profile/);
-  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /generic creator kind/);
+  assert.match(profileKindContractGaps(repoPath, plan.tasks[0]).join('\n'), /source-required profile kind/);
 
   writeFileSync(
     join(repoPath, 'src', 'domain', 'profileArtifacts.ts'),
@@ -642,6 +714,7 @@ test('profile kind producer contract requires audience and voice profile kinds',
 
 test('profile kind contract treats profileKinds module as the producer surface', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-profile-kinds-contract-'));
+  writeTalkingHeadSourceDocs(repoPath);
   mkdirSync(join(repoPath, 'src', 'domain'), { recursive: true });
   writeFileSync(
     join(repoPath, 'src', 'domain', 'profileKinds.ts'),
@@ -667,6 +740,7 @@ test('profile kind contract treats profileKinds module as the producer surface',
 
 test('profile kind contract treats root domain module as the producer surface', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-root-domain-contract-'));
+  writeTalkingHeadSourceDocs(repoPath);
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   writeFileSync(
     join(repoPath, 'src', 'domain.ts'),
@@ -692,6 +766,7 @@ test('profile kind contract treats root domain module as the producer surface', 
 
 test('profile kind contract treats root contracts module as the producer surface', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-root-contracts-contract-'));
+  writeTalkingHeadSourceDocs(repoPath);
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   writeFileSync(
     join(repoPath, 'src', 'contracts.ts'),
@@ -707,13 +782,16 @@ test('profile kind contract treats root contracts module as the producer surface
   ]);
 
   assert.deepEqual(profileKindContractGaps(repoPath, plan.tasks[0]), []);
-  assert.equal(profileKindTaskPacketPolicy().producer_surfaces.includes('src/contracts.ts'), true);
+  assert.equal(profileKindTaskPacketPolicy(talkingHeadSourcePolicy)?.producer_surfaces.includes('src/contracts.ts'), true);
 });
 
 test('profile kind task packet policy names required persistent kinds', () => {
-  assert.deepEqual(profileKindTaskPacketPolicy().required_persistent_kinds, ['audience_segments', 'voice_profile']);
-  assert.equal(profileKindTaskPacketPolicy().producer_surfaces.includes('src/domain/profileKinds.ts'), true);
-  assert.match(profileKindTaskPacketPolicy().guidance, /Do not substitute generic creator/);
+  assert.deepEqual(profileKindTaskPacketPolicy(talkingHeadSourcePolicy)?.required_persistent_kinds, [
+    'audience_segments',
+    'voice_profile',
+  ]);
+  assert.equal(profileKindTaskPacketPolicy(talkingHeadSourcePolicy)?.producer_surfaces.includes('src/domain/profileKinds.ts'), true);
+  assert.match(profileKindTaskPacketPolicy(talkingHeadSourcePolicy)?.guidance ?? '', /Do not substitute generic/);
 });
 
 test('task packet policies are scoped to owning tasks', () => {
@@ -740,7 +818,7 @@ test('task packet policies are scoped to owning tasks', () => {
     'staging',
     'production',
   ]);
-  assert.deepEqual(profileKindTaskPacketPolicyForTask(profileTask)?.required_persistent_kinds, [
+  assert.deepEqual(profileKindTaskPacketPolicyForTask(profileTask, talkingHeadSourcePolicy)?.required_persistent_kinds, [
     'audience_segments',
     'voice_profile',
   ]);
@@ -2098,6 +2176,7 @@ test('release gate runtime probe planner verifies public Worker assets', () => {
 
 test('release gate runtime probe planner covers common Worker API state and error routes', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-probes-'));
+  writeTalkingHeadSourceDocs(repoPath);
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
   writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "src/index.ts"\n');
@@ -2148,8 +2227,31 @@ test('release gate runtime probe planner covers common Worker API state and erro
   );
 });
 
+test('release gate runtime probe planner source-gates Talking Head product routes', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-generic-runtime-probes-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "src/index.ts"\n');
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      "if (pathname === '/profiles') {}",
+      "if (pathname === '/runs') {}",
+      "if (pathname === '/latest') {}",
+      "if (pathname === '/health') {}",
+    ].join('\n'),
+  );
+
+  const probes = releaseGateRuntimeProbePlan(repoPath, 'test-admin-token')?.probes ?? [];
+  assert.deepEqual(
+    probes.map((probe) => `${probe.method} ${probe.path}`),
+    ['GET /', 'GET /health'],
+  );
+});
+
 test('release gate runtime probe planner discovers routes in vanilla JS Worker entries', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-js-probes-'));
+  writeTalkingHeadSourceDocs(repoPath);
   mkdirSync(join(repoPath, 'workers'), { recursive: true });
   writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
   writeFileSync(
@@ -2197,6 +2299,7 @@ test('release gate runtime probe planner discovers routes in vanilla JS Worker e
 
 test('release gate evidence planner seeds latest transcript and version audit fixtures when schema is present', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-transcript-fixture-'));
+  writeTalkingHeadSourceDocs(repoPath);
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   mkdirSync(join(repoPath, 'migrations'), { recursive: true });
   writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
@@ -2283,6 +2386,7 @@ test('release gate evidence planner seeds latest transcript and version audit fi
 
 test('release gate latest transcript fixture schema check catches incomplete migrations', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-transcript-schema-gaps-'));
+  writeTalkingHeadSourceDocs(repoPath);
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   mkdirSync(join(repoPath, 'migrations'), { recursive: true });
   writeFileSync(join(repoPath, 'src/index.ts'), "if (pathname === '/latest') {}\n");
