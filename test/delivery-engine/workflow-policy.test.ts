@@ -399,6 +399,41 @@ test('implementation touched files accumulate successful writes across retries',
   );
 });
 
+test('implementation touched files infer stage windows for workspace events without stage fields', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-files-touched-stage-window-'));
+  mkdirSync(join(repoPath, 'src/storage'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default {};\n');
+  writeFileSync(join(repoPath, 'src/storage/db.ts'), 'export {};\n');
+  writeFileSync(join(repoPath, 'src/observability.ts'), 'export {};\n');
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/storage/db.ts', 'src/observability.ts'],
+    },
+  ]).tasks;
+
+  assert.deepEqual(
+    implementationFilesTouched({
+      repoPath,
+      stage: 'build:T4',
+      task,
+      events: [
+        { type: 'stage_start', stage: 'build:T1' },
+        { type: 'tool_use', tool: 'mastra_workspace_write_file', ok: true, paths: ['src/index.ts'] },
+        { type: 'stage_end', stage: 'build:T1' },
+        { type: 'stage_start', stage: 'build:T4' },
+        { type: 'tool_use', tool: 'mastra_workspace_read_file', ok: true, paths: ['src/index.ts'] },
+        { type: 'tool_use', tool: 'mastra_workspace_write_file', ok: true, paths: ['src/storage/db.ts'] },
+        { type: 'stage_end', stage: 'build:T4' },
+        { type: 'stage_start', stage: 'build:T4' },
+        { type: 'tool_use', tool: 'mastra_workspace_write_file', ok: true, paths: ['src/observability.ts'] },
+        { type: 'stage_end', stage: 'build:T4' },
+      ],
+    }),
+    ['src/storage/db.ts', 'src/observability.ts'],
+  );
+});
+
 test('owned surface presence normalizes annotated paths and ignores globs', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-owned-surfaces-'));
   writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo"\n');

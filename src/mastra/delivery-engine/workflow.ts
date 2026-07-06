@@ -1680,13 +1680,35 @@ export function implementationFilesTouched({
   task: Task;
   events: DeliveryEvent[];
 }) {
-  const written = events
-    .filter((event) => event.stage === stage)
+  const stageEvents = implementationStageEvents(events, stage);
+  const written = stageEvents
     .filter((event) => event.ok !== false && implementationWriteTools.has(String(event.tool)))
     .flatMap((event) => event.paths ?? [])
     .filter((path) => path && !path.startsWith('.delivery/'));
 
   return Array.from(new Set(written.length ? written : existingOwnedFiles(repoPath, task)));
+}
+
+function implementationStageEvents(events: DeliveryEvent[], stage: string) {
+  const stageEvents: DeliveryEvent[] = [];
+  let active = false;
+
+  for (const event of events) {
+    if (event.type === 'stage_start' && event.stage === stage) {
+      active = true;
+      stageEvents.push(event);
+      continue;
+    }
+
+    if (!active) continue;
+
+    stageEvents.push(event);
+    if (event.type === 'stage_end' && event.stage === stage) {
+      active = false;
+    }
+  }
+
+  return stageEvents;
 }
 
 function packageScripts(repoPath: string) {
