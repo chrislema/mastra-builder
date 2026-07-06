@@ -3841,6 +3841,27 @@ function releaseGateWorkerConfigPath(repoPath: string) {
   return ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml'].map((file) => join(root, file)).find((path) => existsSync(path));
 }
 
+function releaseGateWorkerConfigMain(repoPath: string) {
+  const configPath = releaseGateWorkerConfigPath(repoPath);
+  if (!configPath) return undefined;
+
+  const text = readFileSync(configPath, 'utf8');
+  if (configPath.endsWith('.toml')) return firstTomlStringValue(text, 'main');
+
+  const config = parseWranglerJsonConfig(text);
+  return typeof config?.main === 'string' ? config.main : undefined;
+}
+
+function releaseGateHasTypeScriptWorkerSource(repoPath: string) {
+  if (repoUsesTypeScriptWorkerSource(repoPath)) return true;
+
+  const main = releaseGateWorkerConfigMain(repoPath);
+  const normalizedMain = typeof main === 'string' ? normalizeDeliveryPathReference(main) : undefined;
+  if (!normalizedMain || isAbsolute(normalizedMain) || !workerSourceSurfaceIsTypeScript(normalizedMain)) return false;
+
+  return existsSync(join(resolve(repoPath), normalizedMain));
+}
+
 export function releaseGateLocalD1DatabaseName(repoPath: string) {
   const wranglerPath = releaseGateWorkerConfigPath(repoPath);
   if (!wranglerPath) return undefined;
@@ -4105,6 +4126,11 @@ export function releaseGateWorkerDeployDryRunCommand(repoPath: string) {
   return wranglerProcessCommand(repoPath, 'deploy --dry-run', ['deploy', '--dry-run']);
 }
 
+export function releaseGateWorkerTypesCheckCommand(repoPath: string) {
+  if (!releaseGateWorkerConfigPath(repoPath) || !releaseGateHasTypeScriptWorkerSource(repoPath)) return undefined;
+  return wranglerProcessCommand(repoPath, 'types --check', ['types', '--check']);
+}
+
 function releaseGateStaticAssetTextMarker(repoPath: string, relativePath: string) {
   const assetPath = join(resolve(repoPath), relativePath);
   if (!existsSync(assetPath)) return undefined;
@@ -4314,6 +4340,19 @@ function createReleaseGateRuntimeStatePath(repoPath: string) {
 
 export function releaseGateEvidenceCommandPlan(repoPath: string, persistTo?: string): ReleaseGateEvidenceCommand[] {
   const commands: ReleaseGateEvidenceCommand[] = [];
+  const typesCheckCommand = releaseGateWorkerTypesCheckCommand(repoPath);
+  if (typesCheckCommand) {
+    commands.push({
+      tier: 'smoke',
+      command: typesCheckCommand.command,
+      executable: typesCheckCommand.executable,
+      args: typesCheckCommand.args,
+      required: true,
+      reason:
+        'TypeScript Worker source and Wrangler config were present, so generated Worker binding types must be current before local validation.',
+    });
+  }
+
   for (const script of packageVerificationScripts(repoPath)) {
     commands.push({
       tier: 'smoke',
