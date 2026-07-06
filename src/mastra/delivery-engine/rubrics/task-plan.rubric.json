@@ -6,7 +6,7 @@
   },
   "scale": { "min": 1, "max": 5 },
   "evaluation_notes": [
-    "For Chris's Worker-first delivery harness, an unspecified external service contract is not a blocker when the plan chooses a safe default, records the uncertainty as a safe assumption or risk, and isolates the integration behind a concrete adapter surface such as src/bookmarkClient.ts.",
+    "For Chris's Worker-first delivery harness, an unspecified external service contract is not a blocker when the plan chooses a safe default, records the uncertainty as a safe assumption or risk, and isolates the integration behind a concrete adapter surface such as src/serviceClient.ts.",
     "Do not penalize open_decisions_hygiene for non-blocking risks that are explicitly made low-blast-radius by an adapter task; reserve low scores for unknowns that prevent an executable task from being implemented safely."
   ],
   "gates": [

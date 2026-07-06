@@ -221,12 +221,13 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'worker-first-local-v14';
+const plannerPolicyVersion = 'worker-first-local-v15';
 
 const sourcePolicySchema = z.object({
   pagesRequired: z.boolean().default(false),
   requiredProfileKinds: z.array(z.string()).default([]),
   talkingHeadTranscriptRequired: z.boolean().default(false),
+  bookmarksServiceRequired: z.boolean().default(false),
 });
 
 const plannerCacheSchema = z.object({
@@ -668,12 +669,24 @@ export function sourceDocumentsDeclareTalkingHeadTranscriptContract(sourceDocume
   );
 }
 
+export function sourceDocumentsDeclareBookmarksService(sourceDocuments: Array<{ path: string; content: string }>) {
+  const text = sourceDocumentText(sourceDocuments);
+  return /\bBOOKMARKS\b|\benv\.BOOKMARKS\b|\bbookmarks\s+service\b|\bbookmark\s+service\b/i.test(text);
+}
+
 function sourcePolicyFromDocuments(sourceDocuments: Array<{ path: string; content: string }>): SourcePolicy {
   return {
     pagesRequired: sourceDocumentsDeclarePages(sourceDocuments),
     requiredProfileKinds: sourceDocumentsRequiredProfileKinds(sourceDocuments),
     talkingHeadTranscriptRequired: sourceDocumentsDeclareTalkingHeadTranscriptContract(sourceDocuments),
+    bookmarksServiceRequired: sourceDocumentsDeclareBookmarksService(sourceDocuments),
   };
+}
+
+function bookmarksAdapterPolicyLine(sourcePolicy: SourcePolicy) {
+  return sourcePolicy.bookmarksServiceRequired
+    ? '\n- The BOOKMARKS service API shape is not a human blocker. Default to an env.BOOKMARKS.fetch adapter in src/bookmarkClient.ts with a date-window request and normalized Bookmark[] response, then record contract mismatch as a risk.'
+    : '';
 }
 
 function sourcePolicyFromRepo(repoPath: string): SourcePolicy {
@@ -7116,7 +7129,7 @@ Open-decision hygiene:
 - Do not stop for preferences the harness already settles: Worker over Pages unless source docs declaratively require Pages, vanilla UI over frameworks, Wrangler over GitHub Actions deploy, local validation before production, or Workers AI binding shape.
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
 - If an unknown is a non-blocking delivery concern, put it in taskPlan.risks.
-- The BOOKMARKS service API shape is not a human blocker. Default to an env.BOOKMARKS.fetch adapter in src/bookmarkClient.ts with a date-window request and normalized Bookmark[] response, then record contract mismatch as a risk.
+${bookmarksAdapterPolicyLine(sourcePolicy)}
 - Every open_decisions entry must be one string with this exact field shape:
   "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
 - The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.
@@ -7297,6 +7310,7 @@ async function reviseTaskPlanFromPlanGate({
   const stage = `plan:gate-repair-${revisionNumber}`;
   const revisionPath = `.delivery/artifacts/task-plan.plan-gate-revision-${revisionNumber}.json`;
   const remediation = planGateRevisionRemediation({ deterministicResults, judgment });
+  const sourcePolicy = sourcePolicyFromRepo(repoPath);
 
   await appendDeliveryEventState({
     repoPath,
@@ -7349,7 +7363,7 @@ Task-plan quality requirements:
 - Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
 - Do not plan functions/** owned surfaces unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
 - Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks.
-- The BOOKMARKS service API shape is not a human blocker. Default to an env.BOOKMARKS.fetch adapter in src/bookmarkClient.ts with a date-window request and normalized Bookmark[] response, then record contract mismatch as a risk.
+${bookmarksAdapterPolicyLine(sourcePolicy)}
 - Every taskPlan.open_decisions entry must use this exact field shape:
 "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
 - The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.

@@ -71,6 +71,7 @@ import {
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
+  sourceDocumentsDeclareBookmarksService,
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareTalkingHeadTranscriptContract,
   sourceDocumentsRequiredProfileKinds,
@@ -108,6 +109,7 @@ function writeTalkingHeadSourceDocs(repoPath: string) {
     [
       '# Spec',
       'ProfileArtifact.kind values are `audience_segments` and `voice_profile`.',
+      'Fetch recent bookmarks through env.BOOKMARKS.',
       'Expose GET /latest for the latest TranscriptResult.',
       'Store runs, candidates, and transcripts for completed transcript regeneration.',
     ].join('\n'),
@@ -118,6 +120,7 @@ const talkingHeadSourcePolicy = {
   pagesRequired: false,
   requiredProfileKinds: ['audience_segments', 'voice_profile'],
   talkingHeadTranscriptRequired: true,
+  bookmarksServiceRequired: true,
 };
 
 const workerEnvironmentMirrorKeys = [
@@ -353,6 +356,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       talkingHeadTranscriptRequired: false,
+      bookmarksServiceRequired: false,
     }).passed,
     false,
   );
@@ -361,6 +365,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       talkingHeadTranscriptRequired: false,
+      bookmarksServiceRequired: false,
     }).reason,
     /did not declaratively require Cloudflare Pages/,
   );
@@ -369,6 +374,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: true,
       requiredProfileKinds: [],
       talkingHeadTranscriptRequired: false,
+      bookmarksServiceRequired: false,
     }),
     { passed: true, reason: 'ok' },
   );
@@ -377,6 +383,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       talkingHeadTranscriptRequired: false,
+      bookmarksServiceRequired: false,
     }),
     { passed: true, reason: 'ok' },
   );
@@ -389,6 +396,7 @@ test('source docs declare product-specific profile and transcript policies', () 
   ];
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(genericDocs), []);
   assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(genericDocs), false);
+  assert.equal(sourceDocumentsDeclareBookmarksService(genericDocs), false);
 
   const talkingHeadDocs = [
     {
@@ -400,9 +408,11 @@ test('source docs declare product-specific profile and transcript policies', () 
       content:
         'ProfileArtifact.kind values are audience_segments and voice_profile. Expose GET /latest for the latest TranscriptResult.',
     },
+    { path: 'spec.md', content: 'Fetch recent bookmarks through the BOOKMARKS service binding.' },
   ];
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(talkingHeadDocs), ['audience_segments', 'voice_profile']);
   assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(talkingHeadDocs), true);
+  assert.equal(sourceDocumentsDeclareBookmarksService(talkingHeadDocs), true);
 });
 
 test('bare Worker project plans require package scaffold before runtime surfaces', () => {
