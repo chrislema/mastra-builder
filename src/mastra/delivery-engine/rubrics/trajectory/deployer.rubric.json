@@ -2,13 +2,13 @@
   "target": {
     "type": "prompt",
     "name": "deployer-trajectory",
-    "source_summary": "Native deployment workflow policy (deploy only from passing evidence; verify the result; report clearly) graded over the stage's event log"
+    "source_summary": "Native deployment workflow policy (workflow-owned Wrangler deploy from passing evidence; verify the result; report clearly) graded over the stage's event log"
   },
   "scale": { "min": 1, "max": 5 },
   "gates": [
     {
       "id": "release_gate_read_before_deploy",
-      "description": "The release gate artifact (or its judgment) was read before any cf_deploy turn. Deploying unread is deploying on optimism — binary.",
+      "description": "The release gate artifact (or its judgment) was read before any native deploy event. Deploying unread is deploying on optimism.",
       "severity": "critical",
       "on_fail": "cap",
       "cap_value": 0.0,
@@ -16,7 +16,7 @@
     },
     {
       "id": "live_verify_after_deploy",
-      "description": "At least one live_verify turn follows the cf_deploy turn.",
+      "description": "At least one live_verify event follows each native deploy event.",
       "severity": "critical",
       "on_fail": "cap",
       "cap_value": 0.0,
@@ -35,7 +35,7 @@
     {
       "id": "evidence_over_narration",
       "weight": 9,
-      "description": "The deployment report's claims equal the live_verify results.",
+      "description": "The deployment report and deployment advisor claims equal the live_verify results.",
       "anchors": {
         "1": "Report claims outcomes (latency fine, errors clean) absent from any live_verify output.",
         "3": "Claims match the verify results, but anomalies visible in the results are not reported.",
@@ -48,7 +48,7 @@
     {
       "id": "procedure_fidelity",
       "weight": 6,
-      "description": "Steps run in the safe order: gate check → deploy → migrations-with-deploy as planned → verify → report.",
+      "description": "Steps run in the safe order: gate check, native Wrangler deploy, migrations-with-deploy as planned, live verification, report.",
       "anchors": {
         "1": "Out-of-order operations (verify before deploy completes; migrations after verification; report before verify).",
         "3": "Order correct but a step's result was not awaited/checked before proceeding.",
@@ -76,7 +76,7 @@
       "anchors": {
         "1": "Repeated deploys without changed input, or repeated identical verifies.",
         "3": "Minor redundancy.",
-        "5": "Gate-check → deploy → verify → report, each once unless a result demanded action."
+        "5": "Gate check, deploy, verify, and report each happen once unless a result demanded action."
       },
       "model": "default",
       "surface": "trajectory"
@@ -94,8 +94,8 @@
   ],
   "exemplars": {
     "known_good": {
-      "summary": "Gate, deploy, verify, faithful report.",
-      "content": "[{t:1, tool:'read_artifact', in:'release_gate (PASS)'}, {t:2, tool:'query_evidence', in:'judgments stage=test'}, {t:3, tool:'mastra_workspace_execute_command', in:'wrangler deploy --env production + D1 migration command', out:'deployed v14, migration ok'}, {t:4, tool:'live_verify', in:'health + login 200/401 probes', out:'pass; p50 240ms (was 180ms)'}, {t:5, tool:'write_artifact', in:'deployment_report (includes Wrangler command, no GitHub Actions deploy, latency anomaly + monitor plan)'}, {t:6, tool:'complete_stage'}]",
+      "summary": "Gate, native deploy, verify, faithful report.",
+      "content": "[{t:1, tool:'read_artifact', in:'release_gate (PASS)'}, {t:2, tool:'query_evidence', in:'judgments stage=test'}, {t:3, event:'deploy', actor:'native_workflow', in:'wrangler deploy --env production + D1 migration command', out:'deployed v14, migration ok'}, {t:4, event:'live_verify', in:'health + login 200/401 probes', out:'pass; p50 240ms (was 180ms)'}, {t:5, tool:'write_artifact', in:'deployment_report (includes Wrangler command, no GitHub Actions deploy, latency anomaly + monitor plan)'}, {t:6, tool:'complete_stage'}]",
       "expected": { "gates_failed": [], "overall_min": 0.8 }
     },
     "known_bad": {
