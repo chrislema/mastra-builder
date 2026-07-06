@@ -4799,6 +4799,7 @@ export function localDeploymentReportFromReleaseGateEvidence({
       .map((command) => command.command) ?? [];
   const hasRequiredIssue = issues.some((issue) => /Required/.test(issue.impact));
   const releaseGatePassed = releaseGate.decision === 'pass' && releaseGate.blockers.length === 0;
+  const result = releaseGatePassed && !hasRequiredIssue ? 'success' : 'failure';
 
   return {
     artifact_type: 'deployment-report',
@@ -4811,7 +4812,7 @@ export function localDeploymentReportFromReleaseGateEvidence({
       `Release gate: ${releaseGatePath}`,
       ...(evidencePath ? [`Evidence: ${evidencePath}`] : []),
     ],
-    result: releaseGatePassed && !hasRequiredIssue ? 'success' : 'failure',
+    result,
     verification: verification.length
       ? verification
       : [
@@ -4823,7 +4824,10 @@ export function localDeploymentReportFromReleaseGateEvidence({
           },
         ],
     issues,
-    next_action: 'proceed',
+    next_action:
+      result === 'success'
+        ? 'proceed'
+        : 'fix required local validation failures and rerun the release gate before production approval',
     rollback: {
       prior_revision: 'none (local validation only)',
       steps: 'No production rollback is required because no Wrangler production deploy command ran.',

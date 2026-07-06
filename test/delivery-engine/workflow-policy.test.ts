@@ -1209,6 +1209,55 @@ test('local deployment report reuses release-gate evidence without production de
   assert.match(report.rollback.steps, /No production rollback/);
 });
 
+test('local deployment report blocks next action when required local evidence failed', () => {
+  const report = localDeploymentReportFromReleaseGateEvidence({
+    runId: 'run-local-fail',
+    releaseGate: {
+      artifact_type: 'release-gate',
+      decision: 'pass',
+      event_type: 'pre_deployment',
+      tiers: [
+        { tier: 'smoke', status: 'passed', run_ref: 'npm run typecheck' },
+        { tier: 'api', status: 'failed', reason: 'D1 migration failed.' },
+        { tier: 'e2e', status: 'not_required', reason: 'No browser harness.' },
+        { tier: 'full_matrix', status: 'not_required', reason: 'No production deploy requested.' },
+      ],
+      critical_areas: [
+        { area: 'auth', status: 'not_applicable', reason: 'No auth surface.' },
+        { area: 'billing', status: 'not_applicable', reason: 'No billing surface.' },
+        { area: 'state_integrity', status: 'missing', reason: 'D1 migration failed.' },
+        { area: 'data_safety', status: 'not_applicable', reason: 'No private data surface.' },
+        { area: 'deployment_correctness', status: 'missing', reason: 'Local validation failed.' },
+        { area: 'error_responses', status: 'not_applicable', reason: 'No API routes.' },
+      ],
+      blockers: [],
+      cosmetic_issues: [],
+      summary: 'Incorrect pass with failed local evidence.',
+    },
+    releaseGatePath: '.delivery/artifacts/release-gate.json',
+    evidence: {
+      artifact_type: 'test-evidence',
+      stage: 'test:a1',
+      notes: [],
+      commands: [
+        {
+          tier: 'api',
+          command: 'npx wrangler d1 migrations apply demo-db --local',
+          ok: false,
+          required: true,
+          reason: 'Local D1 migration validation is required.',
+          error: 'migration failed',
+        },
+      ],
+    },
+  });
+
+  assert.equal(report.result, 'failure');
+  assert.match(report.next_action, /fix required local validation failures/);
+  assert.equal(report.issues.length, 1);
+  assert.match(report.issues[0].action, /production approval/);
+});
+
 test('release gate evidence planner uses bounded local commands', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-evidence-'));
   mkdirSync(join(repoPath, 'migrations'), { recursive: true });
