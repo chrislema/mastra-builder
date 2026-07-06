@@ -1,6 +1,7 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
@@ -1283,6 +1284,7 @@ type ReleaseGateEvidenceResult = {
   reason: string;
   output_summary?: string;
   error?: string;
+  probes?: ReleaseGateHttpProbeResult[];
 };
 
 type ReleaseGateEvidence = {
@@ -1292,9 +1294,49 @@ type ReleaseGateEvidence = {
   notes: string[];
 };
 
+type ReleaseGateProcessCommand = {
+  command: string;
+  executable: string;
+  args: string[];
+};
+
+type ReleaseGateHttpProbePlan = {
+  method: 'GET';
+  path: string;
+  expected: string;
+  expectedStatus?: number;
+  statusBelow?: number;
+  jsonContains?: Record<string, string | number | boolean | null>;
+  reason: string;
+};
+
+type ReleaseGateRuntimeProbePlan = {
+  tier: 'api';
+  command: ReleaseGateProcessCommand;
+  probes: ReleaseGateHttpProbePlan[];
+  required: boolean;
+  reason: string;
+};
+
+type ReleaseGateHttpProbeResult = {
+  method: ReleaseGateHttpProbePlan['method'];
+  path: string;
+  url: string;
+  expected: string;
+  ok: boolean;
+  status?: number;
+  response_summary?: string;
+  error?: string;
+};
+
 function firstTomlStringValue(text: string, key: string) {
   const match = new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, 'm').exec(text);
   return match?.[1];
+}
+
+function releaseGateWorkerConfigPath(repoPath: string) {
+  const root = resolve(repoPath);
+  return ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml'].map((file) => join(root, file)).find((path) => existsSync(path));
 }
 
 export function releaseGateLocalD1DatabaseName(repoPath: string) {
@@ -1303,6 +1345,93 @@ export function releaseGateLocalD1DatabaseName(repoPath: string) {
 
   const text = readFileSync(wranglerPath, 'utf8');
   return firstTomlStringValue(text, 'database_name') ?? firstTomlStringValue(text, 'name');
+}
+
+function sourceTreeContainsText(rootPath: string, needle: string, scanned = { count: 0 }): boolean {
+  if (!existsSync(rootPath) || scanned.count > 150) return false;
+
+  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.delivery') continue;
+
+    const path = join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      if (sourceTreeContainsText(path, needle, scanned)) return true;
+      continue;
+    }
+
+    if (!/\.[cm]?[jt]sx?$/.test(entry.name)) continue;
+    scanned.count += 1;
+    if (scanned.count > 150) return false;
+
+    try {
+      if (readFileSync(path, 'utf8').includes(needle)) return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function releaseGateRepoHasRoute(repoPath: string, route: string) {
+  const root = resolve(repoPath);
+  if (route === '/health' && existsSync(join(root, 'src/routes/health.ts'))) return true;
+  return sourceTreeContainsText(join(root, 'src'), route);
+}
+
+export function releaseGateWorkerDevCommand(repoPath: string, port: number | '<port>' = '<port>') {
+  if (!releaseGateWorkerConfigPath(repoPath)) return undefined;
+
+  const scripts = packageScripts(repoPath);
+  const devScript = scripts.dev;
+  const portValue = String(port);
+  if (typeof devScript === 'string' && /\bwrangler\s+dev\b/.test(devScript)) {
+    return {
+      command: `npm run dev -- --ip 127.0.0.1 --port ${portValue}`,
+      executable: 'npm',
+      args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', portValue],
+    } satisfies ReleaseGateProcessCommand;
+  }
+
+  return {
+    command: `npx wrangler dev --ip 127.0.0.1 --port ${portValue}`,
+    executable: 'npx',
+    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', portValue],
+  } satisfies ReleaseGateProcessCommand;
+}
+
+export function releaseGateRuntimeProbePlan(repoPath: string): ReleaseGateRuntimeProbePlan | undefined {
+  const command = releaseGateWorkerDevCommand(repoPath);
+  if (!command) return undefined;
+
+  const probes: ReleaseGateHttpProbePlan[] = [
+    {
+      method: 'GET',
+      path: '/',
+      expected: 'Local Worker runtime responds with an HTTP status below 500.',
+      statusBelow: 500,
+      reason: 'A non-5xx response proves wrangler dev started and can serve local Worker requests.',
+    },
+  ];
+
+  if (releaseGateRepoHasRoute(repoPath, '/health')) {
+    probes.push({
+      method: 'GET',
+      path: '/health',
+      expected: 'GET /health returns HTTP 200 JSON with status "ok".',
+      expectedStatus: 200,
+      jsonContains: { status: 'ok' },
+      reason: 'A health route was present in the source tree.',
+    });
+  }
+
+  return {
+    tier: 'api',
+    command,
+    probes,
+    required: true,
+    reason: 'A Wrangler Worker config was present, so local runtime verification is required before deployment.',
+  };
 }
 
 export function releaseGateEvidenceCommandPlan(repoPath: string): ReleaseGateEvidenceCommand[] {
@@ -1396,6 +1525,259 @@ async function runReleaseGateEvidenceCommand({
   }
 }
 
+function appendBoundedOutput(current: string, chunk: unknown, limit = 24_000) {
+  const next = `${current}${String(chunk)}`;
+  return next.length > limit ? next.slice(next.length - limit) : next;
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+async function availableTcpPort() {
+  return await new Promise<number>((resolvePort, reject) => {
+    const server = createServer();
+    server.unref();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Could not allocate a local TCP port for the Worker runtime probe.'));
+        return;
+      }
+
+      server.close((error) => {
+        if (error) reject(error);
+        else resolvePort(address.port);
+      });
+    });
+  });
+}
+
+function waitForChildExit(child: ChildProcess) {
+  return new Promise<void>((resolveExit) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolveExit();
+      return;
+    }
+    child.once('exit', () => resolveExit());
+  });
+}
+
+function signalChildProcess(child: ChildProcess, signal: NodeJS.Signals) {
+  if (child.pid && process.platform !== 'win32') {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall through to direct child signaling when process-group signaling is unavailable.
+    }
+  }
+
+  child.kill(signal);
+}
+
+async function stopChildProcess(child: ChildProcess) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+
+  signalChildProcess(child, 'SIGTERM');
+  await Promise.race([waitForChildExit(child), delay(3_000)]);
+
+  if (child.exitCode === null && child.signalCode === null) {
+    signalChildProcess(child, 'SIGKILL');
+    await Promise.race([waitForChildExit(child), delay(1_000)]);
+  }
+}
+
+function probeStatusMatches(probe: ReleaseGateHttpProbePlan, status: number) {
+  if (probe.expectedStatus !== undefined) return status === probe.expectedStatus;
+  if (probe.statusBelow !== undefined) return status < probe.statusBelow;
+  return status >= 200 && status < 400;
+}
+
+function jsonContainsExpected(
+  body: string,
+  expected: Record<string, string | number | boolean | null>,
+): { ok: boolean; error?: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch (error) {
+    return { ok: false, error: `Response was not valid JSON: ${compactDiagnostic(error, 300)}` };
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { ok: false, error: 'Response JSON was not an object.' };
+  }
+
+  const record = parsed as Record<string, unknown>;
+  for (const [key, value] of Object.entries(expected)) {
+    if (record[key] !== value) {
+      return { ok: false, error: `Expected JSON field ${key}=${JSON.stringify(value)}, received ${JSON.stringify(record[key])}.` };
+    }
+  }
+
+  return { ok: true };
+}
+
+async function runHttpProbe(baseUrl: string, probe: ReleaseGateHttpProbePlan): Promise<ReleaseGateHttpProbeResult> {
+  const url = new URL(probe.path, baseUrl).toString();
+  try {
+    const response = await fetch(url, {
+      method: probe.method,
+      signal: AbortSignal.timeout(3_000),
+    });
+    const body = await response.text();
+    const statusOk = probeStatusMatches(probe, response.status);
+    const jsonCheck = probe.jsonContains ? jsonContainsExpected(body, probe.jsonContains) : { ok: true };
+    const ok = statusOk && jsonCheck.ok;
+    const summary = [
+      `HTTP ${response.status}`,
+      response.headers.get('content-type') ? `content-type ${response.headers.get('content-type')}` : undefined,
+      body.trim() ? `body ${compactDiagnostic(body.trim(), 300)}` : undefined,
+    ]
+      .filter(Boolean)
+      .join('; ');
+
+    return {
+      method: probe.method,
+      path: probe.path,
+      url,
+      expected: probe.expected,
+      ok,
+      status: response.status,
+      response_summary: summary,
+      error: ok
+        ? undefined
+        : jsonCheck.error ?? `Expected ${probe.expected}, received HTTP ${response.status}.`,
+    };
+  } catch (error) {
+    return {
+      method: probe.method,
+      path: probe.path,
+      url,
+      expected: probe.expected,
+      ok: false,
+      error: compactDiagnostic(error, 500),
+    };
+  }
+}
+
+async function runReleaseGateRuntimeProbe({
+  repoPath,
+  mastra,
+  stage,
+}: {
+  repoPath: string;
+  mastra: any;
+  stage: string;
+}): Promise<ReleaseGateEvidenceResult | undefined> {
+  const plan = releaseGateRuntimeProbePlan(repoPath);
+  if (!plan) return undefined;
+
+  const port = await availableTcpPort();
+  const command = releaseGateWorkerDevCommand(repoPath, port);
+  if (!command) return undefined;
+
+  let output = '';
+  let processError: Error | undefined;
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  let probes: ReleaseGateHttpProbeResult[] = [];
+  const child = spawn(command.executable, command.args, {
+    cwd: resolve(repoPath),
+    detached: process.platform !== 'win32',
+    env: {
+      ...process.env,
+      CI: process.env.CI ?? '1',
+      NO_COLOR: '1',
+      WRANGLER_SEND_METRICS: 'false',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  child.stdout?.on('data', (chunk) => {
+    output = appendBoundedOutput(output, chunk);
+  });
+  child.stderr?.on('data', (chunk) => {
+    output = appendBoundedOutput(output, chunk);
+  });
+  child.once('error', (error) => {
+    processError = error;
+  });
+  child.once('exit', (code, signal) => {
+    exit = { code, signal };
+  });
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + 75_000;
+  try {
+    while (Date.now() < deadline) {
+      if (processError) throw processError;
+      if (exit) throw new Error(`Worker runtime command exited before probes passed: code ${exit.code}, signal ${exit.signal}.`);
+
+      probes = [];
+      for (const probe of plan.probes) {
+        probes.push(await runHttpProbe(baseUrl, probe));
+      }
+
+      if (probes.every((probe) => probe.ok)) {
+        const outputSummary = compactDiagnostic(output.trim() || 'wrangler dev served all runtime probes.', 900);
+        await appendDeliveryEventState({
+          repoPath,
+          mastra,
+          event: {
+            type: 'run_code',
+            stage,
+            command: command.command,
+            ok: true,
+            output_summary: outputSummary,
+            probes,
+          },
+        });
+        return {
+          tier: plan.tier,
+          command: command.command,
+          ok: true,
+          required: plan.required,
+          reason: plan.reason,
+          output_summary: outputSummary,
+          probes,
+        };
+      }
+
+      await delay(1_000);
+    }
+
+    throw new Error(`Worker runtime probes did not pass within 75s. Last probe results: ${JSON.stringify(probes)}`);
+  } catch (error) {
+    const failure = compactDiagnostic(`${compactDiagnostic(error, 900)}\n${output}`, 1_400);
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'run_code',
+        stage,
+        command: command.command,
+        ok: false,
+        error: failure,
+        probes,
+      },
+    });
+    return {
+      tier: plan.tier,
+      command: command.command,
+      ok: false,
+      required: plan.required,
+      reason: plan.reason,
+      error: failure,
+      probes,
+    };
+  } finally {
+    await stopChildProcess(child);
+  }
+}
+
 async function collectReleaseGateEvidence({
   repoPath,
   mastra,
@@ -1408,19 +1790,25 @@ async function collectReleaseGateEvidence({
   await ensureNodeDependencies({ repoPath, mastra, stage });
 
   const plan = releaseGateEvidenceCommandPlan(repoPath);
+  const runtimePlan = releaseGateRuntimeProbePlan(repoPath);
   const notes: string[] = [];
   if (!plan.some((command) => command.tier === 'smoke')) {
     notes.push('No package verification script was available; smoke tier must be marked not_required or blocked with a reason.');
   }
-  if (!plan.some((command) => command.tier === 'api')) {
-    notes.push('No local D1 migration command was planned; API tier should be not_required unless other API evidence exists.');
+  if (!plan.some((command) => command.tier === 'api') && !runtimePlan) {
+    notes.push('No local D1 migration command or Worker runtime probe was planned; API tier should be not_required unless other API evidence exists.');
   }
-  notes.push('No browser harness is started by this workflow; E2E and full_matrix tiers should be not_required unless cited evidence exists.');
+  if (!runtimePlan) {
+    notes.push('No Wrangler Worker config was detected, so local Worker runtime startup was not probed.');
+  }
+  notes.push('No browser E2E harness is started by this workflow; E2E and full_matrix tiers should be not_required unless cited evidence exists.');
 
   const commands: ReleaseGateEvidenceResult[] = [];
   for (const command of plan) {
     commands.push(await runReleaseGateEvidenceCommand({ repoPath, mastra, stage, command }));
   }
+  const runtimeResult = await runReleaseGateRuntimeProbe({ repoPath, mastra, stage });
+  if (runtimeResult) commands.push(runtimeResult);
 
   return {
     artifact_type: 'test-evidence',

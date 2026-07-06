@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { roleBoundaries, type DeliveryRole } from './boundaries';
@@ -37,6 +38,10 @@ const boundaryPath = (repoPath: string) => join(deliveryDir(repoPath), 'boundary
 const ensureDeliveryDirs = (repoPath: string) => {
   mkdirSync(join(deliveryDir(repoPath), 'artifacts', 'judgments'), { recursive: true });
 };
+
+export function createDeliveryRunId() {
+  return `run-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+}
 
 export function readDeliveryRun(repoPath: string): DeliveryRun {
   const file = runPath(repoPath);
@@ -111,7 +116,7 @@ export function initializeDeliveryRun({
   }
 
   const run: DeliveryRun = {
-    run_id: `run-${Date.now().toString(36)}`,
+    run_id: createDeliveryRunId(),
     started_at: new Date().toISOString(),
     vision,
     spec,

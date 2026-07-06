@@ -12,6 +12,7 @@ import {
   type MastraLike,
 } from './observability';
 import {
+  createDeliveryRunId,
   hasDeliveryDirectory,
   readDeliveryEvents,
   readDeliveryRun,
@@ -155,7 +156,7 @@ export async function initializeDeliveryRunState({
   }
 
   const run: DeliveryRun = {
-    run_id: `run-${Date.now().toString(36)}`,
+    run_id: createDeliveryRunId(),
     started_at: new Date().toISOString(),
     vision,
     spec,

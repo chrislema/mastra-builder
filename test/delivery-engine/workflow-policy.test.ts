@@ -16,6 +16,8 @@ import {
   releaseGateForInvalidTesterOutput,
   releaseGateEvidenceCommandPlan,
   releaseGateLocalD1DatabaseName,
+  releaseGateRuntimeProbePlan,
+  releaseGateWorkerDevCommand,
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
@@ -173,6 +175,46 @@ test('release gate evidence planner uses bounded local commands', () => {
       { tier: 'api', command: 'npx wrangler d1 migrations apply demo-db --local', required: false },
     ],
   );
+});
+
+test('release gate runtime probe planner uses the project Wrangler dev script', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-'));
+  mkdirSync(join(repoPath, 'src/routes'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2),
+  );
+  writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "src/index.ts"\n');
+  writeFileSync(join(repoPath, 'src/routes/health.ts'), 'export const path = "/health";\n');
+
+  assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999), {
+    command: 'npm run dev -- --ip 127.0.0.1 --port 8999',
+    executable: 'npm',
+    args: ['run', 'dev', '--', '--ip', '127.0.0.1', '--port', '8999'],
+  });
+
+  const plan = releaseGateRuntimeProbePlan(repoPath);
+  assert.equal(plan?.required, true);
+  assert.equal(plan?.command.command, 'npm run dev -- --ip 127.0.0.1 --port <port>');
+  assert.deepEqual(
+    plan?.probes.map((probe) => ({ path: probe.path, expectedStatus: probe.expectedStatus, statusBelow: probe.statusBelow })),
+    [
+      { path: '/', expectedStatus: undefined, statusBelow: 500 },
+      { path: '/health', expectedStatus: 200, statusBelow: undefined },
+    ],
+  );
+});
+
+test('release gate runtime probe planner falls back to npx wrangler for Worker configs', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-npx-'));
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'vite --host 0.0.0.0' } }, null, 2));
+  writeFileSync(join(repoPath, 'wrangler.jsonc'), '{ "name": "demo-worker", "main": "src/index.ts" }\n');
+
+  assert.deepEqual(releaseGateWorkerDevCommand(repoPath, 8999), {
+    command: 'npx wrangler dev --ip 127.0.0.1 --port 8999',
+    executable: 'npx',
+    args: ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', '8999'],
+  });
 });
 
 test('stale downstream verification repair resets only future failed task surfaces', async () => {
