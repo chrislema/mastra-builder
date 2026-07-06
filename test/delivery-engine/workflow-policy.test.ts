@@ -21,6 +21,7 @@ import {
   ownedSurfaceHygiene,
   outOfPlanVerificationFailurePaths,
   priorStoppedBuildTaskIds,
+  projectScaffoldHygiene,
   repairStaleDownstreamVerificationSurfaces,
   releaseGateForInvalidTesterOutput,
   releaseGateEvidenceCommandPlan,
@@ -126,6 +127,45 @@ test('task plan owned surfaces must be concrete repo paths or explicit unknowns'
   const result = ownedSurfaceHygiene(conceptualPlan);
   assert.equal(result.passed, false);
   assert.match(result.reason, /conceptual surface/);
+});
+
+test('bare Worker project plans require package scaffold before runtime surfaces', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-project-scaffold-'));
+  const badPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['wrangler.toml', 'src/env.ts', 'src/index.ts'],
+    },
+  ]);
+
+  const badResult = projectScaffoldHygiene(repoPath, badPlan);
+  assert.equal(badResult.passed, false);
+  assert.match(badResult.reason, /no package\.json/);
+
+  const goodPlan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'tsconfig.json'],
+    },
+    {
+      depends_on: ['T1'],
+      owned_surfaces: ['wrangler.toml', 'src/env.ts', 'src/index.ts'],
+    },
+  ]);
+  assert.deepEqual(projectScaffoldHygiene(repoPath, goodPlan), { passed: true, reason: 'ok' });
+});
+
+test('existing package scaffold satisfies Worker runtime plan hygiene', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-existing-scaffold-'));
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }, null, 2));
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['wrangler.toml', 'src/env.ts', 'src/index.ts'],
+    },
+  ]);
+
+  assert.deepEqual(projectScaffoldHygiene(repoPath, plan), { passed: true, reason: 'ok' });
 });
 
 test('judge provider overloads synthesize bounded failing judge output', () => {

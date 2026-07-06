@@ -20,7 +20,7 @@
           "depends_on": { "type": "array", "items": { "type": "string", "pattern": "^T[0-9]+$" } },
           "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
           "owned_surfaces": {
-            "description": "Concrete repo paths or globs this task will change, for example wrangler.toml, src/index.ts, public/settings.html, migrations/0001_schema.sql. Use ['unknown: <reason>'] only when genuinely unknown — conceptual labels are not allowed.",
+            "description": "Concrete repo paths or globs this task will change, for example package.json, tsconfig.json, wrangler.toml, src/index.ts, public/settings.html, migrations/0001_schema.sql. Use ['unknown: <reason>'] only when genuinely unknown; conceptual labels are not allowed. In a bare Worker folder, root scaffold ownership must include package.json and tsconfig.json before runtime/source tasks.",
             "type": "array",
             "minItems": 1,
             "items": { "type": "string", "minLength": 1 }

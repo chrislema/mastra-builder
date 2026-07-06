@@ -213,7 +213,7 @@ const plannerOutputSchema = z.object({
   taskPlan: taskPlanSchema,
 });
 
-const plannerPolicyVersion = 'owned-surfaces-hygiene-v3';
+const plannerPolicyVersion = 'root-scaffold-hygiene-v4';
 
 const plannerCacheSchema = z.object({
   sourceFingerprint: z.string(),
@@ -249,6 +249,7 @@ function readCachedPlannerOutput({
   if (cache.success && cache.data.policyVersion !== plannerPolicyVersion) return undefined;
   if (!openDecisionHygiene(taskPlan.data).passed) return undefined;
   if (!ownedSurfaceHygiene(taskPlan.data).passed) return undefined;
+  if (!projectScaffoldHygiene(repoPath, taskPlan.data).passed) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
 }
@@ -583,11 +584,72 @@ export function ownedSurfaceHygiene(taskPlan: TaskPlan) {
   return { passed: true, reason: 'ok' };
 }
 
-const taskPlanDeterministicResults = (taskPlan: TaskPlan): DeterministicGateResult[] => [
+function normalizedOwnedSurfaces(task: Task) {
+  return task.owned_surfaces.map((surface) => normalizeDeliveryPathReference(surface)).filter(Boolean);
+}
+
+function ownsExactSurface(task: Task, path: string) {
+  return normalizedOwnedSurfaces(task).includes(path);
+}
+
+function ownsPackageScaffold(task: Task) {
+  return ownsExactSurface(task, 'package.json') && ownsExactSurface(task, 'tsconfig.json');
+}
+
+function ownsWorkerRuntimeSurface(task: Task) {
+  return normalizedOwnedSurfaces(task).some(
+    (surface) =>
+      surface === 'wrangler.toml' ||
+      surface === 'wrangler.json' ||
+      surface === 'wrangler.jsonc' ||
+      surface === 'src/index.ts' ||
+      surface === 'src/env.ts' ||
+      surface === 'src/**' ||
+      surface.startsWith('src/') ||
+      surface.startsWith('public/') ||
+      surface.startsWith('migrations/'),
+  );
+}
+
+export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
+  if (existsSync(join(repoPath, 'package.json'))) return { passed: true, reason: 'ok' };
+
+  const plansRuntimeWork = taskPlan.tasks.some(ownsWorkerRuntimeSurface);
+  if (!plansRuntimeWork) return { passed: true, reason: 'ok' };
+
+  const rootTasks = taskPlan.tasks.filter((task) => task.depends_on.length === 0);
+  const scaffoldRootTask = rootTasks.find(ownsPackageScaffold);
+  if (!scaffoldRootTask) {
+    return {
+      passed: false,
+      reason:
+        'Target repo has no package.json. The task plan needs a root scaffold task that owns package.json and tsconfig.json before Worker runtime files so automated verification can run.',
+    };
+  }
+
+  const unscaffoldedRootRuntimeTask = rootTasks.find((task) => ownsWorkerRuntimeSurface(task) && !ownsPackageScaffold(task));
+  if (unscaffoldedRootRuntimeTask) {
+    return {
+      passed: false,
+      reason: `${unscaffoldedRootRuntimeTask.id} owns Worker/runtime surfaces before the package scaffold. Make it depend_on ${scaffoldRootTask.id}, or include package.json and tsconfig.json in the same root scaffold task.`,
+    };
+  }
+
+  return { passed: true, reason: 'ok' };
+}
+
+const taskPlanDeterministicResults = ({
+  repoPath,
+  taskPlan,
+}: {
+  repoPath: string;
+  taskPlan: TaskPlan;
+}): DeterministicGateResult[] => [
   { id: 'tasks_structurally_complete', check: 'plan_schema_complete', ...planSchemaComplete(taskPlan) },
   { id: 'no_circular_dependencies', check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(taskPlan) },
   { id: 'open_decisions_hygiene', check: 'open_decision_hygiene', ...openDecisionHygiene(taskPlan) },
   { id: 'owned_surfaces_concrete', check: 'owned_surface_hygiene', ...ownedSurfaceHygiene(taskPlan) },
+  { id: 'root_project_scaffolded', check: 'project_scaffold_hygiene', ...projectScaffoldHygiene(repoPath, taskPlan) },
 ];
 
 function topoOrderTasks(tasks: Task[]) {
@@ -3427,6 +3489,10 @@ const createPlannerArtifactsStep = createStep({
     if (sourceDocuments.length !== 2) {
       throw new Error(`planner could not load ${inputData.visionPath} and ${inputData.specPath}`);
     }
+    const repoScaffoldState = {
+      packageJson: existsSync(join(inputData.repoPath, 'package.json')) ? 'present' : 'missing',
+      tsconfigJson: existsSync(join(inputData.repoPath, 'tsconfig.json')) ? 'present' : 'missing',
+    };
     const sourceFingerprint = plannerSourceFingerprint(sourceDocuments);
     const cachedOutput = readCachedPlannerOutput({
       repoPath: inputData.repoPath,
@@ -3455,6 +3521,10 @@ Owned-surface hygiene:
 - Every owned_surfaces entry must be a concrete repo path or glob, for example wrangler.toml, src/index.ts, src/workflows/weekly.ts, public/settings.html, migrations/0001_schema.sql.
 - Do not use conceptual labels such as "Worker Env types", "wrangler configuration", "Workflow binding registration", "API routes", or "UI assets".
 - If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
+Root scaffold hygiene:
+- Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
+- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json and tsconfig.json.
+- Worker runtime/config/source tasks must depend on that scaffold task unless they own package.json and tsconfig.json themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
@@ -3608,7 +3678,10 @@ const createPlanGateStep = createStep({
   outputSchema: planStageOutputSchema,
   scorers: deliveryPlanStepScorers,
   execute: async ({ inputData, mastra }) => {
-    const deterministicResults = taskPlanDeterministicResults(inputData.taskPlan);
+    const deterministicResults = taskPlanDeterministicResults({
+      repoPath: inputData.repoPath,
+      taskPlan: inputData.taskPlan,
+    });
     const checks = checkSummaries(deterministicResults);
     const taskPlanJudge = await judgeDeliveryArtifact({
       mastra,
@@ -4009,7 +4082,10 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
       mastra,
     });
 
-    const revisedDeterministicResults = taskPlanDeterministicResults(revisedTaskPlan);
+    const revisedDeterministicResults = taskPlanDeterministicResults({
+      repoPath: inputData.repoPath,
+      taskPlan: revisedTaskPlan,
+    });
     checks.push(...checkSummaries(revisedDeterministicResults, `revision-${revisionNumber}`));
     const failedRevisedChecks = revisedDeterministicResults.filter((check) => !check.passed);
     if (failedRevisedChecks.length) {
