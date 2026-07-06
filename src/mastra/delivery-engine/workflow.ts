@@ -2428,7 +2428,27 @@ export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
 
 const deliveryPreflightStubMarker = 'Delivery preflight stub';
 
+function surfaceLooksLikeWorkerEntrypoint(path: string) {
+  return (
+    /^worker\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path) ||
+    /^src\/index\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path) ||
+    /^workers\/.+\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path)
+  );
+}
+
 function compileSafeStubForSurface(path: string) {
+  if (surfaceLooksLikeWorkerEntrypoint(path)) {
+    return [
+      `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.`,
+      'export default {',
+      '  fetch() {',
+      '    return Response.json({ status: "preflight_stub" });',
+      '  },',
+      '};',
+      '',
+    ].join('\n');
+  }
+
   if (/\.(?:ts|mts|cts)$/.test(path)) {
     return [
       `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.`,

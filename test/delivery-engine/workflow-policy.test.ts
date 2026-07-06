@@ -1118,6 +1118,24 @@ test('missing owned surface preflight creates compile-safe stubs', async () => {
   assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), []);
 });
 
+test('missing Worker entrypoint preflight creates runnable module stubs', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-preflight-worker-entry-'));
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['workers/app.js', 'src/index.ts'],
+    },
+  ]).tasks;
+
+  const created = await createMissingOwnedSurfaceStubs({ repoPath, task, stage: 'build:T1' });
+
+  assert.deepEqual(created, ['workers/app.js', 'src/index.ts']);
+  assert.match(readFileSync(join(repoPath, 'workers/app.js'), 'utf8'), /export default \{/);
+  assert.match(readFileSync(join(repoPath, 'workers/app.js'), 'utf8'), /Response\.json/);
+  assert.match(readFileSync(join(repoPath, 'src/index.ts'), 'utf8'), /export default \{/);
+  assert.deepEqual(unreplacedPreflightStubPaths(repoPath, task), ['workers/app.js', 'src/index.ts']);
+});
+
 test('preflight stub detector fails until generated stubs are replaced', async () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-preflight-stub-detector-'));
   const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/routes/runs.ts'] }]).tasks;
