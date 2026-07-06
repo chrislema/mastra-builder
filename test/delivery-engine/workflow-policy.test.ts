@@ -26,6 +26,7 @@ import {
   taskBoundarySurfaces,
   unreplacedPreflightStubPaths,
   verificationWithAcceptanceGaps,
+  workflowStepIntegrationGaps,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 
 const readout = (blocking_ambiguities: string[]) => ({
@@ -338,6 +339,40 @@ test('route task boundaries include the existing Worker entry integration surfac
     'src/routes/index.ts',
     'src/index.ts',
   ]);
+});
+
+test('workflow step task boundaries include the Workflow entrypoint integration surface', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workflow-boundary-surfaces-'));
+  mkdirSync(join(repoPath, 'src/workflows/steps'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/workflows/weekly.ts'), 'export class WeeklyWorkflow {}\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/workflows/steps/fetch-bookmarks.ts'] }]).tasks;
+
+  assert.deepEqual(taskBoundarySurfaces(repoPath, task), [
+    'src/workflows/steps/fetch-bookmarks.ts',
+    'src/workflows/weekly.ts',
+  ]);
+});
+
+test('workflow step implementation must be integrated into WeeklyWorkflow before reuse', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workflow-integration-gap-'));
+  mkdirSync(join(repoPath, 'src/workflows/steps'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/workflows/steps/fetch-bookmarks.ts'), 'export const fetchBookmarksStep = () => true;\n');
+  writeFileSync(
+    join(repoPath, 'src/workflows/weekly.ts'),
+    'export class WeeklyWorkflow { async fetchBookmarks(context: unknown) { return context; } }\n',
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/workflows/steps/fetch-bookmarks.ts'] }]).tasks;
+
+  assert.deepEqual(workflowStepIntegrationGaps(repoPath, task), [
+    'Workflow step src/workflows/steps/fetch-bookmarks.ts is not imported or called from src/workflows/weekly.ts; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.',
+  ]);
+
+  writeFileSync(
+    join(repoPath, 'src/workflows/weekly.ts'),
+    "import { fetchBookmarksStep } from './steps/fetch-bookmarks';\nexport class WeeklyWorkflow { step = fetchBookmarksStep; }\n",
+  );
+
+  assert.deepEqual(workflowStepIntegrationGaps(repoPath, task), []);
 });
 
 test('engine policy mismatch stops retries for normalized in-boundary paths', () => {

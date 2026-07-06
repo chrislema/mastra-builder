@@ -670,6 +670,36 @@ function concreteOwnedSurfacePath(surface: string) {
   return trimmed;
 }
 
+function workflowStepOwnedSurfaces(task: Task) {
+  return effectiveOwnedSurfaces(task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .filter((path) => /^src\/workflows\/steps\/[^/]+\.[cm]?[jt]s$/.test(path) && !/\/index\.[cm]?[jt]s$/.test(path));
+}
+
+function workflowStepSlug(path: string) {
+  return path.split('/').pop()?.replace(/\.[cm]?[jt]s$/, '');
+}
+
+export function workflowStepIntegrationGaps(repoPath: string, task: Task) {
+  const steps = workflowStepOwnedSurfaces(task);
+  if (!steps.length) return [];
+
+  const weeklyPath = join(resolve(repoPath), 'src/workflows/weekly.ts');
+  if (!existsSync(weeklyPath)) return [];
+
+  const weeklySource = readFileSync(weeklyPath, 'utf8');
+  return steps
+    .filter((step) => existsSync(join(resolve(repoPath), step)))
+    .flatMap((step) => {
+      const slug = workflowStepSlug(step);
+      if (!slug || weeklySource.includes(`./steps/${slug}`)) return [];
+      return [
+        `Workflow step ${step} is not imported or called from src/workflows/weekly.ts; the step can pass in isolation while the Cloudflare Workflow still runs the old pass-through stub.`,
+      ];
+    });
+}
+
 export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
   return effectiveOwnedSurfaces(task)
     .map(concreteOwnedSurfacePath)
@@ -758,6 +788,10 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
 
     if (directory === 'src/routes' && existsSync(join(resolve(repoPath), 'src/index.ts'))) {
       surfaces.add('src/index.ts');
+    }
+
+    if (directory === 'src/workflows/steps' && existsSync(join(resolve(repoPath), 'src/workflows/weekly.ts'))) {
+      surfaces.add('src/workflows/weekly.ts');
     }
   }
 
@@ -1047,6 +1081,7 @@ export function priorStoppedBuildTaskIds({
 export function reusableImplementationArtifactForTask(repoPath: string, task: Task) {
   if (process.env.DELIVERY_REUSE_TASK_ARTIFACTS === '0') return undefined;
   if (missingOwnedSurfacePaths(repoPath, task).length) return undefined;
+  if (workflowStepIntegrationGaps(repoPath, task).length) return undefined;
 
   const judgmentDir = join(resolve(repoPath), '.delivery/artifacts/judgments');
   if (!existsSync(judgmentDir)) return undefined;
@@ -2228,6 +2263,7 @@ function implementationDeterministicResults({
   const files = repoFileContents(repoPath, note.files_touched);
   const missingSurfaces = missingOwnedSurfacePaths(repoPath, task);
   const unreplacedStubs = unreplacedPreflightStubPaths(repoPath, task);
+  const workflowIntegrationGaps = workflowStepIntegrationGaps(repoPath, task);
   const noteOwnership = runDeterministicCheck({
     name: 'file_ownership',
     role,
@@ -2262,6 +2298,12 @@ function implementationDeterministicResults({
       passed: unreplacedStubs.length === 0,
       reason: unreplacedStubs.length ? `preflight stubs remain: ${unreplacedStubs.join(', ')}` : 'ok',
     },
+    {
+      id: 'workflow_step_integrated',
+      check: 'workflow_step_integrated',
+      passed: workflowIntegrationGaps.length === 0,
+      reason: workflowIntegrationGaps.length ? workflowIntegrationGaps.join('; ') : 'ok',
+    },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
     {
       id: 'verification_passed',
@@ -2282,6 +2324,7 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'write_paths_in_boundary',
         'owned_surfaces_present',
         'preflight_stubs_replaced',
+        'workflow_step_integrated',
         'module_loads',
         'ran_code_before_complete',
         'verification_passed',
