@@ -15,6 +15,7 @@
     "owned": [
       "package.json",
       "package-lock.json",
+      ".gitignore",
       "pnpm-lock.yaml",
       "yarn.lock",
       "bun.lockb",

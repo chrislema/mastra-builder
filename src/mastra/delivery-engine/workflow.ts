@@ -674,6 +674,21 @@ function ownsPackageScaffold(task: Task) {
   return ownsExactSurface(task, 'package.json') && ownsExactSurface(task, 'tsconfig.json');
 }
 
+function normalizeScaffoldRootTask(task: Task) {
+  if (ownsExactSurface(task, '.gitignore')) return task;
+
+  return {
+    ...task,
+    owned_surfaces: [...task.owned_surfaces, '.gitignore'],
+    acceptance_criteria: Array.from(
+      new Set([
+        ...task.acceptance_criteria,
+        '.gitignore excludes node_modules/, .wrangler/, .delivery/, .dev.vars, and .env so local delivery artifacts, Wrangler state, dependencies, and local secrets stay out of git.',
+      ]),
+    ),
+  };
+}
+
 function ownsTypeScriptInputSurface(task: Task) {
   return normalizedOwnedSurfaces(task).some(
     (surface) => surface === 'src/**' || (surface.startsWith('src/') && /\.(?:ts|mts|cts)$/.test(surface)),
@@ -705,7 +720,12 @@ export function normalizeTaskPlanScaffoldDependencies(repoPath: string, taskPlan
 
   let changed = false;
   const tasks = taskPlan.tasks.map((task) => {
-    if (task.id === scaffoldRootTask.id || task.depends_on.length > 0 || !ownsWorkerRuntimeSurface(task) || ownsPackageScaffold(task)) {
+    if (task.id === scaffoldRootTask.id) {
+      const normalizedTask = normalizeScaffoldRootTask(task);
+      if (normalizedTask !== task) changed = true;
+      return normalizedTask;
+    }
+    if (task.depends_on.length > 0 || !ownsWorkerRuntimeSurface(task) || ownsPackageScaffold(task)) {
       return task;
     }
 
@@ -2629,6 +2649,34 @@ function scriptUsesWranglerWithoutEntrypoint(script: unknown, command: 'dev' | '
   return !/(^|\s)(?:\.\/)?src\/index\.ts(\s|$)/.test(match[1] ?? '');
 }
 
+const workerScaffoldRequiredGitignorePatterns = ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env'];
+
+function gitignorePatternPresent(text: string, pattern: string) {
+  const directoryPattern = pattern.endsWith('/') ? pattern.slice(0, -1) : pattern;
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .some((line) => line === pattern || line === directoryPattern || (pattern === '.env' && line === '.env*'));
+}
+
+function workerScaffoldGitignoreGaps(repoPath: string) {
+  const gitignorePath = join(resolve(repoPath), '.gitignore');
+  if (!existsSync(gitignorePath)) {
+    return [
+      '.gitignore is missing; new Worker scaffolds must keep local delivery artifacts, Wrangler state, dependencies, and local secrets out of git.',
+    ];
+  }
+
+  const text = readFileSync(gitignorePath, 'utf8');
+  const missing = workerScaffoldRequiredGitignorePatterns.filter((pattern) => !gitignorePatternPresent(text, pattern));
+  return missing.length
+    ? [
+        `.gitignore should ignore ${missing.join(', ')} so generated delivery state, local Wrangler state, dependencies, and local secrets stay out of git.`,
+      ]
+    : [];
+}
+
 export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
   if (task && !taskOwnsPackageManifest(task)) return [];
 
@@ -2638,32 +2686,34 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
   const gaps: string[] = [];
   const scripts = recordValue(packageJson.scripts) ?? {};
   if (!scriptUsesWranglerWithoutEntrypoint(scripts.dev, 'dev')) {
-    gaps.push('scripts.dev should run "wrangler dev" through wrangler.jsonc, without passing src/index.ts as an entrypoint argument.');
+    gaps.push('package.json: scripts.dev should run "wrangler dev" through wrangler.jsonc, without passing src/index.ts as an entrypoint argument.');
   }
   if (!scriptUsesWranglerWithoutEntrypoint(scripts.deploy, 'deploy')) {
-    gaps.push('scripts.deploy should run "wrangler deploy" through wrangler.jsonc, without passing src/index.ts as an entrypoint argument.');
+    gaps.push('package.json: scripts.deploy should run "wrangler deploy" through wrangler.jsonc, without passing src/index.ts as an entrypoint argument.');
   }
   if (typeof scripts.typecheck !== 'string' || !/\btsc\s+--noEmit\b/.test(scripts.typecheck)) {
-    gaps.push('scripts.typecheck should run "tsc --noEmit" for deterministic workflow verification.');
+    gaps.push('package.json: scripts.typecheck should run "tsc --noEmit" for deterministic workflow verification.');
   }
 
   const wranglerVersion = packageDependencyVersion(packageJson, 'wrangler');
   if (!wranglerVersion) {
-    gaps.push('devDependencies.wrangler is missing; new Worker scaffolds need Wrangler installed locally.');
+    gaps.push('package.json: devDependencies.wrangler is missing; new Worker scaffolds need Wrangler installed locally.');
   } else if (!dependencyRangeAllowsWranglerV4(wranglerVersion)) {
-    gaps.push(`devDependencies.wrangler is "${wranglerVersion}", but new Worker scaffolds should use "latest" or a v4+ range.`);
+    gaps.push(`package.json: devDependencies.wrangler is "${wranglerVersion}", but new Worker scaffolds should use "latest" or a v4+ range.`);
   }
 
   const workersTypesVersion = packageDependencyVersion(packageJson, '@cloudflare/workers-types');
   if (!workersTypesVersion) {
-    gaps.push('devDependencies["@cloudflare/workers-types"] is missing; Worker TypeScript projects need current Cloudflare runtime types.');
+    gaps.push(
+      'package.json: devDependencies["@cloudflare/workers-types"] is missing; Worker TypeScript projects need current Cloudflare runtime types.',
+    );
   } else if (!workersTypesVersionIsCurrent(workersTypesVersion)) {
     gaps.push(
-      `devDependencies["@cloudflare/workers-types"] is "${workersTypesVersion}", but new Worker scaffolds should use "latest" or a Workers types release from the last 90 days.`,
+      `package.json: devDependencies["@cloudflare/workers-types"] is "${workersTypesVersion}", but new Worker scaffolds should use "latest" or a Workers types release from the last 90 days.`,
     );
   }
 
-  return gaps.map((gap) => `package.json: ${gap}`);
+  return [...gaps, ...workerScaffoldGitignoreGaps(repoPath)];
 }
 
 function remediationHasVerificationFailure(remediation: string[]) {

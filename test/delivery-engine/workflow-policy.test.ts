@@ -299,6 +299,8 @@ test('bare Worker project plans normalize root static assets behind the package 
 
   const normalized = normalizeTaskPlanScaffoldDependencies(repoPath, plan);
 
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'tsconfig.json', 'src/index.ts', '.gitignore']);
+  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\.delivery/);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
   assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
 });
@@ -1882,6 +1884,7 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
   assert.match(gaps.join('\n'), /scripts\.deploy/);
   assert.match(gaps.join('\n'), /wrangler.*v4\+/);
   assert.match(gaps.join('\n'), /workers-types.*last 90 days/);
+  assert.match(gaps.join('\n'), /\.gitignore is missing/);
 
   const remediation = [`DETERMINISTIC worker_package_scaffold_current failed: ${gaps.join('; ')}`];
   assert.equal(implementationFailureClass(remediation), 'worker_package');
@@ -1911,6 +1914,7 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
       2,
     ),
   );
+  writeFileSync(join(repoPath, '.gitignore'), ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.env', ''].join('\n'));
 
   assert.deepEqual(workerPackageScaffoldGaps(repoPath, task), []);
   assert.deepEqual(workerPackageScaffoldGaps(repoPath), []);
