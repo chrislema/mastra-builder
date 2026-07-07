@@ -107,6 +107,7 @@ const { values } = parseArgs({
     spec: { type: 'string' },
     specPath: { type: 'string' },
     noSpec: { type: 'boolean', default: false },
+    'no-spec': { type: 'boolean', default: false },
     deploy: { type: 'string' },
     deployMode: { type: 'string' },
     review: { type: 'string' },
@@ -132,8 +133,9 @@ try {
     process.exit(1);
   }
   const resolvedRepoPath = resolve(projectFolder);
+  const noSpec = Boolean(values.noSpec || values['no-spec']);
   const specArg = values.specPath ?? values.spec;
-  const specPath = values.noSpec ? undefined : specArg ?? (existsSync(join(resolvedRepoPath, 'spec.md')) ? 'spec.md' : undefined);
+  const specPath = noSpec ? undefined : specArg ?? (existsSync(join(resolvedRepoPath, 'spec.md')) ? 'spec.md' : undefined);
   const reviewMode = parseReviewMode(values.reviewMode ?? values.review);
   let shuttingDown = false;
   const handleStop = (signal: NodeJS.Signals) => {
@@ -157,7 +159,7 @@ try {
     projectFolder: resolvedRepoPath,
     visionPath: values.visionPath ?? values.vision,
     specPath,
-    noSpec: values.noSpec,
+    noSpec,
     deployMode: values.deployMode ?? values.deploy,
     reviewMode,
     maxRetries: values.maxRetries === undefined ? undefined : Number(values.maxRetries),
