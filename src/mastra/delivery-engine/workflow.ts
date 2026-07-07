@@ -821,6 +821,26 @@ function taskAcceptanceContractCriteria(task: Task) {
   return Array.from(new Set([...(task.source_acceptance_criteria ?? []), ...task.acceptance_criteria].filter(Boolean)));
 }
 
+function sourceAcceptanceCriterionBelongsToTask(task: Task, criterion: string) {
+  if (generatedSliceAcceptanceCriterion(criterion)) return false;
+  if (routeEndpointContractCriterion(criterion)) return routeEndpointCriterionBelongsToTask(task, criterion);
+
+  const references = acceptanceContractReferences(criterion).map(normalizeDeliveryPathReference);
+  if (!references.length) return false;
+
+  const owned = new Set(normalizedOwnedSurfaces(task));
+  return references.every((reference) => owned.has(reference));
+}
+
+function taskVerificationAcceptanceContractCriteria(task: Task) {
+  return Array.from(
+    new Set([
+      ...(task.source_acceptance_criteria ?? []).filter((criterion) => sourceAcceptanceCriterionBelongsToTask(task, criterion)),
+      ...task.acceptance_criteria.filter((criterion) => !generatedSliceAcceptanceCriterion(criterion)),
+    ]),
+  );
+}
+
 function acceptanceContractId(task: Task, index: number) {
   return `${taskSourceTaskId(task)}-AC${String(index + 1).padStart(2, '0')}`;
 }
@@ -1965,6 +1985,13 @@ function routeIntegrationCriterion(routerSurface: string, routeNames: Array<stri
   return `${routerSurface} makes ${routeNames.join(', ')} routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`;
 }
 
+function taskRouterBoundarySurface(task: Task) {
+  return (
+    taskOwnedBoundaryPaths(task).find((path) => /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/.test(path)) ??
+    'src/router.js'
+  );
+}
+
 function sessionRouteCriteria(surface: string) {
   return [
     `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
@@ -2142,10 +2169,31 @@ function taskCanOwnFinalWorkerEntrypoint(tasks: Task[], task: Task) {
 function finalWorkerEntrypointCriterion(criterion: string) {
   return (
     /^src\/index\.js is the final Worker module entrypoint/i.test(criterion) ||
-    /^src\/index\.js delegates fetch handling to src\/router\.js/i.test(criterion) ||
+    /^src\/index\.js delegates fetch handling to src\/(?:router|http)\.[cm]?[jt]s/i.test(criterion) ||
     /^src\/index\.js delegates scheduled handling to src\/scheduler\.js/i.test(criterion) ||
     /^src\/index\.js exports the real WeeklyWorkflow implementation/i.test(criterion)
   );
+}
+
+function withoutFinalWorkerEntrypointCriteria(task: Task) {
+  if (!taskOwnsIndexSurface(task) || taskIsRootScaffold(task)) return task;
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !finalWorkerEntrypointCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !finalWorkerEntrypointCriterion(criterion),
+  );
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
 }
 
 function withoutFinalWorkerEntrypointDrift(task: Task, finalDependencyIds: Set<string>) {
@@ -2359,8 +2407,6 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
 
 function withWorkerEntrypointIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   const rootScaffoldIndexTask = tasks.find((task) => taskIsRootScaffold(task) && taskOwnsIndexSurface(task));
-  if (!rootScaffoldIndexTask) return { tasks, changed: false };
-
   const nonRootIndexTasks = tasks.filter((task) => taskOwnsIndexSurface(task) && !taskIsRootScaffold(task));
   const integrationTask = tasks.find(taskHasRouteIntegrationContract);
   const workflowTasks = tasks.filter(taskOwnsWorkflowExecutionSurface);
@@ -2374,9 +2420,10 @@ function withWorkerEntrypointIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) 
       ...schedulerTasks.map((task) => preEntrypointBoundaryDependencyId(tasks, task)),
     ]),
   );
+  const routerSurface = taskRouterBoundarySurface(integrationTask);
   const criteria = [
-    'src/index.js is the final Worker module entrypoint after router, scheduler, and workflow modules exist.',
-    'src/index.js delegates fetch handling to src/router.js and keeps static asset fallback reachable through the router/fetch path.',
+    'src/index.js is the final Worker module entrypoint after route, scheduler, and workflow modules exist.',
+    `src/index.js delegates fetch handling to ${routerSurface} and keeps static asset fallback reachable through the ${routerSurface} fetch path.`,
     'src/index.js delegates scheduled handling to src/scheduler.js so scheduled triggers create queued run records and start WEEKLY_WORKFLOW without duplicating workflow execution logic.',
     'src/index.js exports the real WeeklyWorkflow implementation with the configured class name "WeeklyWorkflow" and delegates execution to the workflow module rather than leaving the scaffold stub in place.',
   ];
@@ -2392,7 +2439,8 @@ function withWorkerEntrypointIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) 
         if (sanitized !== task) changed = true;
         return sanitized;
       }
-      const withDependencies = appendDependencies(task, dependencies);
+      const sanitized = withoutFinalWorkerEntrypointCriteria(task);
+      const withDependencies = appendDependencies(sanitized, dependencies);
       const withCriteria = appendTaskAcceptanceCriteria(withDependencies, criteria);
       if (withCriteria !== task) changed = true;
       return withCriteria;
@@ -2405,6 +2453,8 @@ function withWorkerEntrypointIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) 
     if (finalIndexTasks.length) return { tasks: nextTasks, changed };
     tasks = nextTasks;
   }
+
+  if (!rootScaffoldIndexTask) return { tasks, changed: false };
 
   const entryTask = {
     id: uniqueTaskId({ ...taskPlan, tasks }, 'E99-worker-entrypoint-integration'),
@@ -3069,6 +3119,59 @@ export function generatedSliceDependencyHygiene(taskPlan: TaskPlan) {
   return { passed: true, reason: 'ok' };
 }
 
+function entrypointFetchDelegationSurfaces(criteria: string[]) {
+  const surfaces = new Set<string>();
+  for (const criterion of criteria) {
+    for (const match of criterion.matchAll(/\bsrc\/index\.js delegates fetch handling to (src\/(?:router|http)\.[cm]?[jt]s)\b/gi)) {
+      if (match[1]) surfaces.add(normalizeDeliveryPathReference(match[1]));
+    }
+  }
+  return surfaces;
+}
+
+export function routeBoundaryConsistencyHygiene(taskPlan: TaskPlan) {
+  const routeIntegrationSurfaces = new Set(
+    taskPlan.tasks.filter(taskHasRouteIntegrationContract).map((task) => taskRouterBoundarySurface(task)),
+  );
+  const expectedIntegrationSurface = routeIntegrationSurfaces.size === 1 ? [...routeIntegrationSurfaces][0] : undefined;
+
+  for (const task of taskPlan.tasks) {
+    const criteria = taskAcceptanceContractCriteria(task);
+    const delegatedSurfaces = entrypointFetchDelegationSurfaces(criteria);
+    if (delegatedSurfaces.size > 1) {
+      return {
+        passed: false,
+        reason: `${task.id} has contradictory final entrypoint fetch delegation surfaces: ${[...delegatedSurfaces].join(', ')}. Choose the same route boundary used by route integration.`,
+      };
+    }
+
+    if (
+      criteria.some((criterion) => /\bsrc\/index\.js does not reference src\/router\.js\b/i.test(criterion)) &&
+      criteria.some((criterion) => /\bsrc\/index\.js delegates fetch handling to src\/router\.js\b/i.test(criterion))
+    ) {
+      return {
+        passed: false,
+        reason: `${task.id} says src/index.js must not reference src/router.js while also delegating fetch handling to src/router.js.`,
+      };
+    }
+
+    const [delegatedSurface] = [...delegatedSurfaces];
+    if (
+      expectedIntegrationSurface &&
+      delegatedSurface &&
+      taskHasFinalWorkerEntrypointContract(task) &&
+      delegatedSurface !== expectedIntegrationSurface
+    ) {
+      return {
+        passed: false,
+        reason: `${task.id} delegates fetch handling to ${delegatedSurface}, but route integration owns ${expectedIntegrationSurface}. Use one route boundary.`,
+      };
+    }
+  }
+
+  return { passed: true, reason: 'ok' };
+}
+
 export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
   if (existsSync(join(repoPath, 'package.json'))) return { passed: true, reason: 'ok' };
 
@@ -3168,6 +3271,11 @@ const taskPlanDeterministicResults = ({
     id: 'profile_contract_dependency_order',
     check: 'profile_contract_dependency_order',
     ...profileContractDependencyHygiene(taskPlan),
+  },
+  {
+    id: 'route_boundary_consistent',
+    check: 'route_boundary_consistency',
+    ...routeBoundaryConsistencyHygiene(taskPlan),
   },
 ];
 
@@ -8157,7 +8265,7 @@ export function acceptanceContractsForTask({
   task: Task;
   verification: { performed: string[]; missing: string[] };
 }) {
-  return taskAcceptanceContractCriteria(task).map((criterion, index) => {
+  return taskVerificationAcceptanceContractCriteria(task).map((criterion, index) => {
     const result = acceptanceCriterionEvidence({
       criterion,
       performed: verification.performed,
@@ -8189,7 +8297,7 @@ export function verificationWithAcceptanceGaps({
       missing.add(`Owned surface missing after implementation: ${path}`);
     }
   }
-  for (const criterion of task.acceptance_criteria) {
+  for (const criterion of taskVerificationAcceptanceContractCriteria(task)) {
     if (!acceptanceCriterionCovered(criterion, verification.performed, { repoPath, task })) {
       missing.add(`Acceptance criterion not verified by automated checks: ${criterion}`);
     }
@@ -11164,7 +11272,7 @@ const executeBuildTaskAttemptStep = createStep({
     const taskPacket = {
       scope: taskPlan.scope,
       task,
-      acceptance_contracts: taskAcceptanceContractCriteria(task).map((criterion, index) => ({
+      acceptance_contracts: taskVerificationAcceptanceContractCriteria(task).map((criterion, index) => ({
         id: acceptanceContractId(task, index),
         criterion,
         status: 'required',

@@ -72,6 +72,7 @@ import {
   releaseGateWorkerDevCommand,
   releaseGateWorkerStartupCheckCommand,
   releaseGateWorkerTypesCheckCommand,
+  routeBoundaryConsistencyHygiene,
   routeMiddlewareBypassGaps,
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
@@ -1000,6 +1001,50 @@ test('generated implementation slices preserve source acceptance contracts', () 
   }
 });
 
+test('implementation acceptance contracts ignore split source criteria for unowned surfaces', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-scoped-source-contracts-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/domain.js'),
+    [
+      'export const PROFILE_KINDS = Object.freeze({ AUDIENCE_SEGMENTS: "audience_segments", VOICE_PROFILE: "voice_profile" });',
+      'export const RUN_STATUSES = Object.freeze({ QUEUED: "queued", RUNNING: "running", COMPLETED: "completed", COMPLETED_EMPTY: "completed_empty", FAILED: "failed" });',
+      'export const LINK_STATUSES = Object.freeze({ PENDING: "pending", FETCHED: "fetched", FAILED: "failed" });',
+      'export const SCORING_DIMENSIONS = Object.freeze({ RELEVANCE: "relevance" });',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T03',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/domain.js'],
+      acceptance_criteria: [
+        'src/domain.js defines profile kinds audience_segments and voice_profile plus run status, link status, and scoring dimension constants used by downstream modules.',
+      ],
+    },
+  ]).tasks;
+  (task as any).source_task_id = 'T03';
+  (task as any).source_acceptance_criteria = [
+    'Implement delivery slice 1/2: src/domain.js, src/http.js.',
+    'Replace any preflight stubs for this slice with real implementation code before returning.',
+    'src/domain.js defines profile kinds audience_segments and voice_profile plus run status, link status, and scoring dimension constants used by downstream modules.',
+    'src/http.js provides JSON response, error response, multipart/form validation support, and admin-token guard helpers.',
+    'src/ids.js provides deterministic prefix-based ID helpers for runs, profiles, bookmarks, links, candidates, and transcripts.',
+    'src/log.js emits structured events with supported fields including runId, bookmarkId, linkId, candidateId, audienceProfileId, voiceProfileId, primarySegment, step, status, durationMs, and error.',
+  ];
+
+  const contracts = acceptanceContractsForTask({ repoPath, task, verification: { performed: [], missing: [] } });
+
+  assert.deepEqual(
+    contracts.map((contract) => contract.criterion),
+    [
+      'src/domain.js defines profile kinds audience_segments and voice_profile plus run status, link status, and scoring dimension constants used by downstream modules.',
+    ],
+  );
+  assert.deepEqual(contracts.map((contract) => contract.status), ['verified']);
+});
+
 test('task plan revisions must not drop prior acceptance contracts', () => {
   const previous = taskPlan([
     {
@@ -1819,6 +1864,77 @@ test('task plan normalization recognizes camel route files and removes boundary 
   assert.match(latestCriteria, /GET \/latest returns/);
   assert.doesNotMatch(latestCriteria, /POST \/runs creates/);
   assert.doesNotMatch(latestCriteria, /dispatches API routes/);
+});
+
+test('task plan normalization keeps final Worker entrypoint aligned to the route boundary surface', () => {
+  const plan = taskPlan([
+    {
+      id: 'E98-route-integration',
+      depends_on: [],
+      owned_surfaces: ['src/http.js'],
+      acceptance_criteria: ['src/http.js makes profile and run routes reachable through the Worker fetch path.'],
+    },
+    {
+      id: 'T11',
+      depends_on: ['E98-route-integration'],
+      owned_surfaces: ['src/workflow.js'],
+    },
+    {
+      id: 'T12',
+      depends_on: ['T11'],
+      owned_surfaces: ['src/scheduler.js'],
+    },
+    {
+      id: 'E99-worker-entrypoint-integration',
+      depends_on: ['E98-route-integration', 'T11', 'T12'],
+      owned_surfaces: ['src/index.js'],
+      acceptance_criteria: [
+        'src/index.js delegates fetch handling to src/http.js and keeps static asset fallback reachable through the src/http.js router/fetch path.',
+        'src/index.js does not reference src/router.js.',
+      ],
+    },
+  ]);
+  (plan.tasks[3] as any).source_acceptance_criteria = [
+    'src/index.js delegates fetch handling to src/router.js and keeps static asset fallback reachable through the router/fetch path.',
+  ];
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const entrypoint = normalized.tasks.find((task) => task.id === 'E99-worker-entrypoint-integration');
+  assert.ok(entrypoint);
+  const criteria = [...entrypoint.acceptance_criteria, ...(entrypoint.source_acceptance_criteria ?? [])].join('\n');
+
+  assert.match(criteria, /delegates fetch handling to src\/http\.js/);
+  assert.doesNotMatch(criteria, /delegates fetch handling to src\/router\.js/);
+  assert.deepEqual(routeBoundaryConsistencyHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('route boundary consistency gate rejects contradictory final entrypoint surfaces', () => {
+  const plan = taskPlan([
+    {
+      id: 'E98-route-integration',
+      depends_on: [],
+      owned_surfaces: ['src/http.js'],
+      acceptance_criteria: ['src/http.js makes profile and run routes reachable through the Worker fetch path.'],
+    },
+    {
+      id: 'E99-worker-entrypoint-integration',
+      depends_on: ['E98-route-integration'],
+      owned_surfaces: ['src/index.js'],
+      acceptance_criteria: [
+        'src/index.js is the final Worker module entrypoint after route, scheduler, and workflow modules exist.',
+        'src/index.js delegates fetch handling to src/http.js and keeps static asset fallback reachable through the src/http.js router/fetch path.',
+        'src/index.js does not reference src/router.js.',
+      ],
+    },
+  ]);
+  (plan.tasks[1] as any).source_acceptance_criteria = [
+    'src/index.js delegates fetch handling to src/router.js and keeps static asset fallback reachable through the router/fetch path.',
+  ];
+
+  const result = routeBoundaryConsistencyHygiene(plan);
+
+  assert.equal(result.passed, false);
+  assert.match(result.reason, /contradictory final entrypoint fetch delegation surfaces|must not reference src\/router\.js/);
 });
 
 test('task plan normalization defaults endpoint contracts for sliced route ownership', () => {
