@@ -2933,6 +2933,162 @@ test('acceptance contracts verify Benchmark model catalog structurally', () => {
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /structured src\/models\.ts evidence/);
 });
 
+test('acceptance contracts verify provider adapter secret handling structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-provider-adapter-contract-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/providers.ts'),
+    [
+      'import type { Env, ModelCatalogEntry, ModelRunInput, ProviderError, ProviderSuccess } from "./contracts";',
+      '',
+      'export const MAX_TOKENS = 2048;',
+      'const SECRET_VALUE_PATTERNS = [',
+      '  /Bearer\\s+[A-Za-z0-9._~+\\-/=]+/gi,',
+      '  /\\[BEARER_TOKEN\\]/g,',
+      '  /authorization\\s*[:=]\\s*[^,}\\n]+/gi,',
+      '  /(ANTHROPIC_API_KEY|OPENAI_API_KEY|ZAI_API_KEY)\\s*[:=]\\s*[^,}\\n]+/g,',
+      '  /("body"\\s*:\\s*)"(?:\\\\"|[^"])*"/gi,',
+      '  /("request"\\s*:\\s*)\\{[\\s\\S]{0,2000}\\}/gi,',
+      '];',
+      '',
+      'export async function dispatchProvider(env: Env, model: ModelCatalogEntry, input: ModelRunInput): Promise<ProviderSuccess> {',
+      '  try {',
+      '    switch (model.provider) {',
+      '      case "workers-ai": return await runWorkersAi(env, model, input);',
+      '      case "anthropic": return await runAnthropic(env, model, input);',
+      '      case "openai-compatible": return await runOpenAiCompatible(env, model, input);',
+      '    }',
+      '  } catch (error) {',
+      '    throw normalizeProviderError(model, error);',
+      '  }',
+      '}',
+      '',
+      'async function runWorkersAi(env: Env, model: ModelCatalogEntry, input: ModelRunInput): Promise<ProviderSuccess> {',
+      '  const messages = [{ role: "user", content: input.userPrompt }];',
+      '  const response = await env.AI.run(model.model, { messages, max_tokens: MAX_TOKENS });',
+      '  const text = extractWorkersAiText(response);',
+      '  const usage = extractUsage(response);',
+      '  return { text, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };',
+      '}',
+      '',
+      'async function runAnthropic(env: Env, model: ModelCatalogEntry, input: ModelRunInput): Promise<ProviderSuccess> {',
+      '  const secret = readCatalogSecret(env, model);',
+      '  void secret;',
+      '  return { text: input.userPrompt, inputTokens: 1, outputTokens: 1 };',
+      '}',
+      '',
+      'async function runOpenAiCompatible(env: Env, model: ModelCatalogEntry, input: ModelRunInput): Promise<ProviderSuccess> {',
+      '  const secret = readCatalogSecret(env, model);',
+      '  void secret;',
+      '  const body = { choices: [{ message: { content: input.userPrompt } }], usage: { prompt_tokens: 1, completion_tokens: 1 } };',
+      '  return { text: extractOpenAiText(body), inputTokens: 1, outputTokens: 1 };',
+      '}',
+      '',
+      'function readCatalogSecret(env: Env, model: ModelCatalogEntry): string {',
+      '  if (!model.secretKey) throw new Error("missing secretKey");',
+      '  const secretKey = model.secretKey;',
+      '  const secret = env[secretKey];',
+      '  if (!secret) throw new Error(`missing ${secretKey}`);',
+      '  return secret;',
+      '}',
+      '',
+      'function extractWorkersAiText(response: unknown): string {',
+      '  if (typeof response === "string") return response;',
+      '  const choices = (response as { choices?: unknown }).choices;',
+      '  if (choices) return extractOpenAiText(response);',
+      '  const reasoning_content = (response as { reasoning_content?: string }).reasoning_content;',
+      '  if (reasoning_content) return `[reasoning only]\\n${reasoning_content}`;',
+      '  return "";',
+      '}',
+      '',
+      'function extractOpenAiText(response: unknown): string {',
+      '  return String((response as { choices?: unknown }).choices ?? "");',
+      '}',
+      '',
+      'function extractUsage(response: unknown): { inputTokens?: number; outputTokens?: number } {',
+      '  void response;',
+      '  return { inputTokens: 1, outputTokens: 1 };',
+      '}',
+      '',
+      'function normalizeProviderError(model: ModelCatalogEntry, error: unknown): ProviderError {',
+      '  const status = (error as { status?: number }).status;',
+      '  const userSafeMessage = sanitizeProviderMessage(String(error));',
+      '  return { provider: model.provider, vendor: model.vendor, modelId: model.id, status, userSafeMessage };',
+      '}',
+      '',
+      'function sanitizeProviderMessage(message: string): string {',
+      '  let sanitized = message;',
+      '  for (const pattern of SECRET_VALUE_PATTERNS) sanitized = sanitized.replace(pattern, "[REDACTED]");',
+      '  return sanitized;',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T03',
+      depends_on: [],
+      owned_surfaces: ['src/providers.ts'],
+      acceptance_criteria: [
+        'src/providers.ts applies a shared MAX_TOKENS output cap of 2048.',
+        'The workers-ai adapter calls env.AI.run with messages and max_tokens and supports both response string and OpenAI-style choices response shapes.',
+        'The workers-ai adapter falls back to reasoning_content with a visible [reasoning only] label when no final answer text is present.',
+        'Each adapter normalizes successful output to text plus optional inputTokens and outputTokens.',
+        'src/providers.ts normalizes provider failures from workers-ai, anthropic, and openai-compatible adapters into the shared provider error shape defined in src/contracts.ts.',
+        'Provider error normalization includes provider, vendor, model id, optional HTTP/status details when available, and a diagnosable message safe for result cards.',
+        'Provider error normalization sanitizes API keys, [BEARER_TOKEN], secret names with values, authorization headers, and request bodies before any error is returned to src/index.ts.',
+        'The dispatcher does not read provider secrets except through the catalog secretKey and Worker Env contract defined in src/contracts.ts.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contracts.every((contract) => contract.status === 'verified'), true);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /structured src\/providers\.ts evidence/);
+});
+
+test('provider adapter contract rejects hard-coded provider secret env reads', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-provider-adapter-hardcoded-secret-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/providers.ts'),
+    [
+      'import type { Env, ModelCatalogEntry } from "./contracts";',
+      'function readCatalogSecret(env: Env, model: ModelCatalogEntry): string {',
+      '  void model.secretKey;',
+      '  const secretKey = model.secretKey;',
+      '  const secret = env[secretKey];',
+      '  return env.OPENAI_API_KEY ?? secret ?? "";',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T03',
+      depends_on: [],
+      owned_surfaces: ['src/providers.ts'],
+      acceptance_criteria: [
+        'The dispatcher does not read provider secrets except through the catalog secretKey and Worker Env contract defined in src/contracts.ts.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'unverified');
+  assert.match(contract?.gaps.join('\n') ?? '', /hard-coded env secret names/);
+});
+
 test('acceptance contracts verify minimal Hono Worker entrypoint structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-minimal-entrypoint-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

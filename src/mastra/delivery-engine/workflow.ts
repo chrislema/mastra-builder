@@ -8768,6 +8768,157 @@ function modelCatalogContractEvidence({
   };
 }
 
+function providerAdapterContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('src/providers.ts')) return undefined;
+  if (
+    !/\bsrc\/providers\.ts\b|\bproviders?\b|\badapters?\b|\bdispatcher\b|\bMAX_TOKENS\b|\benv\.AI\.run\b|\bProviderError\b|\bsecretKey\b|\bBEARER_TOKEN\b|\bsecret\b/i.test(
+      criterion,
+    )
+  ) {
+    return undefined;
+  }
+
+  const fullPath = join(resolve(repoPath), 'src/providers.ts');
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  let inspected = false;
+
+  if (/\bMAX_TOKENS\b|\boutput cap\b|\b2048\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bMAX_TOKENS\s*=\s*2048\b/.test(source)) {
+      gaps.push('src/providers.ts must define MAX_TOKENS as 2048.');
+    }
+    if (!/\bmax_tokens\s*:\s*MAX_TOKENS\b/.test(source) && !/\bmax_completion_tokens\s*:\s*MAX_TOKENS\b/.test(source)) {
+      gaps.push('src/providers.ts must apply MAX_TOKENS to provider output limits.');
+    }
+  }
+
+  if (/\bworkers-ai\b|\bWorkers AI\b|\benv\.AI\.run\b|\bOpenAI-style choices\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\benv\.AI\.run\s*\(/.test(source)) {
+      gaps.push('src/providers.ts must call env.AI.run for Workers AI models.');
+    }
+    if (!/\bmessages\b[\s\S]{0,160}\bmax_tokens\s*:\s*MAX_TOKENS\b/.test(source)) {
+      gaps.push('src/providers.ts must pass messages and max_tokens: MAX_TOKENS to env.AI.run.');
+    }
+    if (!/typeof\s+\w+\s*={0,2}\s*['"]string['"]|typeof\s+\w+\s*={0,3}\s*['"]string['"]/.test(source)) {
+      gaps.push('src/providers.ts must handle string Workers AI responses.');
+    }
+    if (!/\bchoices\b/.test(source)) {
+      gaps.push('src/providers.ts must handle OpenAI-style choices responses.');
+    }
+  }
+
+  if (/\breasoning_content\b|\breasoning only\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\breasoning_content\b/.test(source)) {
+      gaps.push('src/providers.ts must inspect reasoning_content.');
+    }
+    if (!/\[reasoning only\]/i.test(source)) {
+      gaps.push('src/providers.ts must label reasoning-only output visibly.');
+    }
+  }
+
+  if (/\bnormalizes? successful output\b|\binputTokens\b|\boutputTokens\b/i.test(criterion)) {
+    inspected = true;
+    for (const field of ['text', 'inputTokens', 'outputTokens']) {
+      if (!new RegExp(`\\b${field}\\b`).test(source)) {
+        gaps.push(`src/providers.ts must normalize successful provider output with ${field}.`);
+      }
+    }
+  }
+
+  if (/\bnormalizes? provider failures\b|\bProviderError\b|\bshared provider error\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bnormalizeProviderError\b/.test(source)) {
+      gaps.push('src/providers.ts must centralize provider failure normalization.');
+    }
+    if (!/\bProviderError\b/.test(source)) {
+      gaps.push('src/providers.ts must use the shared ProviderError shape.');
+    }
+    for (const provider of ['workers-ai', 'anthropic', 'openai-compatible']) {
+      if (!new RegExp(`['"]${provider}['"]`).test(source)) {
+        gaps.push(`src/providers.ts must cover ${provider} provider failures.`);
+      }
+    }
+  }
+
+  if (/\bprovider, vendor, model id\b|\boptional HTTP\b|\bstatus\b|\buser-safe\b|\bresult cards\b/i.test(criterion)) {
+    inspected = true;
+    for (const pattern of [
+      ['provider: model.provider', /\bprovider\s*:\s*model\.provider\b/],
+      ['vendor: model.vendor', /\bvendor\s*:\s*model\.vendor\b/],
+      ['modelId: model.id', /\bmodelId\s*:\s*model\.id\b/],
+      ['status', /\bstatus\b/],
+      ['userSafeMessage', /\buserSafeMessage\b/],
+    ] as const) {
+      if (!pattern[1].test(source)) gaps.push(`src/providers.ts must include ${pattern[0]} in normalized provider errors.`);
+    }
+  }
+
+  if (/\bsanitizes?\b|\bBEARER_TOKEN\b|\bauthorization headers?\b|\brequest bodies?\b|\bsecret names?\b|\bAPI keys?\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bsanitizeProviderMessage\b/.test(source)) {
+      gaps.push('src/providers.ts must sanitize provider error messages before returning them.');
+    }
+    if (!/\bSECRET_VALUE_PATTERNS\b/.test(source)) {
+      gaps.push('src/providers.ts must define explicit secret redaction patterns.');
+    }
+    for (const pattern of ['Bearer', 'BEARER_TOKEN', 'authorization', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ZAI_API_KEY', 'body', 'request']) {
+      if (!new RegExp(pattern, 'i').test(source)) {
+        gaps.push(`src/providers.ts secret sanitization must cover ${pattern}.`);
+      }
+    }
+    if (!/\.replace\s*\(\s*pattern\b|\breplaceAll\s*\(/.test(source)) {
+      gaps.push('src/providers.ts must apply secret redaction patterns.');
+    }
+    const returnsSanitizedUserSafeMessage =
+      /\buserSafeMessage\s*:\s*(?:userSafeMessage|sanitizeProviderMessage\s*\()/.test(source) ||
+      /\bconst\s+userSafeMessage\s*=\s*sanitizeProviderMessage\s*\([\s\S]{0,800}return\s*\{[\s\S]{0,400}\buserSafeMessage\b/.test(
+        source,
+      );
+    if (!returnsSanitizedUserSafeMessage) {
+      gaps.push('src/providers.ts must return only the sanitized userSafeMessage.');
+    }
+  }
+
+  if (/\bsecretKey\b|\bcatalog secret\b|\bdoes not read provider secrets\b|\bWorker Env contract\b/i.test(criterion)) {
+    inspected = true;
+    if (!/from\s*['"]\.\/contracts['"]/.test(source) || !/\bEnv\b/.test(source) || !/\bModelCatalogEntry\b/.test(source)) {
+      gaps.push('src/providers.ts must import Env and ModelCatalogEntry from src/contracts.ts.');
+    }
+    if (!/\bmodel\.secretKey\b/.test(source)) {
+      gaps.push('src/providers.ts must use model.secretKey as the catalog-controlled secret name.');
+    }
+    if (!/\benv\s*\[\s*(?:model\.secretKey|secretKey)\s*\]/.test(source)) {
+      gaps.push('src/providers.ts must read provider secrets through env[model.secretKey] or an equivalent secretKey variable.');
+    }
+    if (/\benv\.(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|ZAI_API_KEY)\b/.test(source)) {
+      gaps.push('src/providers.ts must not read provider secrets through hard-coded env secret names.');
+    }
+  }
+
+  if (!inspected) return undefined;
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured src/providers.ts evidence verified provider adapter dispatch, normalization, and catalog-scoped secret handling'],
+    gaps: [],
+  };
+}
+
 function workerWorkflowEntrypointContractEvidence({
   criterion,
   repoPath,
@@ -8853,6 +9004,9 @@ function acceptanceCriterionEvidence({
 
   const modelCatalogEvidence = modelCatalogContractEvidence({ criterion, repoPath, task });
   if (modelCatalogEvidence) return modelCatalogEvidence;
+
+  const providerAdapterEvidence = providerAdapterContractEvidence({ criterion, repoPath, task });
+  if (providerAdapterEvidence) return providerAdapterEvidence;
 
   const workflowEntrypointEvidence = workerWorkflowEntrypointContractEvidence({ criterion, repoPath, task });
   if (workflowEntrypointEvidence) return workflowEntrypointEvidence;
