@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { createDeliveryRequestContext } from './context';
+import { deliveryMemoryResourceId } from './memory';
 import { finishDeliveryRunState } from './state-service';
 import type { MastraLike } from './observability';
 import { assertDeliveryModelEnvironment } from './models';
@@ -53,9 +53,7 @@ type DeliveryWorkflowHost = {
 } & MastraLike;
 
 export function deliveryWorkflowResourceId(repoPath: string) {
-  const repo = resolve(repoPath);
-  const hash = createHash('sha256').update(repo).digest('hex').slice(0, 16);
-  return `delivery:${hash}`;
+  return deliveryMemoryResourceId(repoPath);
 }
 
 function serializeError(error: unknown) {

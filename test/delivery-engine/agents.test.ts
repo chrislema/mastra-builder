@@ -5,7 +5,7 @@ import {
   deliveryAgents,
   deliveryMemory,
   deliverySupervisorAgent,
-  deliveryWorkingMemoryTemplate,
+  deliveryWorkingMemorySchema,
 } from '../../src/mastra/delivery-engine/agents.ts';
 
 test('delivery agents include a native supervisor surface', () => {
@@ -27,11 +27,9 @@ test('delivery agents share a thread-scoped working memory contract', async () =
   const memoryConfig = deliveryMemory.getMergedThreadConfig();
 
   assert.equal(memoryConfig.lastMessages, 12);
-  assert.deepEqual(memoryConfig.workingMemory, {
-    enabled: true,
-    scope: 'thread',
-    template: deliveryWorkingMemoryTemplate,
-  });
+  assert.equal(memoryConfig.workingMemory?.enabled, true);
+  assert.equal(memoryConfig.workingMemory?.scope, 'thread');
+  assert.equal(memoryConfig.workingMemory?.schema, deliveryWorkingMemorySchema);
 
   for (const agent of Object.values(deliveryAgents)) {
     assert.equal(agent.hasOwnMemory(), true);

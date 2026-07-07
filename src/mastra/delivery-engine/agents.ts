@@ -1,5 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
+import { z } from 'zod';
 import { deliveryRequestContextSchema } from './context';
 import { deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
@@ -15,26 +16,40 @@ import {
 } from './workflow';
 import { deliveryModel, judgeModel } from './models';
 
-export const deliveryWorkingMemoryTemplate = `# Delivery Run Working Memory
+const deliveryRoleSchema = z.enum(['planner', 'architect', 'engineer', 'designer', 'tester', 'deployer', 'judge', 'supervisor']);
 
-## Workspace
-- Repo Path:
-- Vision Source:
-- Spec Source:
-
-## Current Run
-- Run Id:
-- Stage:
-- Active Task:
-- Open Questions:
-- Assumptions:
-- Risks:
-
-## Quality State
-- Last Gate:
-- Required Evidence:
-- Human Approval:
-`;
+export const deliveryWorkingMemorySchema = z.object({
+  workspace: z.object({
+    repoPath: z.string().optional(),
+    visionSource: z.string().optional(),
+    specSource: z.string().optional(),
+  }).optional(),
+  currentRun: z.object({
+    runId: z.string().optional(),
+    stage: z.string().optional(),
+    activeTask: z.string().optional(),
+    openQuestions: z.array(z.string()).default([]),
+    assumptions: z.array(z.string()).default([]),
+    risks: z.array(z.string()).default([]),
+  }).optional(),
+  cloudflare: z.object({
+    projectType: z.enum(['worker', 'pages', 'unknown']).default('worker'),
+    requiredBindings: z.array(z.string()).default([]),
+    requiredResources: z.array(z.enum(['workers_ai', 'd1', 'kv', 'r2', 'durable_objects', 'queues', 'workflows'])).default([]),
+    deploymentMode: z.enum(['local', 'production', 'unknown']).default('local'),
+  }).optional(),
+  handoff: z.object({
+    fromRole: deliveryRoleSchema.optional(),
+    toRole: deliveryRoleSchema.optional(),
+    summary: z.string().optional(),
+    nextEvidenceNeeded: z.array(z.string()).default([]),
+  }).optional(),
+  qualityState: z.object({
+    lastGate: z.string().optional(),
+    requiredEvidence: z.array(z.string()).default([]),
+    humanApproval: z.enum(['not_required', 'required', 'granted', 'denied', 'unknown']).default('unknown'),
+  }).optional(),
+});
 
 export const deliveryMemory = new Memory({
   options: {
@@ -42,7 +57,7 @@ export const deliveryMemory = new Memory({
     workingMemory: {
       enabled: true,
       scope: 'thread',
-      template: deliveryWorkingMemoryTemplate,
+      schema: deliveryWorkingMemorySchema,
     },
   },
 });
@@ -69,8 +84,10 @@ a workflow artifact should exist.
 
 When operating on a target repo, use requestContext.repoPath as the workspace root.
 Use thread-scoped Mastra working memory only for live coordination facts inside the current
-conversation or delegated run. Persist durable decisions, artifacts, scores, and status through
-the delivery tools and workflows.
+conversation or delegated run: active task, handoff summary, open blockers, expected evidence,
+and Cloudflare resource assumptions. Persist durable decisions, artifacts, scores, and status
+through the delivery tools and workflows.
+The judge role receives run memory as read-only context and must not use memory as evidence.
 `;
 
 const deliveryProcessorConfig = {

@@ -32,6 +32,7 @@ import {
   type DeliveryEvent,
 } from './checks';
 import { createDeliveryRequestContext } from './context';
+import { deliveryRunMemory } from './memory';
 import {
   aggregateJudgment,
   buildJudgeArtifactPrompt,
@@ -7183,6 +7184,7 @@ async function runWithDeliveryStageTimeout<T>({
 async function judgeDeliveryArtifact({
   mastra,
   repoPath,
+  runId,
   rubricName,
   subjectName,
   subject,
@@ -7191,6 +7193,7 @@ async function judgeDeliveryArtifact({
 }: {
   mastra: any;
   repoPath: string;
+  runId: string;
   rubricName: string;
   subjectName: string;
   subject: unknown;
@@ -7230,6 +7233,7 @@ async function judgeDeliveryArtifact({
           {
             ...structuredNoToolOptions,
             abortSignal,
+            memory: deliveryRunMemory({ repoPath, runId, role: 'judge' }),
             requestContext: createDeliveryRequestContext(repoPath),
             structuredOutput: {
               schema: rubricJudgeOutputSchema,
@@ -7549,6 +7553,7 @@ ${sourceDocuments.map((document) => `--- ${document.path}\n${document.content}`)
                 {
                   ...structuredNoToolOptions,
                   abortSignal,
+                  memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: 'planner' }),
                   requestContext: createDeliveryRequestContext(inputData.repoPath),
                   structuredOutput: {
                     schema: plannerOutputSchema,
@@ -7704,6 +7709,7 @@ function planGateRevisionRemediation({
 async function reviseTaskPlanFromPlanGate({
   mastra,
   repoPath,
+  runId,
   taskPlan,
   deterministicResults,
   judgment,
@@ -7711,6 +7717,7 @@ async function reviseTaskPlanFromPlanGate({
 }: {
   mastra: any;
   repoPath: string;
+  runId: string;
   taskPlan: TaskPlan;
   deterministicResults: DeterministicGateResult[];
   judgment: AggregatedJudgment;
@@ -7791,6 +7798,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
           {
             ...structuredNoToolOptions,
             abortSignal,
+            memory: deliveryRunMemory({ repoPath, runId, role: 'planner' }),
             requestContext: createDeliveryRequestContext(repoPath),
             structuredOutput: {
               schema: plannerRevisionOutputSchema,
@@ -7880,6 +7888,7 @@ const createPlanGateStep = createStep({
       const taskPlanJudge = await judgeDeliveryArtifact({
         mastra,
         repoPath: inputData.repoPath,
+        runId: inputData.runId,
         rubricName: 'task-plan',
         subjectName,
         subject: taskPlan,
@@ -7952,6 +7961,7 @@ const createPlanGateStep = createStep({
       const revision = await reviseTaskPlanFromPlanGate({
         mastra,
         repoPath: inputData.repoPath,
+        runId: inputData.runId,
         taskPlan,
         deterministicResults,
         judgment: taskPlanJudgment,
@@ -8126,6 +8136,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
           {
             ...structuredNoToolOptions,
             abortSignal,
+            memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: 'architect' }),
             requestContext: createDeliveryRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: reviewReportSchema,
@@ -8173,6 +8184,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
     const reviewJudge = await judgeDeliveryArtifact({
       mastra,
       repoPath: inputData.repoPath,
+      runId: inputData.runId,
       rubricName: 'review-report',
       subjectName: reviewPath,
       subject: reviewReport,
@@ -8262,6 +8274,7 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
           {
             ...structuredNoToolOptions,
             abortSignal,
+            memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: 'planner' }),
             requestContext: createDeliveryRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: plannerRevisionOutputSchema,
@@ -8335,6 +8348,7 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
     const revisedPlanJudge = await judgeDeliveryArtifact({
       mastra,
       repoPath: inputData.repoPath,
+      runId: inputData.runId,
       rubricName: 'task-plan',
       subjectName: revisionPath,
       subject: revisedTaskPlan,
@@ -8942,6 +8956,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
               toolChoice,
               maxSteps,
               toolCallConcurrency: 1,
+              memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: task.owner }),
               requestContext: createDeliveryRequestContext(inputData.repoPath),
             },
           ),
@@ -9301,6 +9316,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
       implementationJudge = await judgeDeliveryArtifact({
         mastra,
         repoPath: inputData.repoPath,
+        runId: inputData.runId,
         rubricName: 'implementation',
         subjectName: notePath,
         subject: {
@@ -9838,6 +9854,7 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
           {
             ...structuredNoToolOptions,
             abortSignal,
+            memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: 'tester' }),
             requestContext: createDeliveryRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: testerOutputSchema,
@@ -9900,6 +9917,7 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
     const gateJudge = await judgeDeliveryArtifact({
       mastra,
       repoPath: inputData.repoPath,
+      runId: inputData.runId,
       rubricName: 'release-gate',
       subjectName: gatePath,
       subject: {
@@ -10305,6 +10323,7 @@ const createDeploymentJudgmentStep = createStep({
     const deploymentJudge = await judgeDeliveryArtifact({
       mastra,
       repoPath: inputData.repoPath,
+      runId: inputData.runId,
       rubricName: 'deployment-report',
       subjectName: inputData.deploymentReportPath,
       subject: {
