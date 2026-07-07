@@ -2501,6 +2501,79 @@ test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness stru
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /protected APIs stay unavailable/);
 });
 
+test('acceptance contracts verify vanilla Worker scaffold static assets and workflow export structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-t01-contracts-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'talking-head-builder',
+        main: 'src/index.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        assets: { directory: './public', binding: 'ASSETS' },
+        env: {
+          staging: {
+            assets: { directory: './public', binding: 'ASSETS' },
+            ai: { binding: 'AI' },
+          },
+          production: {
+            assets: { directory: './public', binding: 'ASSETS' },
+            ai: { binding: 'AI' },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '.secrets*', 'secrets/', '*.pem', '*.key', '*.cpuprofile', ''].join(
+      '\n',
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'src/index.js'),
+    [
+      'import { WorkflowEntrypoint } from "cloudflare:workers";',
+      'export class WeeklyWorkflow extends WorkflowEntrypoint {',
+      '  async run(event, step) { return step.do("placeholder", async () => ({ ok: true })); }',
+      '}',
+      'const worker = { async fetch() { return new Response("ok"); } };',
+      'export default worker;',
+      '',
+    ].join('\n'),
+  );
+
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['wrangler.jsonc', '.gitignore', 'src/index.js'],
+      acceptance_criteria: [
+        'wrangler.jsonc configures Workers Static Assets with assets.directory "./public" and binding "ASSETS".',
+        '.gitignore excludes node_modules, Wrangler local state, environment files, and generated secrets.',
+        'No tsconfig.json is created.',
+        'src/index.js exports a minimal class named WeeklyWorkflow that extends WorkflowEntrypoint when wrangler.jsonc defines workflows.class_name "WeeklyWorkflow", so Wrangler dry-run validation succeeds before later workflow code fills in the implementation without changing the configured export name.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({ repoPath, task, verification: { performed: [], missing: [] } });
+
+  assert.deepEqual(
+    contracts.map((contract) => contract.status),
+    ['verified', 'verified', 'verified', 'verified'],
+  );
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /Workers Static Assets/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /tsconfig\.json is absent/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /WeeklyWorkflow export/);
+});
+
 test('acceptance contract gate rejects partial workflow implementations', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workflow-contract-gap-'));
   mkdirSync(join(repoPath, 'src/workflows'), { recursive: true });

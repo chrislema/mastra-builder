@@ -7771,6 +7771,58 @@ function workerConfigEnvironmentContractEvidence({
   };
 }
 
+function workerConfigStaticAssetsContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bwrangler\.jsonc\b/i.test(criterion)) return undefined;
+  if (!/\bWorkers Static Assets\b|\bassets\.directory\b|\bASSETS\b/i.test(criterion)) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('wrangler.jsonc')) return undefined;
+
+  const configPath = join(resolve(repoPath), 'wrangler.jsonc');
+  if (!existsSync(configPath)) return undefined;
+
+  const config = parseWranglerJsonConfig(readFileSync(configPath, 'utf8'));
+  if (!config) {
+    return {
+      passed: false,
+      evidence: [],
+      gaps: ['wrangler.jsonc is not valid JSONC, so Workers Static Assets could not be verified.'],
+    };
+  }
+
+  const gaps: string[] = [];
+  const verifyAssets = (scopeName: string, scope: Record<string, unknown> | undefined) => {
+    const assets = recordValue(scope?.assets);
+    if (!assetDirectoryIsPublic(assets?.directory)) {
+      gaps.push(`wrangler.jsonc ${scopeName}.assets.directory must be "./public".`);
+    }
+    if (assets?.binding !== 'ASSETS') {
+      gaps.push(`wrangler.jsonc ${scopeName}.assets.binding must be "ASSETS".`);
+    }
+  };
+
+  verifyAssets('top-level', config);
+  for (const environmentName of workerDeploymentEnvironments) {
+    const environment = workerJsonEnvironmentRecord(config, environmentName);
+    if (environment) verifyAssets(`env.${environmentName}`, environment);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured wrangler.jsonc evidence verified Workers Static Assets directory "./public" and binding "ASSETS"'],
+    gaps: [],
+  };
+}
+
 function gitignoreRuntimeArtifactContractEvidence({
   criterion,
   repoPath,
@@ -7794,8 +7846,16 @@ function gitignoreRuntimeArtifactContractEvidence({
     { label: 'dependencies', patterns: [/^node_modules\/?$/m] },
     { label: 'Wrangler local state', patterns: [/^\.wrangler\/?$/m] },
     { label: 'env files', patterns: [/^\.env\*?$/m, /^\.dev\.vars\*?$/m] },
-    { label: 'build/runtime artifacts', patterns: [/^dist\/?$/m, /^build\/?$/m, /^\*\.log$/m] },
   ];
+  if (/\bgenerated secrets?\b|\bsecrets?\b/i.test(criterion)) {
+    requiredGroups.push({
+      label: 'generated secrets',
+      patterns: [/^\.secrets\*?$/m, /^secrets\/?$/m, /^\*\.pem$/m, /^\*\.key$/m],
+    });
+  }
+  if (/\bbuild\b|\bruntime artifacts?\b/i.test(criterion)) {
+    requiredGroups.push({ label: 'build/runtime artifacts', patterns: [/^dist\/?$/m, /^build\/?$/m, /^\*\.log$/m] });
+  }
 
   for (const group of requiredGroups) {
     if (!group.patterns.every((pattern) => pattern.test(source))) {
@@ -7807,7 +7867,29 @@ function gitignoreRuntimeArtifactContractEvidence({
 
   return {
     passed: true,
-    evidence: ['structured .gitignore evidence verified dependencies, Wrangler state, env files, and build/runtime artifacts'],
+    evidence: ['structured .gitignore evidence verified dependencies, Wrangler state, env files, generated secrets, and runtime artifacts as required'],
+    gaps: [],
+  };
+}
+
+function noTsconfigContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bno\s+tsconfig\.json\b|\btsconfig\.json\s+is\s+not\s+created\b/i.test(criterion)) return undefined;
+  if (existsSync(join(resolve(repoPath), 'tsconfig.json'))) {
+    return { passed: false, evidence: [], gaps: ['tsconfig.json exists even though the vanilla JavaScript scaffold forbids it.'] };
+  }
+
+  return {
+    passed: true,
+    evidence: ['structured repo evidence verified tsconfig.json is absent for the vanilla JavaScript Worker scaffold'],
     gaps: [],
   };
 }
@@ -7932,7 +8014,7 @@ function workerEntrypointExportContractEvidence({
 
   const source = readFileSync(fullPath, 'utf8');
   const gaps: string[] = [];
-  if (!/export\s+default\s+\{[\s\S]*\bfetch\s*\(/m.test(source)) {
+  if (!/export\s+default\s+\{[\s\S]*\bfetch\s*\(/m.test(source) && !/export\s+default\s+[A-Za-z_$][\w$]*\s*;/.test(source)) {
     gaps.push(`${indexPath} must export a default Worker object with a fetch handler.`);
   }
   if (!/\bexport\s+class\s+WeeklyWorkflow\b/.test(source)) {
@@ -7947,6 +8029,42 @@ function workerEntrypointExportContractEvidence({
   return {
     passed: true,
     evidence: [`structured Worker entrypoint evidence verified default fetch handler and WeeklyWorkflow export in ${indexPath}`],
+    gaps: [],
+  };
+}
+
+function workerWorkflowEntrypointContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bWeeklyWorkflow\b/i.test(criterion) || !/\bWorkflowEntrypoint\b/i.test(criterion)) return undefined;
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  if (!/import\s*\{[^}]*\bWorkflowEntrypoint\b[^}]*\}\s*from\s*['"]cloudflare:workers['"]/.test(source)) {
+    gaps.push(`${indexPath} must import WorkflowEntrypoint from cloudflare:workers.`);
+  }
+  if (!/export\s+class\s+WeeklyWorkflow\s+extends\s+WorkflowEntrypoint\b/.test(source)) {
+    gaps.push(`${indexPath} must export class WeeklyWorkflow extends WorkflowEntrypoint.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured WorkflowEntrypoint evidence verified WeeklyWorkflow export in ${indexPath}`],
     gaps: [],
   };
 }
@@ -7974,11 +8092,20 @@ function acceptanceCriterionEvidence({
   const structuredFileEvidence = workerConfigEnvironmentContractEvidence({ criterion, repoPath, task });
   if (structuredFileEvidence) return structuredFileEvidence;
 
+  const staticAssetsEvidence = workerConfigStaticAssetsContractEvidence({ criterion, repoPath, task });
+  if (staticAssetsEvidence) return staticAssetsEvidence;
+
   const scaffoldProtectedApiEvidence = workerScaffoldProtectedApiContractEvidence({ criterion, repoPath, task });
   if (scaffoldProtectedApiEvidence) return scaffoldProtectedApiEvidence;
 
   const workerEntrypointEvidence = workerEntrypointExportContractEvidence({ criterion, repoPath, task });
   if (workerEntrypointEvidence) return workerEntrypointEvidence;
+
+  const workflowEntrypointEvidence = workerWorkflowEntrypointContractEvidence({ criterion, repoPath, task });
+  if (workflowEntrypointEvidence) return workflowEntrypointEvidence;
+
+  const noTsconfigEvidence = noTsconfigContractEvidence({ criterion, repoPath, task });
+  if (noTsconfigEvidence) return noTsconfigEvidence;
 
   const fileEvidence = acceptanceCriterionFileEvidence({ criterion, repoPath, task });
   if (fileEvidence) return { passed: true, evidence: [fileEvidence], gaps: [] };
