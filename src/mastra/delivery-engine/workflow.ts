@@ -2024,11 +2024,6 @@ function workerSourceSearchRoots(repoPath: string) {
   ];
 }
 
-function workerSourceContainsText(repoPath: string, needle: string) {
-  const scanned = { count: 0 };
-  return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeContainsText(sourceRoot, needle, scanned));
-}
-
 function sourceTextContainsRouteLiteral(text: string, route: string) {
   const escaped = route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp("(['\"`])" + escaped + '\\1').test(text);
@@ -2079,17 +2074,63 @@ function workerSourceContainsRouteLiteral(repoPath: string, route: string) {
   return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeContainsRouteLiteral(sourceRoot, route, scanned));
 }
 
-function repoSourceUsesWorkersAi(repoPath: string) {
-  const needles = [
-    'env.AI',
-    'WorkersAiClient',
-    'createAiClient',
-    "from './ai/client'",
-    "from '../ai/client'",
-    "from '../../ai/client'",
-  ];
+function sourceTextUsesWorkersAi(text: string) {
+  return [
+    /\benv\s*\??\.\s*AI\b/,
+    /\benv\s*\[\s*['"]AI['"]\s*\]/,
+    /\bconst\s*\{[^}]*\bAI\b[^}]*\}\s*=\s*(?:\w+\.)?env\b/,
+    /\b(?:const|let|var)\s+\w+\s*=\s*(?:\w+\.)?env\s*\??\.\s*AI\b/,
+    /\bAI\s*\??\s*:\s*Ai\b/,
+    /\bAI\s*\.\s*run\s*\(/,
+    /\bWorkersAiClient\b/,
+    /\bcreateAiClient\b/,
+    /\bfrom\s+['"](?:\.{1,2}\/)*ai\/client['"]/,
+  ].some((pattern) => pattern.test(text));
+}
 
-  return needles.some((needle) => workerSourceContainsText(repoPath, needle));
+function sourceTreeUsesWorkersAi(rootPath: string, scanned = { count: 0 }): boolean {
+  if (!existsSync(rootPath) || scanned.count > 150) return false;
+
+  const rootStat = statSync(rootPath);
+  if (rootStat.isFile()) {
+    if (!/\.[cm]?[jt]sx?$/.test(rootPath)) return false;
+    scanned.count += 1;
+    if (scanned.count > 150) return false;
+    try {
+      return sourceTextUsesWorkersAi(readFileSync(rootPath, 'utf8'));
+    } catch {
+      return false;
+    }
+  }
+
+  if (!rootStat.isDirectory()) return false;
+
+  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.delivery') continue;
+
+    const path = join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      if (sourceTreeUsesWorkersAi(path, scanned)) return true;
+      continue;
+    }
+
+    if (!/\.[cm]?[jt]sx?$/.test(entry.name)) continue;
+    scanned.count += 1;
+    if (scanned.count > 150) return false;
+
+    try {
+      if (sourceTextUsesWorkersAi(readFileSync(path, 'utf8'))) return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function repoSourceUsesWorkersAi(repoPath: string) {
+  const scanned = { count: 0 };
+  return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeUsesWorkersAi(sourceRoot, scanned));
 }
 
 function wranglerTomlHasWorkersAiBinding(text: string) {

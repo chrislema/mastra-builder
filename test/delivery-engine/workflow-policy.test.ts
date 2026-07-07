@@ -2717,6 +2717,71 @@ test('Workers AI binding checks support vanilla JS Worker source', () => {
   assert.match(workersAiEvidence()?.output_summary ?? '', /TypeScript Env declarations, when present/);
 });
 
+test('Workers AI binding checks detect destructured and bracket AI access', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workers-ai-access-patterns-'));
+  mkdirSync(join(repoPath, 'workers'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'workers/destructure.js'),
+    [
+      'export default {',
+      '  async fetch(request, env) {',
+      '    const { AI: model } = env;',
+      '    const response = await model.run("@cf/meta/llama-3.1-8b-instruct", { prompt: "score" });',
+      '    return Response.json(response);',
+      '  }',
+      '};',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'workers/bracket.js'),
+    [
+      'export async function score(env) {',
+      '  const model = env["AI"];',
+      '  return model.run("@cf/meta/llama-3.1-8b-instruct", { prompt: "score" });',
+      '}',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      withWorkerDeploymentEnvironments({
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'workers/destructure.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+      }),
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc', 'workers/destructure.js'] }]).tasks;
+
+  assert.deepEqual(workersAiBindingGaps(repoPath, task), [
+    'Workers AI source is present, but the Wrangler config does not contain an active AI binding named "AI" (`"ai": { "binding": "AI" }` in wrangler.jsonc or `[ai] binding = "AI"` in TOML).',
+  ]);
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      withWorkerDeploymentEnvironments({
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'demo-worker',
+        main: 'workers/destructure.js',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        ai: { binding: 'AI' },
+      }),
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(workersAiBindingGaps(repoPath, task), []);
+});
+
 test('Worker config hygiene requires current JSONC schema date flags and observability', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-hygiene-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
