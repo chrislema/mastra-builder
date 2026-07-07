@@ -6098,6 +6098,105 @@ function acceptanceCriterionFileEvidence({
     .join(', ')}`;
 }
 
+function workerConfigEnvironmentContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bwrangler\.jsonc\b/i.test(criterion)) return undefined;
+  if (!/\benv\.staging\b/i.test(criterion) || !/\benv\.production\b/i.test(criterion)) return undefined;
+
+  const configPath = join(resolve(repoPath), 'wrangler.jsonc');
+  if (!taskBoundarySurfaces(repoPath, task).includes('wrangler.jsonc') || !existsSync(configPath)) return undefined;
+
+  const config = parseWranglerJsonConfig(readFileSync(configPath, 'utf8'));
+  if (!config) {
+    return {
+      passed: false,
+      evidence: [],
+      gaps: ['wrangler.jsonc is not valid JSONC, so environment bindings could not be verified.'],
+    };
+  }
+
+  const requiredBindingCandidates: Array<{ name: string; kind: WorkerBindingKind }> = [
+    { name: 'BOOKMARKS', kind: 'service' },
+    { name: 'DB', kind: 'd1' },
+    { name: 'ARTIFACTS', kind: 'r2' },
+    { name: 'WEEKLY_WORKFLOW', kind: 'workflow' },
+    { name: 'AI', kind: 'ai' },
+    { name: 'ASSETS', kind: 'assets' },
+  ];
+  const requiredBindings = requiredBindingCandidates.filter((binding) =>
+    new RegExp(`\\b${binding.name}\\b`, 'i').test(criterion),
+  );
+
+  const gaps: string[] = [];
+  const envVarSets: string[][] = [];
+  for (const environmentName of workerDeploymentEnvironments) {
+    const environment = workerJsonEnvironmentRecord(config, environmentName);
+    if (!environment) {
+      gaps.push(`wrangler.jsonc env.${environmentName} is missing.`);
+      continue;
+    }
+
+    const bindings = new Set(
+      workerJsonConfigBindingDeclarations(environment).map((binding) => `${binding.kind}:${binding.name}`),
+    );
+    for (const binding of requiredBindings) {
+      if (!bindings.has(`${binding.kind}:${binding.name}`)) {
+        gaps.push(`wrangler.jsonc env.${environmentName} is missing ${binding.name} as a ${binding.kind} binding.`);
+      }
+    }
+
+    if (/assets\.directory\s+["']?\.\/public/i.test(criterion)) {
+      const assets = recordValue(environment.assets);
+      if (!assetDirectoryIsPublic(assets?.directory)) {
+        gaps.push(`wrangler.jsonc env.${environmentName}.assets.directory must be "./public".`);
+      }
+    }
+
+    if (/assets\.binding\s+["']?ASSETS/i.test(criterion)) {
+      const assets = recordValue(environment.assets);
+      if (assets?.binding !== 'ASSETS') {
+        gaps.push(`wrangler.jsonc env.${environmentName}.assets.binding must be "ASSETS".`);
+      }
+    }
+
+    const vars = workerJsonConfigVarNames(environment).sort();
+    envVarSets.push(vars);
+    if (/\bvars\b|\bnon-secret vars\b/i.test(criterion) && vars.length === 0) {
+      gaps.push(`wrangler.jsonc env.${environmentName}.vars must declare required non-secret vars.`);
+    }
+  }
+
+  if (/\bmirrors?\b/i.test(criterion) && envVarSets.length === workerDeploymentEnvironments.length) {
+    const [first, ...rest] = envVarSets.map((vars) => vars.join('\n'));
+    for (const vars of rest) {
+      if (vars !== first) {
+        gaps.push('wrangler.jsonc env.staging.vars and env.production.vars must mirror the same non-secret var names.');
+        break;
+      }
+    }
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [
+      `structured wrangler.jsonc evidence verified ${workerDeploymentEnvironments.join(
+        '/',
+      )} environments with ${requiredBindings.map((binding) => `${binding.kind}:${binding.name}`).join(', ')}`,
+    ],
+    gaps: [],
+  };
+}
+
 function acceptanceCriterionEvidence({
   criterion,
   performed,
@@ -6111,6 +6210,9 @@ function acceptanceCriterionEvidence({
 }) {
   const commandEvidence = acceptanceCriterionCommandEvidence(criterion, performed);
   if (commandEvidence) return { passed: true, evidence: [commandEvidence], gaps: [] };
+
+  const structuredFileEvidence = workerConfigEnvironmentContractEvidence({ criterion, repoPath, task });
+  if (structuredFileEvidence) return structuredFileEvidence;
 
   const fileEvidence = acceptanceCriterionFileEvidence({ criterion, repoPath, task });
   if (fileEvidence) return { passed: true, evidence: [fileEvidence], gaps: [] };

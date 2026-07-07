@@ -3075,6 +3075,72 @@ test('Worker config hygiene requires deployment environments with mirrored bindi
   assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
 });
 
+test('acceptance contracts verify Worker env binding mirrors with structured wrangler config evidence', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-acceptance-'));
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['wrangler.jsonc'],
+      acceptance_criteria: [
+        'wrangler.jsonc defines env.staging and env.production and mirrors BOOKMARKS, DB, ARTIFACTS, WEEKLY_WORKFLOW, AI, assets.directory "./public", assets.binding "ASSETS", and required non-secret vars in both environments.',
+      ],
+    },
+  ]).tasks;
+
+  const environment = (name: 'staging' | 'production') => ({
+    vars: {
+      APP_ENV: name,
+      DEFAULT_WINDOW_DAYS: '7',
+      ADMIN_TOKEN_REQUIRED: 'true',
+      ADMIN_TOKEN_SECRET_NAME: 'ADMIN_TOKEN',
+    },
+    assets: { directory: './public', binding: 'ASSETS' },
+    services: [{ binding: 'BOOKMARKS', service: 'bookmarks', environment: name }],
+    d1_databases: [{ binding: 'DB', database_name: `talking-head-builder-${name}`, database_id: `${name}-db` }],
+    r2_buckets: [{ binding: 'ARTIFACTS', bucket_name: `talking-head-builder-artifacts-${name}` }],
+    workflows: [{ binding: 'WEEKLY_WORKFLOW', name: `talking-head-weekly-workflow-${name}`, class_name: 'WeeklyWorkflow' }],
+    ai: { binding: 'AI' },
+  });
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        name: 'talking-head-builder',
+        main: 'src/index.js',
+        compatibility_date: currentCompatibilityDate(),
+        env: {
+          staging: environment('staging'),
+          production: environment('production'),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: [], missing: [] },
+  });
+
+  assert.equal(contracts[0].status, 'verified');
+  assert.match(contracts[0].evidence.join('\n'), /structured wrangler\.jsonc evidence/);
+
+  const broken = JSON.parse(readFileSync(join(repoPath, 'wrangler.jsonc'), 'utf8')) as Record<string, any>;
+  delete broken.env.production.ai;
+  writeFileSync(join(repoPath, 'wrangler.jsonc'), JSON.stringify(broken, null, 2));
+
+  const brokenContracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: [], missing: [] },
+  });
+  assert.equal(brokenContracts[0].status, 'unverified');
+  assert.match(brokenContracts[0].gaps.join('\n'), /env\.production is missing AI as a ai binding/);
+});
+
 test('Worker config hygiene checks TOML deployment environment mirrors', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-toml-envs-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
