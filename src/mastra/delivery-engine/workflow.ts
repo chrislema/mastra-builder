@@ -1368,6 +1368,10 @@ function taskOwnsRouterSurface(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/);
 }
 
+function taskOwnsStaticAssetWiringSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/staticAssets\.[cm]?[jt]s$/) || taskOwnedBoundaryPaths(task).includes('wrangler.jsonc');
+}
+
 function taskOwnsRouteModule(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:routes(?:\/|[A-Z]).*|[A-Za-z0-9_-]*Routes)\.[cm]?[jt]s$/i);
 }
@@ -1540,8 +1544,17 @@ function routeModuleStyle(tasks: Task[]) {
   return tasks.some((task) => taskOwnedBoundaryPaths(task).some((path) => path.startsWith('src/routes/'))) ? 'nested' : 'flat';
 }
 
+function finalGeneratedSliceTaskId(tasks: Task[], taskId: string) {
+  const familyId = generatedSliceFamilyId(taskId);
+  const family = tasks.filter((task) => generatedSliceFamilyId(task.id) === familyId);
+  if (!family.some((task) => task.id !== familyId)) return taskId;
+  return [...family].sort((left, right) => generatedSliceRank(right.id) - generatedSliceRank(left.id))[0]?.id ?? taskId;
+}
+
 function routerBoundaryProviderTasks(tasks: Task[]) {
-  return tasks.filter((task) => taskOwnsRouterSurface(task) && !taskHasRouteIntegrationContract(task));
+  return tasks.filter(
+    (task) => taskOwnsRouterSurface(task) && !taskHasRouteIntegrationContract(task) && !taskOwnsStaticAssetWiringSurface(task),
+  );
 }
 
 function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
@@ -1558,7 +1571,7 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
         id: uniqueTaskId({ ...taskPlan, tasks }, 'E20-auth-session'),
         owner: 'engineer' as const,
         deliverable: 'Implement the browser-safe auth/session route boundary before protected feature routes and UI work.',
-        depends_on: Array.from(new Set([...authTasks, ...routerTasks].map((task) => task.id))),
+        depends_on: Array.from(new Set([...authTasks, ...routerTasks].map((task) => finalGeneratedSliceTaskId(tasks, task.id)))),
         acceptance_criteria: [
           `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
           `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
@@ -1583,7 +1596,9 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   const alreadyHasIntegration = tasks.some(taskHasRouteIntegrationContract);
   if (alreadyHasIntegration) {
     let changed = deduped.changed;
-    const expectedDependencies = Array.from(new Set([...routerTasks, ...routeTasks].map((task) => task.id)));
+    const expectedDependencies = Array.from(
+      new Set([...routerTasks, ...routeTasks].map((task) => finalGeneratedSliceTaskId(tasks, task.id))),
+    );
     tasks = tasks.map((task) => {
       if (!taskHasRouteIntegrationContract(task)) return task;
       const depends_on = expectedDependencies.filter((dependency) => dependency !== task.id);
@@ -1599,7 +1614,9 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   const routerSurface = taskOwnedBoundaryPaths(routerTasks[routerTasks.length - 1]).find((path) =>
     /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/.test(path),
   ) ?? 'src/router.js';
-  const depends_on = Array.from(new Set([...routerTasks, ...routeTasks].map((task) => task.id)));
+  const depends_on = Array.from(
+    new Set([...routerTasks, ...routeTasks].map((task) => finalGeneratedSliceTaskId(tasks, task.id))),
+  );
 
   return {
     tasks: [
@@ -1666,8 +1683,8 @@ function appendDependencies(task: Task, dependencies: string[]) {
 function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
   const sanitized = withoutCyclicDependencies(tasks);
   tasks = sanitized.tasks;
-  const routerTaskIds = new Set(routerBoundaryProviderTasks(tasks).map((task) => task.id));
-  const sessionTaskIds = new Set(tasks.filter(taskOwnsSessionRoute).map((task) => task.id));
+  const routerTaskIds = new Set(routerBoundaryProviderTasks(tasks).map((task) => finalGeneratedSliceTaskId(tasks, task.id)));
+  const sessionTaskIds = new Set(tasks.filter(taskOwnsSessionRoute).map((task) => finalGeneratedSliceTaskId(tasks, task.id)));
   const integrationTask = tasks.find(taskHasRouteIntegrationContract);
   let changed = sanitized.changed;
 
