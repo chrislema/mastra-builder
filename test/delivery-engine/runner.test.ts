@@ -200,6 +200,8 @@ test('delivery workflow runner closes initialized delivery state after a failed 
   assert.equal(response.reportPath, join(repoPath, '.delivery', 'runs', 'failed-run.json'));
   const report = readJson(response.reportPath);
   assert.equal(report.status, 'failed');
+  assert.equal(report.deliveryStatus, 'failed');
+  assert.equal(report.summary, 'boom');
   assert.equal(report.result.error.message, 'boom');
   assert.deepEqual(readJson(join(repoPath, '.delivery', 'runs', 'latest.json')), report);
   const deliveryRun = readDeliveryRun(repoPath);
@@ -242,7 +244,10 @@ test('delivery workflow runner writes a report when workflow start throws', asyn
 
   const report = readJson(join(repoPath, '.delivery', 'runs', 'thrown-run.json'));
   assert.equal(report.status, 'threw');
+  assert.equal(report.deliveryStatus, 'failed');
+  assert.equal(report.summary, 'structured output missing');
   assert.equal(report.error.message, 'structured output missing');
+  assert.deepEqual(readJson(join(repoPath, '.delivery', 'runs', 'latest.json')), report);
   const deliveryRun = readDeliveryRun(repoPath);
   assert.equal(deliveryRun.status, 'failed');
   assert.equal(deliveryRun.summary, 'structured output missing');

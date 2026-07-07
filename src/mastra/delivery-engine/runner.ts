@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { createDeliveryRequestContext } from './context';
@@ -116,6 +116,17 @@ function workflowFailureFromResult(result: unknown) {
   return undefined;
 }
 
+function readLocalDeliveryRunForReport(repoPath: string) {
+  const path = join(resolve(repoPath), '.delivery', 'run.json');
+  if (!existsSync(path)) return undefined;
+
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
 function writeDeliveryWorkflowRunReport({
   repoPath,
   runId,
@@ -130,7 +141,11 @@ function writeDeliveryWorkflowRunReport({
   error?: unknown;
 }) {
   const resultRecord = result as { status?: unknown; state?: Record<string, unknown> } | undefined;
-  const deliveryState = resultRecord?.state;
+  const localDeliveryState = readLocalDeliveryRunForReport(repoPath);
+  const preferLocalState = error !== undefined || resultRecord?.status === 'failed';
+  const deliveryState = preferLocalState
+    ? (localDeliveryState ?? resultRecord?.state)
+    : (resultRecord?.state ?? localDeliveryState);
   const runsDir = join(resolve(repoPath), '.delivery', 'runs');
   const reportPath = join(runsDir, `${runId}.json`);
   const report = {
