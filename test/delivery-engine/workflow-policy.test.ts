@@ -2825,6 +2825,128 @@ test('acceptance contracts verify Worker static asset fallback through helper', 
   assert.match(contracts[0].evidence.join('\n'), /non-API routes fall through to env\.ASSETS\.fetch\(request\)/);
 });
 
+test('acceptance contracts verify Hono API catch-all plus notFound static asset fallback', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-hono-assets-fallback-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      '',
+      'const app = new Hono<{ Bindings: Env }>();',
+      'app.get("/api/health", (c) => c.json({ ok: true, service: "benchmark" }));',
+      'app.all("/api/*", (c) => c.json({ ok: false, error: "API route not found." }, 404));',
+      'app.notFound((c) => {',
+      '  return c.env.ASSETS.fetch(c.req.raw);',
+      '});',
+      'export default { fetch(request, env, executionContext) { return app.fetch(request, env, executionContext); } } satisfies ExportedHandler<Env>;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['src/index.ts'],
+      acceptance_criteria: [
+        'src/index.ts falls through non-API requests to the ASSETS binding so public static files can be served by the same Worker.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contracts[0].status, 'verified');
+  assert.match(contracts[0].evidence.join('\n'), /non-API routes fall through/);
+});
+
+test('acceptance contracts verify T01 defers full static asset runtime validation until designer assets exist', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-static-assets-deferral-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      'const app = new Hono<{ Bindings: Env }>();',
+      'app.notFound((c) => {',
+      '  // T01 does not claim full Wrangler runtime validation of the configured ASSETS directory until',
+      '  // public/index.html, public/styles.css, and public/app.js are created by the designer-owned T06 task.',
+      '  return c.env.ASSETS.fetch(c.req.raw);',
+      '});',
+      'export default app;',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    [
+      '{',
+      '  "name": "benchmark",',
+      '  "main": "src/index.ts",',
+      '  "assets": { "directory": "./public", "binding": "ASSETS" }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['src/index.ts', 'wrangler.jsonc'],
+      acceptance_criteria: [
+        'T01 does not claim full Wrangler runtime validation of the configured ASSETS directory until public/index.html, public/styles.css, and public/app.js are created by the designer-owned T06 task.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contracts[0].status, 'verified');
+  assert.match(contracts[0].evidence.join('\n'), /static asset runtime validation is deferred/);
+});
+
+test('static asset runtime validation deferral rejects early Wrangler runtime claims', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-static-assets-deferral-runtime-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      'const app = new Hono<{ Bindings: Env }>();',
+      '// public/index.html, public/styles.css, and public/app.js are created by designer-owned T06.',
+      'export default app;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['src/index.ts'],
+      acceptance_criteria: [
+        'T01 does not claim full Wrangler runtime validation of the configured ASSETS directory until public/index.html, public/styles.css, and public/app.js are created by the designer-owned T06 task.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['wrangler dev --env staging passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'unverified');
+  assert.match(contract?.gaps.join('\n') ?? '', /must not claim full Wrangler runtime validation/);
+});
+
 test('acceptance contracts verify Worker type constants and result envelopes structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-types-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

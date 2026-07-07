@@ -8606,7 +8606,9 @@ function workerStaticAssetFallbackContractEvidence({
   task?: Task;
 }) {
   if (!repoPath || !task) return undefined;
-  if (!/\b(?:static asset fallback|ASSETS\.fetch|env\.ASSETS|Non-API routes?)\b/i.test(criterion)) return undefined;
+  if (!/\b(?:static asset fallback|ASSETS\.fetch|env\.ASSETS|ASSETS binding|Non-API (?:routes?|requests?)|falls through non-API)\b/i.test(criterion)) {
+    return undefined;
+  }
   if (!/\b(?:public\/index\.html|related assets|same Worker|static assets?)\b/i.test(criterion)) return undefined;
 
   const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
@@ -8617,10 +8619,16 @@ function workerStaticAssetFallbackContractEvidence({
 
   const source = readFileSync(fullPath, 'utf8');
   const gaps: string[] = [];
-  if (!/\benv\.ASSETS\.fetch\s*\(\s*request\s*\)/.test(source)) {
-    gaps.push(`${indexPath} must call env.ASSETS.fetch(request) for the static asset fallback.`);
+  const callsAssetsFetch =
+    /\benv\.ASSETS\.fetch\s*\(\s*request\s*\)/.test(source) ||
+    /\bc\.env\.ASSETS\.fetch\s*\(\s*c\.req\.raw\s*\)/.test(source);
+  if (!callsAssetsFetch) {
+    gaps.push(`${indexPath} must call env.ASSETS.fetch(request) or c.env.ASSETS.fetch(c.req.raw) for the static asset fallback.`);
   }
-  if (!/!\s*[^;\n]*\.startsWith\s*\(\s*['"]\/api\/['"]\s*\)/.test(source)) {
+  const routesApiBeforeFallback =
+    /!\s*[^;\n]*\.startsWith\s*\(\s*['"]\/api\/['"]\s*\)/.test(source) ||
+    /\bapp\.all\s*\(\s*['"]\/api\/\*['"][\s\S]{0,600}\bapp\.notFound\s*\(/.test(source);
+  if (!routesApiBeforeFallback) {
     gaps.push(`${indexPath} must route non-API requests to the static asset fallback before returning API 404s.`);
   }
 
@@ -8629,6 +8637,62 @@ function workerStaticAssetFallbackContractEvidence({
   return {
     passed: true,
     evidence: [`structured ${indexPath} evidence verified non-API routes fall through to env.ASSETS.fetch(request)`],
+    gaps: [],
+  };
+}
+
+function workerStaticAssetValidationDeferralContractEvidence({
+  criterion,
+  performed,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  performed: string[];
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (
+    !/\b(?:does not claim full Wrangler runtime validation|full local Wrangler validation point|configured ASSETS directory|sequenced after T06|designer-owned T06|avoiding engineer ownership of public\/ files)\b/i.test(
+      criterion,
+    )
+  ) {
+    return undefined;
+  }
+
+  const surfaces = taskBoundarySurfaces(repoPath, task);
+  const gaps: string[] = [];
+  for (const publicSurface of ['public/index.html', 'public/styles.css', 'public/app.js']) {
+    if (surfaces.includes(publicSurface)) {
+      gaps.push(`${task.id} must not own ${publicSurface} when static asset runtime validation is intentionally deferred.`);
+    }
+  }
+
+  const performedText = performed.join('\n');
+  if (/\bwrangler\s+(?:dev|deploy)\b|\bwrangler\b[\s\S]{0,80}\b(?:dry-run|--dry-run)\b/i.test(performedText)) {
+    gaps.push(`${task.id} must not claim full Wrangler runtime validation before designer-owned public assets exist.`);
+  }
+
+  const hasDeferralEvidence = surfaces
+    .filter((surface) => /^src\/index\.(js|ts)$/.test(surface) || surface === 'wrangler.jsonc' || surface === 'wrangler.toml')
+    .some((surface) => {
+      const fullPath = join(resolve(repoPath), surface);
+      if (!existsSync(fullPath)) return false;
+      const source = readFileSync(fullPath, 'utf8');
+      return /T06|designer-owned|designer owned|public\/index\.html|public\/styles\.css|public\/app\.js|does not claim full Wrangler runtime validation|first full local Worker plus static-assets validation/i.test(
+        source,
+      );
+    });
+  if (!hasDeferralEvidence) {
+    gaps.push(`${task.id} must record static asset runtime validation deferral in a task-owned Worker scaffold file.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured ${task.id} evidence verified static asset runtime validation is deferred until designer-owned public assets exist`],
     gaps: [],
   };
 }
@@ -8998,6 +9062,14 @@ function acceptanceCriterionEvidence({
 
   const workerStaticAssetFallbackEvidence = workerStaticAssetFallbackContractEvidence({ criterion, repoPath, task });
   if (workerStaticAssetFallbackEvidence) return workerStaticAssetFallbackEvidence;
+
+  const workerStaticAssetValidationDeferralEvidence = workerStaticAssetValidationDeferralContractEvidence({
+    criterion,
+    performed,
+    repoPath,
+    task,
+  });
+  if (workerStaticAssetValidationDeferralEvidence) return workerStaticAssetValidationDeferralEvidence;
 
   const workerTypesEvidence = workerTypesContractEvidence({ criterion, repoPath, task });
   if (workerTypesEvidence) return workerTypesEvidence;
