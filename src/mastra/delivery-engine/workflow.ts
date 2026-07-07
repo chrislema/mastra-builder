@@ -1979,7 +1979,7 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
   const scaffoldRootTasks = tasks.filter((task) => taskIsRootScaffold(task));
   const routeTasks = tasks.filter(taskOwnsRouteModule);
   const safeAuthTasks = authTasks.filter(
-    (authTask) => !routeTasks.some((routeTask) => taskListDependsOn(tasks, authTask.id, routeTask.id)),
+    (authTask) => !routeTasks.some((routeTask) => routeTask.id !== authTask.id && taskListDependsOn(tasks, authTask.id, routeTask.id)),
   );
   const sessionDependencyTasks = safeAuthTasks.length
     ? [...scaffoldRootTasks, ...safeAuthTasks, ...routerTasks]

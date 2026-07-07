@@ -1565,6 +1565,39 @@ test('task plan normalization keeps session auth before mixed router handler tas
   assert.deepEqual(byId['T11-part-2'].depends_on, ['T11', 'T04', 'E20-auth-session']);
 });
 
+test('task plan normalization lets session auth depend on mixed auth and route tasks', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
+    },
+    {
+      id: 'T07',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/auth.js', 'src/routes/profiles.js'],
+    },
+    {
+      id: 'T09',
+      depends_on: ['T07'],
+      owned_surfaces: ['src/routes/runs.js'],
+    },
+    {
+      id: 'T13',
+      depends_on: ['T09'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+      owner: 'designer',
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T07']);
+  assert.ok(!byId.T07.depends_on.includes('E20-auth-session'));
+  assert.ok(byId.T09.depends_on.includes('E20-auth-session'));
+});
+
 test('task plan normalization attaches Worker lifecycle contracts to workflow and scheduler files', () => {
   const plan = taskPlan([
     {
