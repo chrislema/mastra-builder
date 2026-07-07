@@ -1470,6 +1470,10 @@ function rootScaffoldWorkflowExecutionCriterion(criterion: string) {
   return /\bWorkflow execution receives or resumes a queued run\b/i.test(criterion);
 }
 
+function rootScaffoldFuturePreservationCriterion(criterion: string) {
+  return /\bchanges preserve the existing default fetch handler\b/i.test(criterion);
+}
+
 function taskIsRootScaffold(task: Task) {
   return task.depends_on.length === 0 && ownsPackageScaffold(task) && taskOwnsIndexSurface(task);
 }
@@ -1477,9 +1481,37 @@ function taskIsRootScaffold(task: Task) {
 function withoutRootScaffoldWorkflowExecutionCriteria(task: Task) {
   if (!taskIsRootScaffold(task)) return task;
 
-  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !rootScaffoldWorkflowExecutionCriterion(criterion));
+  const acceptance_criteria = task.acceptance_criteria.filter(
+    (criterion) => !rootScaffoldWorkflowExecutionCriterion(criterion) && !rootScaffoldFuturePreservationCriterion(criterion),
+  );
   const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
-    (criterion) => !rootScaffoldWorkflowExecutionCriterion(criterion),
+    (criterion) => !rootScaffoldWorkflowExecutionCriterion(criterion) && !rootScaffoldFuturePreservationCriterion(criterion),
+  );
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function sessionRouteCrossSurfaceCriterion(criterion: string) {
+  return /^Protected profile, run, latest, and regeneration routes validate/i.test(criterion);
+}
+
+function withoutSessionRouteCrossSurfaceCriteria(task: Task) {
+  if (!taskOwnsSessionRoute(task)) return task;
+
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !sessionRouteCrossSurfaceCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !sessionRouteCrossSurfaceCriterion(criterion),
   );
 
   if (
@@ -1575,8 +1607,7 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
         acceptance_criteria: [
           `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
           `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
-          `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, and returns structured 401/403 responses for invalid credentials.`,
-          'Protected profile, run, latest, and regeneration routes validate either direct API/operator Authorization: Bearer <ADMIN_TOKEN> access or the browser-safe session cookie through src/auth.js.',
+          `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, returns structured 401/403 responses for invalid credentials, and establishes the CSRF token or same-origin Origin validation contract used by cookie-authenticated browser mutations.`,
         ],
         owned_surfaces: [surface],
       },
@@ -1749,18 +1780,27 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       }
     }
 
+    if (taskOwnsSessionRoute(task)) {
+      const sanitized = withoutSessionRouteCrossSurfaceCriteria(task);
+      if (sanitized !== task) {
+        changed = true;
+        task = sanitized;
+      }
+    }
+
     const criteria: string[] = [];
 
     if (taskOwnsAuthSurface(task)) {
       criteria.push(
         'src/auth.js defines the protected operator credential contract as Authorization: Bearer <ADMIN_TOKEN> for API/operator calls, rejects missing or invalid credentials with structured 401/403 responses, fails closed when ADMIN_TOKEN is missing, and never reads committed or static secrets.',
         'src/auth.js provides a browser-safe auth/session boundary for the public UI: a dedicated session endpoint may exchange the operator credential for a short-lived HttpOnly SameSite cookie, and protected browser mutations must validate that session instead of requiring public/app.js to handle the raw ADMIN_TOKEN repeatedly.',
+        'src/auth.js defines the browser mutation request-forgery guard for cookie-authenticated requests, using SameSite=Strict plus explicit Origin validation or CSRF token issuance and validation.',
       );
     }
 
     if (hasAuthSurface && taskOwnsPublicAppSurface(task)) {
       criteria.push(
-        'public/app.js uses the browser-safe auth/session flow for protected profile, run, activation, and regeneration calls; sends protected mutation requests with credentials included; handles unauthenticated responses; and never hardcodes, persists, or sends the raw ADMIN_TOKEN directly to feature mutation endpoints.',
+        'public/app.js uses the browser-safe auth/session flow for protected profile, run, activation, and regeneration calls; sends protected mutation requests with credentials included and the session CSRF token/header when required; handles unauthenticated responses; and never hardcodes, persists, or sends the raw ADMIN_TOKEN directly to feature mutation endpoints.',
       );
     }
 
@@ -1780,6 +1820,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       criteria.push(
         'Profile upload and activation routes use the profile repository transaction for active-profile state changes instead of duplicating active-state authority in route code.',
         'Profile upload, profile activation, and profile listing routes use the auth/session boundary; for this single-user private MVP, GET /profiles must not expose private profile metadata without authentication.',
+        'Cookie-authenticated profile mutations enforce the session CSRF token or same-origin Origin validation contract from the auth/session boundary.',
       );
     }
 
@@ -1804,6 +1845,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (taskOwnsRunRoute(task)) {
       criteria.push(
         'Run, latest, candidate, and regeneration routes delegate queued run creation, lifecycle transitions, transcript versioning, and candidate selection to service/repository boundaries instead of mutating D1 state directly in route handlers.',
+        'Cookie-authenticated run creation and regeneration mutations enforce the session CSRF token or same-origin Origin validation contract from the auth/session boundary.',
       );
     }
 
@@ -1825,7 +1867,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       );
     }
 
-    if (indexOwnerCount > 1 && taskOwnsIndexSurface(task)) {
+    if (indexOwnerCount > 1 && taskOwnsIndexSurface(task) && !taskIsRootScaffold(task)) {
       criteria.push(
         'src/index.js changes preserve the existing default fetch handler, scheduled handler wiring, static asset fallback path, and WeeklyWorkflow export introduced by earlier tasks.',
         'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may delegate to src/weeklyWorkflow.js without changing the configured export.',
