@@ -1621,6 +1621,16 @@ function taskPlanDeclaresWorkerWorkflow(tasks: Task[]) {
   );
 }
 
+function taskPlanHasPersistentRunLifecycle(tasks: Task[]) {
+  return tasks.some(
+    (task) =>
+      taskOwnsWorkflowSurface(task) ||
+      taskOwnsD1MigrationFile(task) ||
+      taskOwnsRunRepositorySurface(task) ||
+      taskOwnsTranscriptRepositorySurface(task),
+  );
+}
+
 function appendTaskAcceptanceCriteria(task: Task, criteria: string[]) {
   const acceptance_criteria = Array.from(new Set([...task.acceptance_criteria, ...criteria]));
   return acceptance_criteria.length === task.acceptance_criteria.length ? task : { ...task, acceptance_criteria };
@@ -1824,6 +1834,36 @@ function withoutLifecycleDriftCriteria(task: Task) {
       (workflowCreatesRunningRunCriterion(criterion) || workflowCreateRunStepCriterion(criterion)));
   const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !isDriftCriterion(criterion));
   const source_acceptance_criteria = task.source_acceptance_criteria?.filter((criterion) => !isDriftCriterion(criterion));
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function persistentRunLifecycleCriterion(criterion: string) {
+  return (
+    /\bRun lifecycle contract defines\b/i.test(criterion) ||
+    /\bScheduled trigger handling creates or reuses queued run records\b/i.test(criterion) ||
+    /\bWorkflow treats an empty bookmark list as a completed_empty terminal run\b/i.test(criterion) ||
+    /\broute handlers delegate[\s\S]{0,140}\b(?:latest transcript|transcript versioning|D1 state)\b/i.test(criterion) ||
+    /\bTranscript regeneration inserts a new transcript row\b/i.test(criterion)
+  );
+}
+
+function withoutPersistentRunLifecycleCriteria(task: Task) {
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !persistentRunLifecycleCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !persistentRunLifecycleCriterion(criterion),
+  );
 
   if (
     acceptance_criteria.length === task.acceptance_criteria.length &&
@@ -2707,12 +2747,21 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
   const hasProfileState = taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
   const hasAiValidationSurface = taskPlan.tasks.some(taskOwnsAiValidationSurface);
   const hasWorkerWorkflow = taskPlanDeclaresWorkerWorkflow(taskPlan.tasks);
+  const hasPersistentRunLifecycle = taskPlanHasPersistentRunLifecycle(taskPlan.tasks);
 
   let tasks = taskPlan.tasks.map((task) => {
     const statusCanonicalized = withCanonicalCompletedEmptyStatus(task);
     if (statusCanonicalized !== task) {
       changed = true;
       task = statusCanonicalized;
+    }
+
+    if (!hasPersistentRunLifecycle) {
+      const lifecycleSanitized = withoutPersistentRunLifecycleCriteria(task);
+      if (lifecycleSanitized !== task) {
+        changed = true;
+        task = lifecycleSanitized;
+      }
     }
 
     const sessionSecretSanitized = withoutSessionSecretFallbackCriteria(task);
@@ -2836,7 +2885,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       );
     }
 
-    if (taskOwnsContractSurface(task)) {
+    if (hasPersistentRunLifecycle && taskOwnsContractSurface(task)) {
       criteria.push(
         'Run lifecycle contract defines the allowed state transitions queued -> running -> completed|completed_empty|failed, with route/scheduled code responsible for creating queued runs, workflow code responsible for running and terminal transitions, and latest transcript queries excluding completed_empty/no-transcript runs deterministically.',
       );

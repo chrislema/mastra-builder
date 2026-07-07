@@ -1354,8 +1354,18 @@ test('task plan normalization does not inject workflow or auth contracts into st
       ],
     },
     {
-      id: 'T04',
+      id: 'T02',
       depends_on: ['T01'],
+      owned_surfaces: ['src/types.ts', 'src/validation.ts'],
+      acceptance_criteria: [
+        'src/types.ts and src/validation.ts define request/response types and validation for a stateless fan-out Worker.',
+        'src/types.ts and src/validation.ts do not define persisted run lifecycle states, scheduled processing contracts, workflow contracts, transcript storage contracts, or database-backed state because Benchmark is a stateless fan-out Worker.',
+        'Run lifecycle contract defines the allowed state transitions queued -> running -> completed|completed_empty|failed, with route/scheduled code responsible for creating queued runs, workflow code responsible for running and terminal transitions, and latest transcript queries excluding completed_empty/no-transcript runs deterministically.',
+      ],
+    },
+    {
+      id: 'T04',
+      depends_on: ['T02'],
       owned_surfaces: ['src/index.ts'],
       acceptance_criteria: [
         'GET /api/models returns configured model rows without secret values.',
@@ -1390,9 +1400,12 @@ test('task plan normalization does not inject workflow or auth contracts into st
 
   const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
   const criteria = normalized.tasks.flatMap((task) => task.acceptance_criteria).join('\n');
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
 
   assert.doesNotMatch(criteria, /WeeklyWorkflow|WorkflowEntrypoint|workflows\.class_name/);
   assert.doesNotMatch(criteria, /ADMIN_TOKEN|SESSION_SECRET|signed session|auth\/session/);
+  assert.doesNotMatch(criteria, /Run lifecycle contract defines|completed_empty\/no-transcript|latest transcript|Transcript regeneration|D1 state/);
+  assert.match(byId.T02.acceptance_criteria.join('\n'), /do not define persisted run lifecycle states/);
 });
 
 test('task plan normalization keeps profile migration contracts on the owned migration filename', () => {
