@@ -1373,7 +1373,7 @@ function taskOwnsStaticAssetWiringSurface(task: Task) {
 }
 
 function taskOwnsRouteModule(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes(?:\/|[A-Z]).*|[A-Za-z0-9_-]*Routes)\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes(?:\/|[A-Z]).*|[A-Za-z0-9_-]*(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsSessionRoute(task: Task) {
@@ -1381,7 +1381,7 @@ function taskOwnsSessionRoute(task: Task) {
 }
 
 function taskOwnsProfileRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*profiles?|routesProfiles|profileRoutes)\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*profiles?|routesProfiles|profile(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsProfileRepositorySurface(task: Task) {
@@ -1389,7 +1389,7 @@ function taskOwnsProfileRepositorySurface(task: Task) {
 }
 
 function taskOwnsRunRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|candidate)|(?:run|latest|regeneration|candidate)Routes)\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|candidate)|(?:run|latest|regeneration|candidate)(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsRunRepositorySurface(task: Task) {
@@ -1414,6 +1414,10 @@ function taskOwnsAiValidationSurface(task: Task) {
 
 function taskOwnsAiPipelineSurface(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:candidatePipeline|scoring|transcriptGenerator|prompts|aiClient)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsProfileSummarySurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:profileSummary|profileSummaryService)\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsAuthSurface(task: Task) {
@@ -1603,6 +1607,55 @@ function withoutLifecycleDriftCriteria(task: Task) {
   };
 }
 
+function workflowExportDriftCriterion(criterion: string) {
+  return (
+    /\bminimal WorkflowEntrypoint class\b/i.test(criterion) ||
+    /\blater workflow code may delegate to src\/weeklyWorkflow\.js\b/i.test(criterion)
+  );
+}
+
+function withoutWorkflowExportDriftCriteria(task: Task) {
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !workflowExportDriftCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter((criterion) => !workflowExportDriftCriterion(criterion));
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function canonicalizeCompletedEmptyStatusText(criterion: string) {
+  return criterion
+    .replace(/\bcompleted_no_bookmarks\b/gi, 'completed_empty')
+    .replace(/\bno_bookmarks\b/gi, 'completed_empty');
+}
+
+function withCanonicalCompletedEmptyStatus(task: Task) {
+  const acceptance_criteria = task.acceptance_criteria.map(canonicalizeCompletedEmptyStatusText);
+  const source_acceptance_criteria = task.source_acceptance_criteria?.map(canonicalizeCompletedEmptyStatusText);
+
+  if (
+    acceptance_criteria.every((criterion, index) => criterion === task.acceptance_criteria[index]) &&
+    (source_acceptance_criteria ?? []).every((criterion, index) => criterion === task.source_acceptance_criteria?.[index])
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
 function insertTaskAfterDependencies(tasks: Task[], task: Task) {
   const dependencyIndexes = task.depends_on
     .map((dependency) => tasks.findIndex((candidate) => candidate.id === dependency))
@@ -1687,7 +1740,11 @@ function sessionBoundaryDependencyId(tasks: Task[], task: Task) {
 
 function routerBoundaryProviderTasks(tasks: Task[]) {
   return tasks.filter(
-    (task) => taskOwnsRouterSurface(task) && !taskHasRouteIntegrationContract(task) && !taskOwnsStaticAssetWiringSurface(task),
+    (task) =>
+      taskOwnsRouterSurface(task) &&
+      !taskOwnsRouteModule(task) &&
+      !taskHasRouteIntegrationContract(task) &&
+      !taskOwnsStaticAssetWiringSurface(task),
   );
 }
 
@@ -1807,6 +1864,34 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   };
 }
 
+function withProfileSummaryTask(taskPlan: TaskPlan, tasks: Task[]) {
+  if (tasks.some(taskOwnsProfileSummarySurface)) return { tasks, changed: false };
+
+  const hasProfileState = tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
+  const hasAiPipeline = tasks.some((task) => taskOwnsAiPipelineSurface(task) || taskOwnsAiValidationSurface(task));
+  if (!hasProfileState || !hasAiPipeline) return { tasks, changed: false };
+
+  const profileDependencies = tasks
+    .filter((task) => taskOwnsProfileRepositorySurface(task) || taskOwnsAiPipelineSurface(task) || taskOwnsAiValidationSurface(task))
+    .map((task) => finalGeneratedSliceTaskId(tasks, task.id));
+  const summaryTask = {
+    id: uniqueTaskId({ ...taskPlan, tasks }, 'E21-profile-summary'),
+    owner: 'engineer' as const,
+    deliverable: 'Implement profile summary creation and persistence as the single derived-profile state boundary.',
+    depends_on: Array.from(new Set(profileDependencies)),
+    acceptance_criteria: [
+      'src/profileSummaryService.js creates or loads compact derived summaries for audience_segments and voice_profile profile artifacts before workflow prompt assembly.',
+      'src/profileSummaryService.js stores derived summaries in R2, updates profile_artifacts.derived_summary_r2_key in D1, preserves original markdown as the source of truth, and is safe to call from profile upload or workflow profile-loading code without duplicating summary state logic.',
+    ],
+    owned_surfaces: ['src/profileSummaryService.js'],
+  };
+
+  return {
+    tasks: insertTaskAfterDependencies(tasks, summaryTask),
+    changed: true,
+  };
+}
+
 function taskDependsOnAny(task: Task, ids: Set<string>) {
   return task.depends_on.some((dependency) => ids.has(dependency));
 }
@@ -1854,6 +1939,7 @@ function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
   tasks = sanitized.tasks;
   const routerTaskIds = new Set(routerBoundaryProviderTasks(tasks).map((task) => finalGeneratedSliceTaskId(tasks, task.id)));
   const sessionTaskIds = new Set(tasks.filter(taskOwnsSessionRoute).map((task) => finalGeneratedSliceTaskId(tasks, task.id)));
+  const profileSummaryTaskIds = new Set(tasks.filter(taskOwnsProfileSummarySurface).map((task) => finalGeneratedSliceTaskId(tasks, task.id)));
   const integrationTask = tasks.find(taskHasRouteIntegrationContract);
   let changed = sanitized.changed;
 
@@ -1863,6 +1949,10 @@ function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
     if (taskOwnsRouteModule(task) && !taskOwnsSessionRoute(task)) {
       dependencies.push(...routerTaskIds);
       if (!taskOwnsAuthSurface(task)) dependencies.push(...sessionTaskIds);
+    }
+
+    if ((taskOwnsProfileRoute(task) || taskOwnsWorkflowSurface(task)) && !taskOwnsProfileSummarySurface(task)) {
+      dependencies.push(...profileSummaryTaskIds);
     }
 
     if (taskOwnsPublicAppSurface(task)) {
@@ -1905,6 +1995,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
   const hasAiValidationSurface = taskPlan.tasks.some(taskOwnsAiValidationSurface);
 
   let tasks = taskPlan.tasks.map((task) => {
+    const statusCanonicalized = withCanonicalCompletedEmptyStatus(task);
+    if (statusCanonicalized !== task) {
+      changed = true;
+      task = statusCanonicalized;
+    }
+
     const rootSanitized = withoutRootScaffoldWorkflowExecutionCriteria(task);
     if (rootSanitized !== task) {
       changed = true;
@@ -1931,6 +2027,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (lifecycleSanitized !== task) {
       changed = true;
       task = lifecycleSanitized;
+    }
+
+    const workflowExportSanitized = withoutWorkflowExportDriftCriteria(task);
+    if (workflowExportSanitized !== task) {
+      changed = true;
+      task = workflowExportSanitized;
     }
 
     if (hasAiValidationSurface && !taskOwnsAiValidationSurface(task)) {
@@ -1975,6 +2077,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (taskOwnsProfileRepositorySurface(task)) {
       criteria.push(
         'Profile storage activation runs in a D1 transaction that deactivates the previous active profile for the same kind and activates the selected profile atomically.',
+        'Profile repository persists derived_summary_r2_key updates only through the profile summary service boundary, preserving original profile markdown as the source of truth.',
       );
     }
 
@@ -1983,6 +2086,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
         'Profile upload and activation routes use the profile repository transaction for active-profile state changes instead of duplicating active-state authority in route code.',
         'Profile upload, profile activation, and profile listing routes use the auth/session boundary; for this single-user private MVP, GET /profiles must not expose private profile metadata without authentication.',
         'Cookie-authenticated profile mutations enforce the session CSRF token or same-origin Origin validation contract from the auth/session boundary.',
+        'Profile upload or listing code delegates derived profile summary creation/loading to the profile summary service boundary instead of duplicating prompt or R2 update logic in route handlers.',
       );
     }
 
@@ -2003,6 +2107,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
         'Scheduled triggers and manual run routes create queued run records only; workflow execution is the boundary that transitions queued runs to running and then completed or failed.',
         'Workflow treats an empty bookmark list as a completed_empty terminal run with no transcript_id, records a no-bookmarks/no-transcript reason, and keeps latest transcript lookup focused on completed runs with transcripts.',
         'Workflow execution receives or resumes a queued run, transitions it to running and then completed or failed, and does not create duplicate run records for the same workflow invocation.',
+        'Workflow profile-loading steps call the profile summary service boundary to create or load derived summaries before prompt assembly, rather than owning derived_summary_r2_key state directly.',
       );
     }
 
@@ -2026,19 +2131,20 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (taskOwnsRouterSurface(task)) {
       criteria.push(
         'The router surface remains the single API route registration boundary; feature routes must be registered through the router rather than dispatched directly from src/index.js.',
+        'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
       );
     }
 
     if (taskIsRootScaffold(task) && taskOwnsWorkerConfigFile(task) && taskOwnsIndexSurface(task)) {
       criteria.push(
-        'src/index.js exports a minimal WorkflowEntrypoint class whose class name matches wrangler.jsonc workflows.class_name when the Worker config defines a Workflow binding, so Wrangler dry-run validation succeeds before later workflow code delegates to src/weeklyWorkflow.js.',
+        'src/index.js exports a minimal class named WeeklyWorkflow that extends WorkflowEntrypoint when wrangler.jsonc defines workflows.class_name "WeeklyWorkflow", so Wrangler dry-run validation succeeds before later workflow code fills in the implementation without changing the configured export name.',
       );
     }
 
     if (indexOwnerCount > 1 && taskOwnsIndexSurface(task) && !taskIsRootScaffold(task)) {
       criteria.push(
         'src/index.js changes preserve the existing default fetch handler, scheduled handler wiring, static asset fallback path, and WeeklyWorkflow export introduced by earlier tasks.',
-        'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may delegate to src/weeklyWorkflow.js without changing the configured export.',
+        'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may fill in or delegate implementation details without changing the configured export.',
       );
     }
 
@@ -2064,6 +2170,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
   if (withIntegration.changed) {
     changed = true;
     tasks = withIntegration.tasks;
+  }
+
+  const withSummary = withProfileSummaryTask(taskPlan, tasks);
+  if (withSummary.changed) {
+    changed = true;
+    tasks = withSummary.tasks;
   }
 
   const withDependencies = withCloudflareWorkerDependencyContracts(tasks);

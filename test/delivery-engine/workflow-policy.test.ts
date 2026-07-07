@@ -1420,13 +1420,48 @@ test('task plan normalization injects session auth before late admin auth and ro
   assert.ok(indexOf('E98-route-integration') < indexOf('T11'));
   assert.ok(indexOf('E98-route-integration') < indexOf('T12'));
   assert.deepEqual(byId.T12.depends_on, ['T08-part-2', 'E20-auth-session', 'E98-route-integration']);
-  assert.match(criteria('T01'), /minimal WorkflowEntrypoint class/);
+  assert.match(criteria('T01'), /class named WeeklyWorkflow/);
   assert.match(criteria('T02'), /completed\|completed_empty\|failed/);
   assert.doesNotMatch(criteria('T08'), /provides a browser-safe auth\/session boundary/);
   assert.match(criteria('T08'), /internal credential-validation helper/);
   assert.doesNotMatch(criteria('T11'), /creates or loads a run and marks it running/);
   assert.doesNotMatch(criteria('T11'), /completed run with no transcript/);
   assert.match(criteria('T11'), /completed_empty terminal run/);
+});
+
+test('task plan normalization keeps session auth before mixed router handler tasks', () => {
+  const plan = taskPlan([
+    {
+      id: 'T04',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/auth.js', 'src/http.js'],
+    },
+    {
+      id: 'T11',
+      depends_on: ['T04'],
+      owned_surfaces: ['src/router.js', 'src/runHandlers.js'],
+    },
+    {
+      id: 'T11-part-2',
+      depends_on: ['T11'],
+      owned_surfaces: ['src/latestHandlers.js', 'src/index.js'],
+    },
+    {
+      id: 'T12',
+      depends_on: ['T11-part-2'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+      owner: 'designer',
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const indexOf = (id: string) => normalized.tasks.findIndex((task) => task.id === id);
+
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T04']);
+  assert.ok(indexOf('E20-auth-session') < indexOf('T11'));
+  assert.deepEqual(byId.T11.depends_on, ['T04', 'E20-auth-session']);
+  assert.deepEqual(byId['T11-part-2'].depends_on, ['T11', 'T04', 'E20-auth-session']);
 });
 
 test('task plan normalization attaches Worker lifecycle contracts to workflow and scheduler files', () => {
@@ -1448,6 +1483,44 @@ test('task plan normalization attaches Worker lifecycle contracts to workflow an
   assert.match(criteria, /completed_empty terminal run/);
 });
 
+test('task plan normalization canonicalizes no-bookmark status and workflow export contracts', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
+      acceptance_criteria: [
+        'src/index.js exports a minimal WorkflowEntrypoint class whose class name matches wrangler.jsonc workflows.class_name when the Worker config defines a Workflow binding, so Wrangler dry-run validation succeeds before later workflow code delegates to src/weeklyWorkflow.js.',
+      ],
+    },
+    {
+      id: 'T02',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/contracts.js', 'src/validation.js'],
+      acceptance_criteria: ['src/contracts.js defines canonical run statuses including queued, running, completed, failed, and completed_no_bookmarks.'],
+    },
+    {
+      id: 'T10',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/workflow.js', 'src/index.js'],
+      acceptance_criteria: [
+        'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may delegate to src/weeklyWorkflow.js without changing the configured export.',
+      ],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const criteria = (id: string) => byId[id].acceptance_criteria.join('\n');
+
+  assert.doesNotMatch(criteria('T01'), /minimal WorkflowEntrypoint class/);
+  assert.match(criteria('T01'), /class named WeeklyWorkflow/);
+  assert.doesNotMatch(criteria('T02'), /completed_no_bookmarks/);
+  assert.match(criteria('T02'), /completed_empty/);
+  assert.doesNotMatch(criteria('T10'), /src\/weeklyWorkflow\.js/);
+  assert.match(criteria('T10'), /fill in or delegate implementation details/);
+});
+
 test('task plan normalization removes empty-run lifecycle drift outside workflow-named files', () => {
   const plan = taskPlan([
     {
@@ -1466,6 +1539,47 @@ test('task plan normalization removes empty-run lifecycle drift outside workflow
 
   assert.doesNotMatch(criteria, /completed run with no transcript/);
   assert.doesNotMatch(criteria, /completes the run without a transcript/);
+});
+
+test('task plan normalization injects profile summary ownership before profile and workflow consumers', () => {
+  const plan = taskPlan([
+    {
+      id: 'T05',
+      depends_on: ['T03'],
+      owned_surfaces: ['src/profileRepository.js'],
+    },
+    {
+      id: 'T08',
+      depends_on: ['T05'],
+      owned_surfaces: ['src/aiClient.js', 'src/prompts.js'],
+    },
+    {
+      id: 'T08-part-2',
+      depends_on: ['T08'],
+      owned_surfaces: ['src/aiJson.js'],
+    },
+    {
+      id: 'T10',
+      depends_on: ['T08-part-2'],
+      owned_surfaces: ['src/workflow.js'],
+    },
+    {
+      id: 'T11',
+      depends_on: ['T05'],
+      owned_surfaces: ['src/profileHandlers.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const indexOf = (id: string) => normalized.tasks.findIndex((task) => task.id === id);
+
+  assert.ok(byId['E21-profile-summary']);
+  assert.deepEqual(byId['E21-profile-summary'].owned_surfaces, ['src/profileSummaryService.js']);
+  assert.ok(indexOf('E21-profile-summary') < indexOf('T10'));
+  assert.ok(indexOf('E21-profile-summary') < indexOf('T11'));
+  assert.ok(byId.T10.depends_on.includes('E21-profile-summary'));
+  assert.ok(byId.T11.depends_on.includes('E21-profile-summary'));
 });
 
 test('task plan normalization moves AI output validation contracts to explicit validation surfaces', () => {
