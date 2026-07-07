@@ -1552,6 +1552,67 @@ test('task plan normalization injects session auth before late admin auth and ro
   assert.match(criteria('T11'), /completed_empty terminal run/);
 });
 
+test('task plan normalization keeps session auth before route-bearing auth and late router tasks', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
+    },
+    {
+      id: 'T02',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/contracts.js', 'src/http.js'],
+    },
+    {
+      id: 'T02-part-2',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/errors.js', 'src/ids.js'],
+    },
+    {
+      id: 'T02-part-3',
+      depends_on: ['T02-part-2'],
+      owned_surfaces: ['src/timeWindow.js'],
+    },
+    {
+      id: 'T05',
+      depends_on: ['T02-part-3'],
+      owned_surfaces: ['src/profileRoutes.js'],
+    },
+    {
+      id: 'T10',
+      depends_on: ['T02-part-3'],
+      owned_surfaces: ['src/auth.js', 'src/runRoutes.js'],
+    },
+    {
+      id: 'T10-part-2',
+      depends_on: ['T10', 'T02-part-3'],
+      owned_surfaces: ['src/latestRoutes.js', 'src/regenerateRoutes.js'],
+    },
+    {
+      id: 'T11',
+      depends_on: ['T05', 'T10-part-2'],
+      owned_surfaces: ['src/index.js', 'src/router.js'],
+    },
+    {
+      id: 'T12',
+      owner: 'designer',
+      depends_on: ['T10-part-2'],
+      owned_surfaces: ['public/index.html', 'public/styles.css', 'public/app.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+
+  assert.ok(byId['E20-auth-session']);
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T02-part-3']);
+  assert.deepEqual(byId.T10.depends_on, ['T02-part-3', 'E20-auth-session']);
+  assert.deepEqual(byId['T10-part-2'].depends_on, ['T10', 'T02-part-3', 'E20-auth-session']);
+  assert.ok(byId['E98-route-integration'].depends_on.includes('T10-part-2'));
+  assert.deepEqual(generatedSliceDependencyHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
 test('task plan normalization keeps session auth before mixed router handler tasks', () => {
   const plan = taskPlan([
     {
@@ -1587,7 +1648,7 @@ test('task plan normalization keeps session auth before mixed router handler tas
   assert.deepEqual(byId['T11-part-2'].depends_on, ['T11', 'T04', 'E20-auth-session']);
 });
 
-test('task plan normalization lets session auth depend on mixed auth and route tasks', () => {
+test('task plan normalization keeps session auth before mixed auth and route tasks', () => {
   const plan = taskPlan([
     {
       id: 'T01',
@@ -1615,8 +1676,8 @@ test('task plan normalization lets session auth depend on mixed auth and route t
   const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
   const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
 
-  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T07']);
-  assert.ok(!byId.T07.depends_on.includes('E20-auth-session'));
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01']);
+  assert.ok(byId.T07.depends_on.includes('E20-auth-session'));
   assert.ok(byId.T09.depends_on.includes('E20-auth-session'));
 });
 
@@ -1831,7 +1892,7 @@ test('task plan normalization keeps session and route integration before generat
 
   assert.ok(byId['E20-auth-session']);
   assert.ok(byId['E98-route-integration']);
-  assert.ok(byId['E20-auth-session'].depends_on.includes('T06'));
+  assert.ok(!byId['E20-auth-session'].depends_on.includes('T06'));
   assert.ok(!byId['E20-auth-session'].depends_on.includes('T06-part-2'));
   assert.ok(byId['E98-route-integration'].depends_on.includes('T06'));
   assert.ok(!byId['E98-route-integration'].depends_on.includes('T06-part-2'));

@@ -2217,11 +2217,18 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
   const scaffoldRootTasks = tasks.filter((task) => taskIsRootScaffold(task));
   const routeTasks = tasks.filter(taskOwnsRouteModule);
   const safeAuthTasks = authTasks.filter(
-    (authTask) => !routeTasks.some((routeTask) => routeTask.id !== authTask.id && taskListDependsOn(tasks, authTask.id, routeTask.id)),
+    (authTask) =>
+      !taskOwnsRouteModule(authTask) &&
+      !routeTasks.some((routeTask) => routeTask.id !== authTask.id && taskListDependsOn(tasks, authTask.id, routeTask.id)),
+  );
+  const safeRouterTasks = routerTasks.filter(
+    (routerTask) =>
+      !taskOwnsIndexSurface(routerTask) &&
+      !routeTasks.some((routeTask) => routerTask.id !== routeTask.id && taskListDependsOn(tasks, routerTask.id, routeTask.id)),
   );
   const sessionDependencyTasks = safeAuthTasks.length
-    ? [...scaffoldRootTasks, ...safeAuthTasks, ...routerTasks]
-    : [...scaffoldRootTasks, ...routerTasks];
+    ? [...scaffoldRootTasks, ...safeAuthTasks, ...safeRouterTasks]
+    : [...scaffoldRootTasks, ...safeRouterTasks];
   const sessionDependencyIds = Array.from(
     new Set(sessionDependencyTasks.map((task) => preEntrypointBoundaryDependencyId(tasks, task))),
   );
@@ -2531,7 +2538,7 @@ function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
 
     if (taskOwnsRouteModule(task) && !taskOwnsSessionRoute(task)) {
       dependencies.push(...routerTaskIds);
-      if (!taskOwnsAuthSurface(task)) dependencies.push(...sessionTaskIds);
+      dependencies.push(...sessionTaskIds);
     }
 
     if ((taskOwnsProfileRoute(task) || taskOwnsWorkflowExecutionSurface(task)) && !taskOwnsProfileSummarySurface(task)) {
