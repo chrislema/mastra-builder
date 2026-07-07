@@ -2593,9 +2593,20 @@ test('acceptance contracts verify vanilla Worker scaffold static assets and work
   );
   writeFileSync(
     join(repoPath, '.gitignore'),
-    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '.secrets*', 'secrets/', '*.pem', '*.key', '*.cpuprofile', ''].join(
-      '\n',
-    ),
+    [
+      'node_modules/',
+      '.wrangler/',
+      '.delivery/',
+      '.dev.vars*',
+      '.env*',
+      '*.secret',
+      '*.secrets',
+      'secrets/',
+      'generated-secrets/',
+      '.secrets/',
+      '*.cpuprofile',
+      '',
+    ].join('\n'),
   );
   writeFileSync(
     join(repoPath, 'src/index.js'),

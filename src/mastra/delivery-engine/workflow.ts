@@ -7857,7 +7857,7 @@ function gitignoreRuntimeArtifactContractEvidence({
   if (/\bgenerated secrets?\b|\bsecrets?\b/i.test(criterion)) {
     requiredGroups.push({
       label: 'generated secrets',
-      patterns: [/^\.secrets\*?$/m, /^secrets\/?$/m, /^\*\.pem$/m, /^\*\.key$/m],
+      patterns: [/^(?:\.secrets\*?|\.secrets\/?|secrets\/?|generated-secrets\/?|\*\.secrets?|\*\.pem|\*\.key)$/m],
     });
   }
   if (/\bbuild\b|\bruntime artifacts?\b/i.test(criterion)) {
