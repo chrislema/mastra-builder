@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -129,6 +129,35 @@ test('delivery state initialization repairs stale running Mastra snapshots from 
   assert.equal(readDeliveryRun(repoPath).run_id, nextRun.run_id);
   assert.equal(
     written.some((log) => log.runId === staleRun.run_id && log.data?.kind === 'snapshot' && log.data.run.status === 'failed'),
+    true,
+  );
+  assert.equal(
+    written.some((log) => log.runId === nextRun.run_id && log.data?.kind === 'snapshot' && log.data.run.status === 'running'),
+    true,
+  );
+});
+
+test('delivery state initialization repairs orphaned running Mastra snapshots after local reset', async () => {
+  const repoPath = createRepo();
+  const { store, written } = createMemoryObservabilityStore();
+  const mastra = createMastra(store);
+
+  const staleRun = await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md', mastra });
+  rmSync(join(repoPath, '.delivery'), { recursive: true, force: true });
+
+  const nextRun = await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md', specPath: 'spec.md', mastra });
+
+  assert.notEqual(nextRun.run_id, staleRun.run_id);
+  assert.equal(nextRun.status, 'running');
+  assert.equal(readDeliveryRun(repoPath).run_id, nextRun.run_id);
+  assert.equal(
+    written.some(
+      (log) =>
+        log.runId === staleRun.run_id &&
+        log.data?.kind === 'snapshot' &&
+        log.data.run.status === 'failed' &&
+        log.data.run.failure?.name === 'StaleDeliveryRun',
+    ),
     true,
   );
   assert.equal(

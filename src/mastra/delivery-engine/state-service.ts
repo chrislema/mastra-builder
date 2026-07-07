@@ -94,6 +94,51 @@ function statusFromRun(run: DeliveryRun): DeliveryRunStatusSummary {
   };
 }
 
+async function repairOrphanedStoredRunningSnapshot({
+  repoPath,
+  runId,
+  mastra,
+}: {
+  repoPath: string;
+  runId: string;
+  mastra?: MastraLike;
+}) {
+  const storedSnapshot = await readDeliverySnapshot({ repoPath, mastra }).catch(() => undefined);
+  if (storedSnapshot?.run.run_id !== runId) return false;
+
+  const failure = {
+    name: 'StaleDeliveryRun',
+    message: 'Delivery run was marked failed because the local .delivery projection was reset before completion.',
+  };
+  storedSnapshot.run.status = 'failed';
+  storedSnapshot.run.stage = 'done';
+  storedSnapshot.run.finished_at = new Date().toISOString();
+  storedSnapshot.run.summary = failure.message;
+  storedSnapshot.run.failure = failure;
+  storedSnapshot.events = withEvent(storedSnapshot.events, {
+    type: 'run_failure',
+    status: 'failed',
+    reason: failure.message,
+    failure,
+  });
+  storedSnapshot.events = withEvent(storedSnapshot.events, { type: 'run_finish', status: 'failed' });
+
+  await persistDeliverySnapshot({
+    repoPath,
+    mastra,
+    run: storedSnapshot.run,
+    events: storedSnapshot.events,
+  }).catch((error) => {
+    mastra?.getLogger?.().warn('Failed to repair orphaned running delivery snapshot before starting a new run', {
+      repoPath,
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  return true;
+}
+
 export async function readDeliveryRunState({
   repoPath,
   mastra,
@@ -148,6 +193,15 @@ export async function initializeDeliveryRunState({
           error: error instanceof Error ? error.message : String(error),
         });
       });
+    } else if (!localRun) {
+      const repaired = await repairOrphanedStoredRunningSnapshot({
+        repoPath: repo,
+        runId: storedStatus.run_id,
+        mastra,
+      });
+      if (!repaired) {
+        throw new Error('a delivery run is already active (started unknown)');
+      }
     } else {
       const startedAt = localRun?.run_id === storedStatus.run_id ? localRun.started_at : 'unknown';
       throw new Error(`a delivery run is already active (started ${startedAt})`);
