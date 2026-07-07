@@ -8094,6 +8094,83 @@ function workerConfigStaticAssetsContractEvidence({
   };
 }
 
+function workerConfigCompatibilityFlagsContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bwrangler\.jsonc\b/i.test(criterion)) return undefined;
+  if (!/\bcompatibility_flags\b/i.test(criterion) || !/\bnodejs_compat\b/i.test(criterion)) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('wrangler.jsonc')) return undefined;
+
+  const configPath = join(resolve(repoPath), 'wrangler.jsonc');
+  if (!existsSync(configPath)) return undefined;
+
+  const config = parseWranglerJsonConfig(readFileSync(configPath, 'utf8'));
+  if (!config) {
+    return { passed: false, evidence: [], gaps: ['wrangler.jsonc is not valid JSONC, so compatibility flags could not be verified.'] };
+  }
+
+  const scopes: Array<[string, Record<string, unknown> | undefined]> = [['top-level', config]];
+  if (/\benv\.staging\b|\benv\.production\b|\bmirrors?\b/i.test(criterion)) {
+    scopes.push(['env.staging', workerJsonEnvironmentRecord(config, 'staging')]);
+    scopes.push(['env.production', workerJsonEnvironmentRecord(config, 'production')]);
+  }
+
+  const gaps = scopes.flatMap(([label, scope]) => {
+    const flags = stringArrayValue(scope?.compatibility_flags);
+    return flags.includes('nodejs_compat') ? [] : [`wrangler.jsonc ${label}.compatibility_flags must contain nodejs_compat.`];
+  });
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured wrangler.jsonc evidence verified compatibility_flags contains nodejs_compat'],
+    gaps: [],
+  };
+}
+
+function workerConfigNoPagesContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bwrangler\.jsonc\b/i.test(criterion)) return undefined;
+  if (!/\bdoes not configure\b[\s\S]{0,80}\b(?:Cloudflare Pages|Pages Functions)\b/i.test(criterion)) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('wrangler.jsonc')) return undefined;
+
+  const configPath = join(resolve(repoPath), 'wrangler.jsonc');
+  if (!existsSync(configPath)) return undefined;
+
+  const config = parseWranglerJsonConfig(readFileSync(configPath, 'utf8'));
+  if (!config) {
+    return { passed: false, evidence: [], gaps: ['wrangler.jsonc is not valid JSONC, so Pages absence could not be verified.'] };
+  }
+
+  const pagesKeys = ['pages', 'pages_build_output_dir', 'pages_build', 'functions', 'pages_functions'];
+  const present = pagesKeys.filter((key) => Object.prototype.hasOwnProperty.call(config, key));
+  if (present.length) {
+    return { passed: false, evidence: [], gaps: [`wrangler.jsonc contains Pages-specific keys: ${present.join(', ')}.`] };
+  }
+
+  return {
+    passed: true,
+    evidence: ['structured wrangler.jsonc evidence verified no Cloudflare Pages or Pages Functions config'],
+    gaps: [],
+  };
+}
+
 function gitignoreRuntimeArtifactContractEvidence({
   criterion,
   repoPath,
@@ -8124,8 +8201,11 @@ function gitignoreRuntimeArtifactContractEvidence({
       patterns: [/^(?:\.secrets\*?|\.secrets\/?|secrets\/?|generated-secrets\/?|\*\.secrets?|\*\.pem|\*\.key)$/m],
     });
   }
+  if (/\bcache\b/i.test(criterion)) {
+    requiredGroups.push({ label: 'cache artifacts', patterns: [/^\.cache\/?$/m, /^cache\/?$/m] });
+  }
   if (/\bbuild\b|\bruntime artifacts?\b/i.test(criterion)) {
-    requiredGroups.push({ label: 'build/runtime artifacts', patterns: [/^dist\/?$/m, /^build\/?$/m, /^\*\.log$/m] });
+    requiredGroups.push({ label: 'build/runtime artifacts', patterns: [/^dist\/?$/m, /^build\/?$/m] });
   }
 
   for (const group of requiredGroups) {
@@ -8503,6 +8583,12 @@ function acceptanceCriterionEvidence({
 
   const staticAssetsEvidence = workerConfigStaticAssetsContractEvidence({ criterion, repoPath, task });
   if (staticAssetsEvidence) return staticAssetsEvidence;
+
+  const compatibilityFlagsEvidence = workerConfigCompatibilityFlagsContractEvidence({ criterion, repoPath, task });
+  if (compatibilityFlagsEvidence) return compatibilityFlagsEvidence;
+
+  const noPagesEvidence = workerConfigNoPagesContractEvidence({ criterion, repoPath, task });
+  if (noPagesEvidence) return noPagesEvidence;
 
   const scaffoldProtectedApiEvidence = workerScaffoldProtectedApiContractEvidence({ criterion, repoPath, task });
   if (scaffoldProtectedApiEvidence) return scaffoldProtectedApiEvidence;

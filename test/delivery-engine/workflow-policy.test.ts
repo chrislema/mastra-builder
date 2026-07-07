@@ -2809,8 +2809,33 @@ test('acceptance contracts verify TypeScript Hono Worker scaffold structurally',
   );
   writeFileSync(
     join(repoPath, '.gitignore'),
-    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile', 'dist/', 'build/', '*.log', ''].join(
-      '\n',
+    [
+      'node_modules/',
+      '.wrangler/',
+      '.delivery/',
+      '.dev.vars*',
+      '.env*',
+      '*.cpuprofile',
+      '.cache/',
+      'cache/',
+      'dist/',
+      'build/',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        name: 'benchmark',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        assets: { directory: './public', binding: 'ASSETS' },
+        ai: { binding: 'AI' },
+      },
+      null,
+      2,
     ),
   );
   writeFileSync(
@@ -2846,13 +2871,15 @@ test('acceptance contracts verify TypeScript Hono Worker scaffold structurally',
     {
       id: 'T01',
       depends_on: [],
-      owned_surfaces: ['package.json', '.gitignore', 'tsconfig.json', 'src/index.ts'],
+      owned_surfaces: ['package.json', '.gitignore', 'wrangler.jsonc', 'tsconfig.json', 'src/index.ts'],
       acceptance_criteria: [
         'package.json exists and defines scripts.dev exactly as "wrangler dev --env staging".',
         'package.json exists and defines scripts.deploy exactly as "wrangler deploy --env production".',
+        'wrangler.jsonc includes compatibility_flags containing nodejs_compat.',
+        'wrangler.jsonc does not configure Cloudflare Pages or Pages Functions.',
         'tsconfig.json exists because the source docs explicitly require TypeScript.',
         'src/index.ts exports a minimal Worker module through Hono and supports GET /api/health returning an ok Benchmark health payload.',
-        '.gitignore excludes dependency, build, Wrangler local state, and environment/secret files without excluding planned source files.',
+        '.gitignore excludes dependency, build/cache, Wrangler local state, and environment/secret files without excluding planned source files.',
       ],
     },
   ]).tasks;
@@ -2861,10 +2888,12 @@ test('acceptance contracts verify TypeScript Hono Worker scaffold structurally',
 
   assert.deepEqual(
     contracts.map((contract) => contract.status),
-    ['verified', 'verified', 'verified', 'verified', 'verified'],
+    ['verified', 'verified', 'verified', 'verified', 'verified', 'verified', 'verified'],
   );
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /scripts\.dev/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /scripts\.deploy/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /nodejs_compat/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /no Cloudflare Pages/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /tsconfig\.json evidence/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /Hono Worker module entrypoint/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /\.gitignore evidence/);
