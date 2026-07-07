@@ -1451,6 +1451,7 @@ function allTaskAcceptanceContractCriteria(taskPlan: TaskPlan) {
   return taskPlan.tasks.flatMap((task) =>
     taskAcceptanceContractCriteria(task).map((criterion, index) => ({
       taskId: task.id,
+      sourceTaskId: taskSourceTaskId(task),
       contractId: acceptanceContractId(task, index),
       criterion,
     })),
@@ -1474,6 +1475,48 @@ function allProductAcceptanceContractCriteria(taskPlan: TaskPlan) {
 
 function revisedPlanCarriesCriterion(taskPlan: TaskPlan, criterion: string) {
   return taskPlan.tasks.some((task) => taskAcceptanceContractCriteria(task).includes(criterion));
+}
+
+function revisedContractTargetIndex(tasks: Task[], contract: { taskId: string; sourceTaskId: string }) {
+  const exact = tasks.findIndex((task) => task.id === contract.taskId);
+  if (exact >= 0) return exact;
+
+  const sourceMatch = tasks.findIndex((task) => taskSourceTaskId(task) === contract.sourceTaskId);
+  if (sourceMatch >= 0) return sourceMatch;
+
+  const familyId = generatedSliceFamilyId(contract.taskId);
+  return tasks.findIndex((task) => generatedSliceFamilyId(task.id) === familyId);
+}
+
+export function preserveTaskPlanAcceptanceContracts(previousTaskPlan: TaskPlan, revisedTaskPlan: TaskPlan) {
+  const missing = allProductAcceptanceContractCriteria(previousTaskPlan).filter(
+    (contract) => !revisedPlanCarriesCriterion(revisedTaskPlan, contract.criterion),
+  );
+  if (!missing.length) return { taskPlan: revisedTaskPlan, carried: 0 };
+
+  const tasks = revisedTaskPlan.tasks.map((task) => ({
+    ...task,
+    source_acceptance_criteria: task.source_acceptance_criteria ? [...task.source_acceptance_criteria] : undefined,
+  }));
+  let carried = 0;
+
+  for (const contract of missing) {
+    const targetIndex = revisedContractTargetIndex(tasks, contract);
+    if (targetIndex < 0) continue;
+
+    const target = tasks[targetIndex];
+    if (taskAcceptanceContractCriteria(target).includes(contract.criterion)) continue;
+
+    tasks[targetIndex] = {
+      ...target,
+      source_acceptance_criteria: Array.from(
+        new Set([...(target.source_acceptance_criteria ?? []), contract.criterion]),
+      ),
+    };
+    carried += 1;
+  }
+
+  return carried ? { taskPlan: { ...revisedTaskPlan, tasks }, carried } : { taskPlan: revisedTaskPlan, carried: 0 };
 }
 
 export function taskPlanAcceptanceContractRegression(previousTaskPlan: TaskPlan, revisedTaskPlan: TaskPlan) {
@@ -8242,7 +8285,10 @@ ${JSON.stringify(taskPlan, null, 2)}`,
     });
   }
 
-  const revisedTaskPlan = normalizeTaskPlanForDelivery(repoPath, parsedRevision.revision.taskPlan);
+  const { taskPlan: revisedTaskPlan } = preserveTaskPlanAcceptanceContracts(
+    taskPlan,
+    normalizeTaskPlanForDelivery(repoPath, parsedRevision.revision.taskPlan),
+  );
   writeDeliveryArtifact({
     repoPath,
     artifactPath: revisionPath,
@@ -8725,7 +8771,10 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
       });
     }
     const revision = parsedRevision.revision;
-    const revisedTaskPlan = normalizeTaskPlanForDelivery(inputData.repoPath, revision.taskPlan);
+    const { taskPlan: revisedTaskPlan } = preserveTaskPlanAcceptanceContracts(
+      taskPlan,
+      normalizeTaskPlanForDelivery(inputData.repoPath, revision.taskPlan),
+    );
     const revisionPath = `.delivery/artifacts/task-plan.revision-${revisionNumber}.json`;
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,

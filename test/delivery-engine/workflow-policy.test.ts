@@ -48,6 +48,7 @@ import {
   profileKindContractGaps,
   profileKindTaskPacketPolicy,
   profileKindTaskPacketPolicyForTask,
+  preserveTaskPlanAcceptanceContracts,
   outOfPlanVerificationFailurePaths,
   priorStoppedBuildTaskIds,
   productionDeploymentReportFromWranglerResult,
@@ -1072,6 +1073,39 @@ test('task plan revision regression ignores generated slice bookkeeping criteria
   assert.equal(result.passed, false);
   assert.match(result.reason, /GET \/runs\/:id returns run status/);
   assert.doesNotMatch(result.reason, /Implement delivery slice 2\/2/);
+});
+
+test('task plan revision normalization carries forward dropped product contracts', () => {
+  const previous = taskPlan([
+    {
+      id: 'T03',
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+      acceptance_criteria: [
+        'runs stores status, window boundaries, profile IDs used, selected candidate ID, transcript ID, error message, and timestamps.',
+        'links captures per-link fetch status, content metadata, R2 keys, error message, and timestamps so one failed link does not fail a whole run.',
+      ],
+    },
+  ]);
+  const revised = taskPlan([
+    {
+      id: 'T03',
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+      acceptance_criteria: [
+        'runs stores status, window boundaries, profile IDs used, selected candidate ID, transcript ID, error_message, and timestamps.',
+        'links captures per-link fetch status, content metadata, R2 keys, error_message, and timestamps so one failed link does not fail a whole run.',
+      ],
+    },
+  ]);
+
+  assert.equal(taskPlanAcceptanceContractRegression(previous, revised).passed, false);
+
+  const preserved = preserveTaskPlanAcceptanceContracts(previous, revised);
+
+  assert.equal(preserved.carried, 2);
+  assert.deepEqual(taskPlanAcceptanceContractRegression(previous, preserved.taskPlan), { passed: true, reason: 'ok' });
+  assert.deepEqual(preserved.taskPlan.tasks[0].source_acceptance_criteria, previous.tasks[0].acceptance_criteria);
 });
 
 test('task plan normalization splits Worker config and D1 schema tasks', () => {
