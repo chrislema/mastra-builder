@@ -1393,23 +1393,23 @@ function taskOwnsProfileRepositorySurface(task: Task) {
 }
 
 function taskOwnsRunRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|candidate)|(?:run|latest|regeneration|candidate)(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|regenerate|candidates?)|routes(?:Runs?|Latest|Regeneration|Regenerate|Candidates?)|(?:run|latest|regeneration|regenerate|candidate)(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsManualRunRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/runs?|run(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*runs?|routesRuns?|run(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsLatestRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/latest|latest(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*latest|routesLatest|latest(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsRegenerationRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/regeneration|routes\/regenerate|regeneration(?:Routes|Handlers)|regenerate(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:regeneration|regenerate)|routes(?:Regeneration|Regenerate)|regeneration(?:Routes|Handlers)|regenerate(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsCandidateRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/candidates?|candidate(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*candidates?|routesCandidates?|candidate(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsRunRepositorySurface(task: Task) {
@@ -1473,7 +1473,7 @@ function publicUiRawAdminTokenCriterion(criterion: string) {
   return (
     /\bpublic\/app\.js\b/i.test(criterion) &&
     /\b(?:ADMIN_TOKEN|admin[-_\s]?token)\b/i.test(criterion) &&
-    /\b(collects?|sends?|Authorization:\s*Bearer|raw|handling|entering)\b/i.test(criterion) &&
+    /\b(collects?|sends?|stores?|storage|persist|Authorization:\s*Bearer|raw|handling|entry|entering)\b/i.test(criterion) &&
     !/\b(browser-safe|session|cookie|HttpOnly)\b/i.test(criterion)
   );
 }
@@ -1482,6 +1482,34 @@ function withoutPublicUiRawAdminTokenCriteria(task: Task) {
   const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !publicUiRawAdminTokenCriterion(criterion));
   const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
     (criterion) => !publicUiRawAdminTokenCriterion(criterion),
+  );
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function sessionSecretFallbackCriterion(criterion: string) {
+  return (
+    /\bSESSION_SECRET when configured\b/i.test(criterion) ||
+    /\bADMIN_TOKEN\b[\s\S]{0,120}\bfallback(?: signing| secret| signing behavior)?\b/i.test(criterion) ||
+    /\bfallback(?: signing| secret| signing behavior)?\b[\s\S]{0,120}\bADMIN_TOKEN\b/i.test(criterion)
+  );
+}
+
+function withoutSessionSecretFallbackCriteria(task: Task) {
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !sessionSecretFallbackCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !sessionSecretFallbackCriterion(criterion),
   );
 
   if (
@@ -1657,13 +1685,46 @@ function withoutLifecycleDriftCriteria(task: Task) {
 function workflowExportDriftCriterion(criterion: string) {
   return (
     /\bminimal WorkflowEntrypoint class\b/i.test(criterion) ||
-    /\blater workflow code may delegate to src\/weeklyWorkflow\.js\b/i.test(criterion)
+    /\blater workflow code may delegate to src\/weeklyWorkflow\.js\b/i.test(criterion) ||
+    /\bsrc\/weeklyWorkflow\.js\b[\s\S]{0,100}\bexports? (?:the )?WeeklyWorkflow class referenced by wrangler\.jsonc\b/i.test(
+      criterion,
+    )
   );
 }
 
 function withoutWorkflowExportDriftCriteria(task: Task) {
   const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !workflowExportDriftCriterion(criterion));
   const source_acceptance_criteria = task.source_acceptance_criteria?.filter((criterion) => !workflowExportDriftCriterion(criterion));
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function runCreationOutsideEnqueueBoundaryCriterion(task: Task, criterion: string) {
+  if (taskOwnsManualRunRoute(task) || taskOwnsSchedulerSurface(task)) return false;
+  return /\bcreates? (?:a|the) run\b[\s\S]{0,120}\b(?:default|previous|seven-day|window)\b/i.test(criterion);
+}
+
+function directApiDispatchInEntrypointCriterion(task: Task, criterion: string) {
+  if (!taskOwnsIndexSurface(task) || taskHasRouteIntegrationContract(task)) return false;
+  return /\bsrc\/index\.js\b[\s\S]{0,120}\bdispatch(?:es)? API routes\b/i.test(criterion);
+}
+
+function withoutBoundaryAuthorityDriftCriteria(task: Task) {
+  const isDrift = (criterion: string) =>
+    runCreationOutsideEnqueueBoundaryCriterion(task, criterion) || directApiDispatchInEntrypointCriterion(task, criterion);
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !isDrift(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter((criterion) => !isDrift(criterion));
 
   if (
     acceptance_criteria.length === task.acceptance_criteria.length &&
@@ -1757,6 +1818,37 @@ function taskRouteEndpointSourceCriteria(task: Task) {
   );
 }
 
+function taskRouteEndpointDefaultCriteria(task: Task) {
+  const criteria: string[] = [];
+
+  if (taskOwnsManualRunRoute(task)) {
+    criteria.push(
+      'POST /runs creates a queued manual run record with a default previous-seven-day window when no window is supplied, uses active profile artifact IDs when profile IDs are omitted, returns runId with status queued, and starts WEEKLY_WORKFLOW through the workflow binding/service boundary.',
+      'GET /runs/:id returns run status, requested window, profile artifact IDs used, selected candidate ID, transcript ID, status/error details, and never exposes raw profile markdown or fetched source content.',
+    );
+  }
+
+  if (taskOwnsLatestRoute(task)) {
+    criteria.push(
+      'GET /latest returns the latest completed transcript with title, hook, transcript, captions, sourceUrls, primarySegment, whyThisWasPicked, generatedAt, and run ID; it excludes completed_empty/no-transcript, failed, queued, and running runs and never exposes private profile markdown or fetched source content.',
+    );
+  }
+
+  if (taskOwnsRegenerationRoute(task)) {
+    criteria.push(
+      'POST /runs/:id/regenerate creates a new transcript version for the selected run through the transcript generation/service boundary, preserves prior transcript rows, advances the current transcript pointer only when intended, and returns updated transcript metadata.',
+    );
+  }
+
+  if (taskOwnsCandidateRoute(task)) {
+    criteria.push(
+      'Candidate routes for a run return candidate metadata and selection state without exposing private profile markdown or raw fetched source content, and candidate selection changes persist through the run/transcript repository boundary.',
+    );
+  }
+
+  return criteria;
+}
+
 function taskRunRouteFamilyLabel(task: Task) {
   const families = [
     taskOwnsManualRunRoute(task) ? 'run' : undefined,
@@ -1801,7 +1893,7 @@ function sessionRouteCriteria(surface: string) {
   return [
     `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
     `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
-    `${surface} issues a stateless signed expiring session cookie whose payload includes an expiration timestamp, whose signature is verified with WebCrypto HMAC using SESSION_SECRET when configured or ADMIN_TOKEN as the fallback signing secret, and whose validation rejects tampered or expired cookies before protected route handlers run.`,
+    `${surface} issues a stateless signed expiring session cookie whose payload includes an expiration timestamp, whose signature is verified with WebCrypto HMAC using a separate SESSION_SECRET, and whose validation fails closed when SESSION_SECRET is missing or when cookies are tampered or expired before protected route handlers run.`,
     `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, returns structured 401/403 responses for invalid credentials, and establishes the CSRF token or same-origin Origin validation contract used by cookie-authenticated browser mutations.`,
   ];
 }
@@ -2302,6 +2394,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       task = statusCanonicalized;
     }
 
+    const sessionSecretSanitized = withoutSessionSecretFallbackCriteria(task);
+    if (sessionSecretSanitized !== task) {
+      changed = true;
+      task = sessionSecretSanitized;
+    }
+
     const rootSanitized = withoutRootScaffoldWorkflowExecutionCriteria(task);
     if (rootSanitized !== task) {
       changed = true;
@@ -2334,6 +2432,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (workflowExportSanitized !== task) {
       changed = true;
       task = workflowExportSanitized;
+    }
+
+    const boundaryAuthoritySanitized = withoutBoundaryAuthorityDriftCriteria(task);
+    if (boundaryAuthoritySanitized !== task) {
+      changed = true;
+      task = boundaryAuthoritySanitized;
     }
 
     const schedulerSanitized = withoutSchedulerWorkflowExecutionCriteria(task);
@@ -2376,7 +2480,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       } else {
         criteria.push(
           `${authSurface} provides a browser-safe auth/session boundary for the public UI: a dedicated session endpoint may exchange the operator credential for a short-lived HttpOnly SameSite cookie, and protected browser mutations must validate that session instead of requiring public/app.js to handle the raw ADMIN_TOKEN repeatedly.`,
-          `${authSurface} centralizes browser session validation for a stateless signed expiring session cookie: the cookie payload includes an expiration timestamp, is signed with WebCrypto HMAC using SESSION_SECRET when configured or ADMIN_TOKEN as the fallback signing secret, rejects tampering and expired sessions, and never stores the raw ADMIN_TOKEN in the cookie.`,
+          `${authSurface} centralizes browser session validation for a stateless signed expiring session cookie: the cookie payload includes an expiration timestamp, is signed with WebCrypto HMAC using a separate SESSION_SECRET, fails closed when SESSION_SECRET is missing, rejects tampering and expired sessions, and never stores the raw ADMIN_TOKEN in the cookie.`,
           `${authSurface} defines the browser mutation request-forgery guard for cookie-authenticated requests, using SameSite=Strict plus explicit Origin validation or CSRF token issuance and validation.`,
         );
       }
@@ -2384,7 +2488,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     if (hasAuthSurface && taskOwnsPublicAppSurface(task)) {
       criteria.push(
-        'public/app.js uses the browser-safe auth/session flow for protected profile, run, activation, and regeneration calls; sends protected mutation requests with credentials included and the session CSRF token/header when required; handles unauthenticated responses; and never hardcodes, persists, or sends the raw ADMIN_TOKEN directly to feature mutation endpoints.',
+        'public/app.js uses the browser-safe auth/session flow for protected profile, run, activation, and regeneration calls; may accept the operator credential only transiently for the session login/exchange endpoint; discards it after the exchange; sends protected mutation requests with credentials included and the session CSRF token/header when required; handles unauthenticated responses; and never hardcodes, stores, persists, repeats, or sends the raw ADMIN_TOKEN directly to feature mutation endpoints.',
       );
     }
 
@@ -2430,7 +2534,11 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     }
 
     if (taskOwnsWorkflowExecutionSurface(task) && !taskIsRootScaffold(task)) {
+      const workflowSurface = taskOwnedBoundaryPaths(task).find((path) =>
+        /^src\/(?:(?:workflows\/)?weeklyWorkflow|workflow)\.[cm]?[jt]s$/i.test(path),
+      ) ?? 'src/workflow.js';
       criteria.push(
+        `${workflowSurface} owns workflow implementation logic consumed by the final src/index.js Worker entrypoint integration; it is not the configured Worker entry module unless this same task also owns src/index.js.`,
         'Scheduled triggers and manual run routes create queued run records only; workflow execution is the boundary that transitions queued runs to running and then completed or failed.',
         'Workflow treats an empty bookmark list as a completed_empty terminal run with no transcript_id, records a no-bookmarks/no-transcript reason, and keeps latest transcript lookup focused on completed runs with transcripts.',
         'Workflow execution receives or resumes a queued run, transitions it to running and then completed or failed, and does not create duplicate run records for the same workflow invocation.',
@@ -2469,6 +2577,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       }
     }
 
+    criteria.push(...taskRouteEndpointDefaultCriteria(task));
     criteria.push(...taskRouteEndpointSourceCriteria(task));
 
     if (taskIsRootScaffold(task) && taskOwnsWorkerConfigFile(task) && taskOwnsIndexSurface(task)) {
@@ -2486,7 +2595,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     if (taskOwnsReadme(task)) {
       criteria.push(
-        'README.md documents direct Authorization: Bearer <ADMIN_TOKEN> API/operator access, the browser-safe signed session/cookie flow for the public UI, SESSION_SECRET when configured, the ADMIN_TOKEN fallback signing behavior, and states that secrets must not be committed or embedded in public assets.',
+        'README.md documents direct Authorization: Bearer <ADMIN_TOKEN> API/operator access, the browser-safe signed session/cookie flow for the public UI, the required separate SESSION_SECRET for session signing, and states that secrets must not be committed or embedded in public assets.',
       );
     }
 

@@ -1165,6 +1165,9 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
       id: 'T02',
       depends_on: ['T01'],
       owned_surfaces: ['src/auth.js', 'src/router.js'],
+      acceptance_criteria: [
+        'src/auth.js centralizes browser session validation using SESSION_SECRET when configured or ADMIN_TOKEN as the fallback signing secret.',
+      ],
     },
     {
       id: 'T03',
@@ -1197,12 +1200,16 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
       owned_surfaces: ['public/index.html', 'public/app.js'],
       acceptance_criteria: [
         'public/app.js collects the admin token at runtime for protected profile, run, activation, and regeneration calls; sends Authorization: Bearer <ADMIN_TOKEN>; handles missing or invalid token responses; and never hardcodes secrets in public files.',
+        'public/app.js supports admin token entry/storage for protected API calls.',
       ],
     },
     {
       id: 'T09',
       depends_on: ['T08'],
       owned_surfaces: ['README.md'],
+      acceptance_criteria: [
+        'README.md documents direct Authorization: Bearer <ADMIN_TOKEN> API/operator access, SESSION_SECRET when configured, and the ADMIN_TOKEN fallback signing behavior.',
+      ],
     },
   ]);
   plan.tasks[7].owner = 'designer';
@@ -1215,14 +1222,21 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.match(criteria('T02'), /Authorization: Bearer <ADMIN_TOKEN>/);
   assert.match(criteria('T02'), /browser-safe auth\/session boundary/);
   assert.match(criteria('T02'), /stateless signed expiring session cookie/);
+  assert.match(criteria('T02'), /separate SESSION_SECRET/);
+  assert.doesNotMatch(criteria('T02'), /fallback signing secret/);
+  assert.doesNotMatch(criteria('T02'), /ADMIN_TOKEN as the fallback/);
   assert.match(criteria('T03'), /partial unique index where is_active = 1/);
   assert.match(criteria('T04'), /D1 transaction/);
   assert.match(criteria('T05'), /repository transaction/);
   assert.match(criteria('T05'), /auth\/session boundary/);
   assert.match(criteria('T07'), /preserve the existing default fetch handler/);
   assert.match(criteria('T08'), /browser-safe auth\/session flow/);
+  assert.match(criteria('T08'), /only transiently for the session login\/exchange endpoint/);
   assert.doesNotMatch(criteria('T08'), /collects the admin token at runtime/);
+  assert.doesNotMatch(criteria('T08'), /admin token entry\/storage/);
   assert.match(criteria('T09'), /signed session\/cookie flow/);
+  assert.match(criteria('T09'), /required separate SESSION_SECRET/);
+  assert.doesNotMatch(criteria('T09'), /fallback signing behavior/);
   assert.ok(integration);
   assert.deepEqual(integration?.owned_surfaces, ['src/router.js']);
   assert.deepEqual(integration?.depends_on, ['T02', 'E20-auth-session', 'T05', 'T06']);
@@ -1232,6 +1246,8 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.ok(normalized.tasks.find((task) => task.id === 'E20-auth-session'));
   assert.ok(byId['E20-auth-session'].depends_on.includes('T01'));
   assert.match(criteria('E20-auth-session'), /stateless signed expiring session cookie/);
+  assert.match(criteria('E20-auth-session'), /separate SESSION_SECRET/);
+  assert.doesNotMatch(criteria('E20-auth-session'), /ADMIN_TOKEN as the fallback/);
 });
 
 test('task plan normalization keeps profile migration contracts on the owned migration filename', () => {
@@ -1695,6 +1711,75 @@ test('task plan normalization scopes copied endpoint contracts to the owning rou
   assert.match(secondSliceCriteria, /Transcript regeneration inserts/);
 });
 
+test('task plan normalization recognizes camel route files and removes boundary authority drift', () => {
+  const sourceContracts = [
+    'POST /runs creates a manual run and returns runId with status queued.',
+    'GET /runs/:id returns run status, window, profile IDs used, selectedCandidateId, and transcriptId.',
+    'GET /latest returns the latest completed transcript with title, hook, transcript, captions, sourceUrls, primarySegment, and whyThisWasPicked.',
+    'POST /runs/:id/regenerate regenerates a transcript for the selected candidate.',
+  ];
+  const plan = taskPlan([
+    {
+      id: 'T07',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/runPipeline.js'],
+      acceptance_criteria: ['src/runPipeline.js creates a run with a default previous-seven-days window.'],
+    },
+    {
+      id: 'T08-part-2',
+      depends_on: ['T08'],
+      owned_surfaces: ['src/routesRuns.js'],
+    },
+    {
+      id: 'T08-part-3',
+      depends_on: ['T08-part-2'],
+      owned_surfaces: ['src/routesLatest.js', 'src/index.js'],
+      acceptance_criteria: ['src/index.js dispatches API routes, scheduled weekly triggers, Workflow access, and ASSETS fallback.'],
+    },
+  ]);
+  (plan.tasks[1] as any).source_acceptance_criteria = sourceContracts;
+  (plan.tasks[2] as any).source_acceptance_criteria = sourceContracts;
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const runCriteria = byId['T08-part-2'].acceptance_criteria.join('\n');
+  const latestCriteria = byId['T08-part-3'].acceptance_criteria.join('\n');
+
+  assert.doesNotMatch(byId.T07.acceptance_criteria.join('\n'), /creates a run with a default/);
+  assert.match(runCriteria, /POST \/runs creates a manual run/);
+  assert.match(runCriteria, /GET \/runs\/:id returns run status/);
+  assert.doesNotMatch(runCriteria, /GET \/latest returns/);
+  assert.match(latestCriteria, /GET \/latest returns/);
+  assert.doesNotMatch(latestCriteria, /POST \/runs creates/);
+  assert.doesNotMatch(latestCriteria, /dispatches API routes/);
+});
+
+test('task plan normalization defaults endpoint contracts for sliced route ownership', () => {
+  const plan = taskPlan([
+    {
+      id: 'T08-part-2',
+      depends_on: [],
+      owned_surfaces: ['src/routesRuns.js'],
+    },
+    {
+      id: 'T08-part-3',
+      depends_on: ['T08-part-2'],
+      owned_surfaces: ['src/routesLatest.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const runCriteria = byId['T08-part-2'].acceptance_criteria.join('\n');
+  const latestCriteria = byId['T08-part-3'].acceptance_criteria.join('\n');
+
+  assert.match(runCriteria, /POST \/runs creates a queued manual run record/);
+  assert.match(runCriteria, /GET \/runs\/:id returns run status/);
+  assert.doesNotMatch(runCriteria, /GET \/latest returns/);
+  assert.match(latestCriteria, /GET \/latest returns the latest completed transcript/);
+  assert.doesNotMatch(latestCriteria, /POST \/runs creates/);
+});
+
 test('task plan normalization canonicalizes no-bookmark status and workflow export contracts', () => {
   const plan = taskPlan([
     {
@@ -1714,8 +1799,9 @@ test('task plan normalization canonicalizes no-bookmark status and workflow expo
     {
       id: 'T10',
       depends_on: ['T02'],
-      owned_surfaces: ['src/workflow.js', 'src/index.js'],
+      owned_surfaces: ['src/weeklyWorkflow.js', 'src/index.js'],
       acceptance_criteria: [
+        'src/weeklyWorkflow.js exports the WeeklyWorkflow class referenced by wrangler.jsonc.',
         'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may delegate to src/weeklyWorkflow.js without changing the configured export.',
         'An empty bookmark list marks the run completed/no_content without transcript generation.',
       ],
@@ -1730,7 +1816,8 @@ test('task plan normalization canonicalizes no-bookmark status and workflow expo
   assert.match(criteria('T01'), /class named WeeklyWorkflow/);
   assert.doesNotMatch(criteria('T02'), /completed_no_bookmarks/);
   assert.match(criteria('T02'), /completed_empty/);
-  assert.doesNotMatch(criteria('T10'), /src\/weeklyWorkflow\.js/);
+  assert.doesNotMatch(criteria('T10'), /later workflow code may delegate to src\/weeklyWorkflow\.js/);
+  assert.doesNotMatch(criteria('T10'), /referenced by wrangler\.jsonc/);
   assert.doesNotMatch(criteria('T10'), /completed\/no_content/);
   assert.match(criteria('T10'), /fill in or delegate implementation details/);
   assert.match(criteria('T10'), /completed_empty terminal run/);
