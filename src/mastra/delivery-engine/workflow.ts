@@ -1437,7 +1437,7 @@ function publicUiRawAdminTokenCriterion(criterion: string) {
   return (
     /\bpublic\/app\.js\b/i.test(criterion) &&
     /\b(?:ADMIN_TOKEN|admin[-_\s]?token)\b/i.test(criterion) &&
-    /\b(collects?|sends?|Authorization:\s*Bearer|raw|handling)\b/i.test(criterion) &&
+    /\b(collects?|sends?|Authorization:\s*Bearer|raw|handling|entering)\b/i.test(criterion) &&
     !/\b(browser-safe|session|cookie|HttpOnly)\b/i.test(criterion)
   );
 }
@@ -1625,6 +1625,36 @@ function taskDependsOnAny(task: Task, ids: Set<string>) {
   return task.depends_on.some((dependency) => ids.has(dependency));
 }
 
+function taskListDependsOn(tasks: Task[], taskId: string, dependencyId: string, seen = new Set<string>()): boolean {
+  if (taskId === dependencyId) return true;
+  if (seen.has(taskId)) return false;
+  seen.add(taskId);
+
+  const task = tasks.find((candidate) => candidate.id === taskId);
+  if (!task) return false;
+  if (task.depends_on.includes(dependencyId)) return true;
+  return task.depends_on.some((parentId) => taskListDependsOn(tasks, parentId, dependencyId, seen));
+}
+
+function taskCanDependOnTaskList(tasks: Task[], taskId: string, dependencyId: string) {
+  return taskId !== dependencyId && !taskListDependsOn(tasks, dependencyId, taskId);
+}
+
+function withoutCyclicDependencies(tasks: Task[]) {
+  let changed = false;
+  const next = tasks.map((task) => {
+    if (taskHasRouteIntegrationContract(task) || taskOwnsSessionRoute(task)) return task;
+    const depends_on = task.depends_on.filter((dependency) => {
+      if (!taskListDependsOn(tasks, dependency, task.id)) return true;
+      changed = true;
+      return false;
+    });
+    return depends_on.length === task.depends_on.length ? task : { ...task, depends_on };
+  });
+
+  return { tasks: next, changed };
+}
+
 function appendDependencies(task: Task, dependencies: string[]) {
   const depends_on = Array.from(new Set([...task.depends_on, ...dependencies.filter((dependency) => dependency !== task.id)]));
   return depends_on.length === task.depends_on.length &&
@@ -1634,16 +1664,19 @@ function appendDependencies(task: Task, dependencies: string[]) {
 }
 
 function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
+  const sanitized = withoutCyclicDependencies(tasks);
+  tasks = sanitized.tasks;
   const routerTaskIds = new Set(routerBoundaryProviderTasks(tasks).map((task) => task.id));
   const sessionTaskIds = new Set(tasks.filter(taskOwnsSessionRoute).map((task) => task.id));
   const integrationTask = tasks.find(taskHasRouteIntegrationContract);
-  let changed = false;
+  let changed = sanitized.changed;
 
   const next = tasks.map((task) => {
     const dependencies: string[] = [];
 
     if (taskOwnsRouteModule(task) && !taskOwnsSessionRoute(task)) {
-      dependencies.push(...routerTaskIds, ...sessionTaskIds);
+      dependencies.push(...routerTaskIds);
+      if (!taskOwnsAuthSurface(task)) dependencies.push(...sessionTaskIds);
     }
 
     if (taskOwnsPublicAppSurface(task)) {
@@ -1651,11 +1684,19 @@ function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
       if (integrationTask) dependencies.push(integrationTask.id);
     }
 
-    if (!taskIsRootScaffold(task) && taskOwnsIndexSurface(task) && integrationTask && task.id !== integrationTask.id) {
+    if (
+      !taskIsRootScaffold(task) &&
+      taskOwnsIndexSurface(task) &&
+      !taskOwnsRouterSurface(task) &&
+      integrationTask &&
+      task.id !== integrationTask.id
+    ) {
       dependencies.push(integrationTask.id);
     }
 
-    const filtered = dependencies.filter((dependency) => dependency !== task.id);
+    const filtered = dependencies.filter(
+      (dependency) => dependency !== task.id && taskCanDependOnTaskList(tasks, task.id, dependency),
+    );
     if (!filtered.length || taskDependsOnAny(task, new Set(filtered))) {
       const appended = appendDependencies(task, filtered);
       if (appended !== task) changed = true;
