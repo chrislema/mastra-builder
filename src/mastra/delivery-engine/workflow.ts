@@ -10493,6 +10493,9 @@ export const deliveryPlanningWorkflow = createWorkflow({
   inputSchema: deliveryWorkflowInputSchema,
   outputSchema: deliveryStageOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
+  options: {
+    onError: markDeliveryRunFailedOnWorkflowError,
+  },
 })
   .then(initializeRunStep)
   .then(createPlannerArtifactsStep)
@@ -10936,6 +10939,9 @@ export const deliveryReviewWorkflow = createWorkflow({
   inputSchema: deliveryStageOutputSchema,
   outputSchema: deliveryStageOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
+  options: {
+    onError: markDeliveryRunFailedOnWorkflowError,
+  },
 })
   .then(prepareReviewLoopStep)
   .dountil(executeReviewAttemptStep, async ({ inputData }) => inputData.terminal)
@@ -12125,6 +12131,9 @@ export const deliveryBuildTaskWorkflow = createWorkflow({
   inputSchema: buildTaskWorkItemSchema,
   outputSchema: buildTaskResultSchema,
   stateSchema: deliveryWorkflowStateSchema,
+  options: {
+    onError: markDeliveryRunFailedOnWorkflowError,
+  },
 })
   .then(prepareBuildTaskAttemptLoopStep)
   .dountil(executeBuildTaskAttemptStep, async ({ inputData }) => inputData.terminal)
@@ -12230,6 +12239,9 @@ export const deliveryBuildWorkflow = createWorkflow({
   inputSchema: deliveryStageOutputSchema,
   outputSchema: deliveryStageOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
+  options: {
+    onError: markDeliveryRunFailedOnWorkflowError,
+  },
 })
   .then(prepareBuildTasksStep)
   .foreach(deliveryBuildTaskWorkflow, { concurrency: 1 })
@@ -12566,6 +12578,9 @@ export const deliveryReleaseGateWorkflow = createWorkflow({
   inputSchema: deliveryStageOutputSchema,
   outputSchema: deliveryStageOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
+  options: {
+    onError: markDeliveryRunFailedOnWorkflowError,
+  },
 })
   .then(prepareReleaseGateLoopStep)
   .dountil(executeReleaseGateAttemptStep, async ({ inputData }) => inputData.terminal)
@@ -12883,6 +12898,9 @@ export const deliveryDeploymentWorkflow = createWorkflow({
   inputSchema: deliveryStageOutputSchema,
   outputSchema: workflowOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
+  options: {
+    onError: markDeliveryRunFailedOnWorkflowError,
+  },
 })
   .then(createDeploymentReportStep)
   .then(syncDeploymentReportStateStep)

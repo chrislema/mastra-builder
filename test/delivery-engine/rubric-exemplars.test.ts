@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -82,12 +82,58 @@ test('delivery engine asset paths can resolve from an explicit root outside the 
 
   try {
     process.env.DELIVERY_ENGINE_ASSET_ROOT = root;
-    assert.equal(deliveryEngineAssetPath('rubrics', 'task-plan.rubric.json'), rubricPath);
+    assert.equal(
+      realpathSync(deliveryEngineAssetPath('rubrics', 'task-plan.rubric.json')),
+      realpathSync(rubricPath),
+    );
   } finally {
     if (previous === undefined) {
       delete process.env.DELIVERY_ENGINE_ASSET_ROOT;
     } else {
       process.env.DELIVERY_ENGINE_ASSET_ROOT = previous;
+    }
+  }
+});
+
+test('delivery engine asset paths resolve when Studio cwd is the .mastra directory', () => {
+  const previousCwd = process.cwd();
+  const previousAssetRoot = process.env.DELIVERY_ENGINE_ASSET_ROOT;
+  const previousProjectRoot = process.env.MASTRA_PROJECT_ROOT;
+  const previousSkillsBaseDir = process.env.SKILLS_BASE_DIR;
+  const root = mkdtempSync(join(tmpdir(), 'delivery-engine-cwd-'));
+  const mastraDir = join(root, '.mastra');
+  const rubricsDir = join(root, 'src', 'mastra', 'delivery-engine', 'rubrics');
+  const rubricPath = join(rubricsDir, 'task-plan.rubric.json');
+  mkdirSync(mastraDir, { recursive: true });
+  mkdirSync(rubricsDir, { recursive: true });
+  writeFileSync(rubricPath, '{}\n');
+
+  try {
+    delete process.env.DELIVERY_ENGINE_ASSET_ROOT;
+    delete process.env.MASTRA_PROJECT_ROOT;
+    delete process.env.SKILLS_BASE_DIR;
+    process.chdir(mastraDir);
+
+    assert.equal(
+      realpathSync(deliveryEngineAssetPath('rubrics', 'task-plan.rubric.json')),
+      realpathSync(rubricPath),
+    );
+  } finally {
+    process.chdir(previousCwd);
+    if (previousAssetRoot === undefined) {
+      delete process.env.DELIVERY_ENGINE_ASSET_ROOT;
+    } else {
+      process.env.DELIVERY_ENGINE_ASSET_ROOT = previousAssetRoot;
+    }
+    if (previousProjectRoot === undefined) {
+      delete process.env.MASTRA_PROJECT_ROOT;
+    } else {
+      process.env.MASTRA_PROJECT_ROOT = previousProjectRoot;
+    }
+    if (previousSkillsBaseDir === undefined) {
+      delete process.env.SKILLS_BASE_DIR;
+    } else {
+      process.env.SKILLS_BASE_DIR = previousSkillsBaseDir;
     }
   }
 });

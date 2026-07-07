@@ -9,6 +9,7 @@ import {
   deliveryReleaseGateWorkflow,
   deliveryReviewWorkflow,
   deliveryWorkflow,
+  markDeliveryRunFailedOnWorkflowError,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
@@ -45,4 +46,18 @@ test('workflow agent calls use run-scoped Mastra memory', () => {
   assert.equal(memoryCount, requestContextCount);
   assert.match(source, /memory: deliveryRunMemory\(\{ repoPath, runId, role: 'judge' \}\)/);
   assert.match(source, /memory: deliveryRunMemory\(\{ repoPath: inputData\.repoPath, runId: inputData\.runId, role: task\.owner \}\)/);
+});
+
+test('delivery stage workflows close delivery state on workflow errors', () => {
+  for (const workflow of [
+    deliveryWorkflow,
+    deliveryPlanningWorkflow,
+    deliveryReviewWorkflow,
+    deliveryBuildWorkflow,
+    deliveryBuildTaskWorkflow,
+    deliveryReleaseGateWorkflow,
+    deliveryDeploymentWorkflow,
+  ]) {
+    assert.equal(workflow.options.onError, markDeliveryRunFailedOnWorkflowError, `${workflow.id} missing onError cleanup`);
+  }
 });

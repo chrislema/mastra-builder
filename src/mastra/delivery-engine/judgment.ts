@@ -99,14 +99,31 @@ type JudgedDimension = {
 };
 
 const engineRoot = dirname(fileURLToPath(import.meta.url));
+const deliveryEngineRootRelativeParts = ['src', 'mastra', 'delivery-engine'];
+
+function deliveryEngineRootFromAncestor(seed: string) {
+  let current = resolve(seed);
+  for (let depth = 0; depth < 8; depth += 1) {
+    const candidate = join(current, ...deliveryEngineRootRelativeParts);
+    if (existsSync(candidate)) return candidate;
+
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return undefined;
+}
 
 export function deliveryEngineAssetPath(...parts: string[]) {
   const explicitRoot = process.env.DELIVERY_ENGINE_ASSET_ROOT;
   const projectRoot = process.env.MASTRA_PROJECT_ROOT ?? process.env.SKILLS_BASE_DIR;
   const candidates = [
     explicitRoot ? resolve(explicitRoot) : undefined,
-    projectRoot ? resolve(projectRoot, 'src', 'mastra', 'delivery-engine') : undefined,
-    resolve(process.cwd(), 'src', 'mastra', 'delivery-engine'),
+    projectRoot ? resolve(projectRoot, ...deliveryEngineRootRelativeParts) : undefined,
+    deliveryEngineRootFromAncestor(process.cwd()),
+    deliveryEngineRootFromAncestor(engineRoot),
+    resolve(process.cwd(), ...deliveryEngineRootRelativeParts),
     engineRoot,
   ]
     .filter((root): root is string => Boolean(root))
