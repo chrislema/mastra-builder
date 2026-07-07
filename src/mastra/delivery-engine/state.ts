@@ -16,7 +16,7 @@ export type DeliveryRun = {
   summary?: string;
   failure?: { name: string; message: string };
   vision: string;
-  spec: string;
+  spec?: string;
   status: DeliveryRunStatus;
   stage: string;
   tasks: Record<string, { status: DeliveryTaskStatus; retries: number; owner?: string; note?: string }>;
@@ -126,11 +126,11 @@ export function initializeDeliveryRun({
 }: {
   repoPath: string;
   visionPath: string;
-  specPath: string;
+  specPath?: string;
 }) {
   const repo = resolve(repoPath);
   const vision = repoRelativeExistingFile({ repoPath: repo, path: visionPath, label: 'vision' });
-  const spec = repoRelativeExistingFile({ repoPath: repo, path: specPath, label: 'spec' });
+  const spec = specPath ? repoRelativeExistingFile({ repoPath: repo, path: specPath, label: 'spec' }) : undefined;
   const existingPath = runPath(repo);
 
   if (existsSync(existingPath)) {

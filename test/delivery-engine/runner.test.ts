@@ -318,14 +318,43 @@ test('delivery workflow async runner starts without waiting for completion', asy
   assert.equal(response.runId, 'async-run');
 });
 
+test('delivery workflow runner can write inline vision content without requiring a spec', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-runner-inline-'));
+  let startOptions: Record<string, any> | undefined;
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => ({
+          runId: 'inline-run',
+          start: async (options: Record<string, any>) => {
+            startOptions = options;
+            return { status: 'success' };
+          },
+        }),
+      }) as any,
+  };
+
+  await startDeliveryWorkflowRunWithKey(host, {
+    repoPath,
+    visionContent: '# Vision\nBuild a vanilla Worker app.\n',
+    deployMode: 'local',
+  });
+
+  assert.equal(readFileSync(join(repoPath, 'vision.md'), 'utf8'), '# Vision\nBuild a vanilla Worker app.\n');
+  assert.equal(existsSync(join(repoPath, 'spec.md')), false);
+  assert.equal(startOptions?.inputData.visionPath, 'vision.md');
+  assert.equal(startOptions?.inputData.specPath, undefined);
+});
+
 test('delivery workflow request context carries the resolved repo path', () => {
   const context = createDeliveryWorkflowRequestContext('/tmp/delivery-target');
   assert.equal(context.get('repoPath'), resolve('/tmp/delivery-target'));
 });
 
 test('delivery API routes expose the workflow launch route', () => {
-  assert.equal(deliveryApiRoutes.length, 1);
-  assert.equal(deliveryApiRoutes[0].path, '/delivery/run');
-  assert.equal(deliveryApiRoutes[0].method, 'POST');
-  assert.equal(deliveryApiRoutes[0].openapi?.tags?.includes('Delivery Engine'), true);
+  assert.deepEqual(
+    deliveryApiRoutes.map((route) => `${route.method} ${route.path}`),
+    ['GET /delivery/launcher', 'POST /delivery/launcher', 'POST /delivery/run'],
+  );
+  assert.equal(deliveryApiRoutes.every((route) => route.openapi?.tags?.includes('Delivery Engine')), true);
 });

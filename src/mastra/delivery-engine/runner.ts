@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { createDeliveryRequestContext } from './context';
 import { deliveryMemoryResourceId } from './memory';
@@ -18,10 +18,22 @@ const deliveryDeployModeSchema = z.preprocess((value) => {
   return value;
 }, z.enum(['local', 'production']).default('local'));
 
+const nonEmptyStringSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
+  z.string().min(1).optional(),
+);
+
 export const deliveryWorkflowRunInputSchema = z.object({
   repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
-  visionPath: z.string().min(1).default('vision.md').describe('Path to vision.md inside repoPath.'),
-  specPath: z.string().min(1).default('spec.md').describe('Path to spec.md inside repoPath.'),
+  visionPath: z
+    .preprocess(
+      (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
+      z.string().min(1).default('vision.md'),
+    )
+    .describe('Path to vision.md inside repoPath.'),
+  specPath: nonEmptyStringSchema.describe('Optional path to spec.md inside repoPath.'),
+  visionContent: nonEmptyStringSchema.describe('Optional vision markdown to write before starting the workflow.'),
+  specContent: nonEmptyStringSchema.describe('Optional spec markdown to write before starting the workflow.'),
   maxRetries: z.coerce.number().int().min(0).default(2),
   deployMode: deliveryDeployModeSchema.describe('local/production target. mock/real remain supported aliases.'),
   reviewMode: z.enum(['fast', 'thorough']).default('thorough'),
@@ -52,8 +64,88 @@ type DeliveryWorkflowHost = {
   getWorkflow: (id: 'deliveryWorkflow') => typeof deliveryWorkflow;
 } & MastraLike;
 
+type PreparedDeliveryWorkflowRunOptions = Omit<DeliveryWorkflowRunOptions, 'visionContent' | 'specContent'>;
+
 export function deliveryWorkflowResourceId(repoPath: string) {
   return deliveryMemoryResourceId(repoPath);
+}
+
+function hasDocumentContent(value: string | undefined): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function ensureTrailingNewline(content: string) {
+  return content.endsWith('\n') ? content : `${content}\n`;
+}
+
+function repoRelativeWritableFile({ repoPath, path, label }: { repoPath: string; path: string; label: string }) {
+  const repo = resolve(repoPath);
+  const fullPath = isAbsolute(path) ? resolve(path) : resolve(repo, path);
+  const rel = relative(repo, fullPath).replaceAll('\\', '/');
+
+  if (!rel || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) {
+    throw new Error(`${label} file must be inside repoPath: ${path}`);
+  }
+
+  return { fullPath, path: rel };
+}
+
+function writeSourceDocument({
+  repoPath,
+  path,
+  content,
+  label,
+}: {
+  repoPath: string;
+  path: string;
+  content: string;
+  label: string;
+}) {
+  const target = repoRelativeWritableFile({ repoPath, path, label });
+  mkdirSync(dirname(target.fullPath), { recursive: true });
+  writeFileSync(target.fullPath, ensureTrailingNewline(content));
+  return target.path;
+}
+
+function prepareDeliveryWorkflowRunOptions(parsed: DeliveryWorkflowRunOptions): PreparedDeliveryWorkflowRunOptions {
+  const repoPath = resolve(parsed.repoPath);
+  const visionPath = parsed.visionPath;
+  const specPath = parsed.specPath ?? (hasDocumentContent(parsed.specContent) ? 'spec.md' : undefined);
+
+  if (hasDocumentContent(parsed.visionContent) || hasDocumentContent(parsed.specContent)) {
+    mkdirSync(repoPath, { recursive: true });
+  }
+
+  const preparedVisionPath = hasDocumentContent(parsed.visionContent)
+    ? writeSourceDocument({
+        repoPath,
+        path: visionPath,
+        content: parsed.visionContent,
+        label: 'vision',
+      })
+    : visionPath;
+
+  const preparedSpecPath =
+    specPath && hasDocumentContent(parsed.specContent)
+      ? writeSourceDocument({
+          repoPath,
+          path: specPath,
+          content: parsed.specContent,
+          label: 'spec',
+        })
+      : specPath;
+
+  return {
+    repoPath,
+    visionPath: preparedVisionPath,
+    specPath: preparedSpecPath,
+    maxRetries: parsed.maxRetries,
+    deployMode: parsed.deployMode,
+    reviewMode: parsed.reviewMode,
+    resourceId: parsed.resourceId,
+    runId: parsed.runId,
+    includeState: parsed.includeState,
+  };
 }
 
 function serializeError(error: unknown) {
@@ -185,38 +277,39 @@ function tryWriteDeliveryWorkflowRunReport(args: Parameters<typeof writeDelivery
 
 async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: DeliveryWorkflowRunInput) {
   const parsed = deliveryWorkflowRunInputSchema.parse(input);
-  const repoPath = resolve(parsed.repoPath);
+  const prepared = prepareDeliveryWorkflowRunOptions(parsed);
+  const repoPath = prepared.repoPath;
   const resourceId = parsed.resourceId ?? deliveryWorkflowResourceId(repoPath);
   const workflow = host.getWorkflow('deliveryWorkflow');
   const run = await workflow.createRun({
-    ...(parsed.runId ? { runId: parsed.runId } : {}),
+    ...(prepared.runId ? { runId: prepared.runId } : {}),
     resourceId,
   });
   const startOptions = {
     inputData: {
       repoPath,
-      visionPath: parsed.visionPath,
-      specPath: parsed.specPath,
-      maxRetries: parsed.maxRetries,
-      deployMode: parsed.deployMode,
-      reviewMode: parsed.reviewMode,
+      visionPath: prepared.visionPath,
+      specPath: prepared.specPath,
+      maxRetries: prepared.maxRetries,
+      deployMode: prepared.deployMode,
+      reviewMode: prepared.reviewMode,
     },
     requestContext: createDeliveryRequestContext(repoPath),
     tracingOptions: {
       metadata: {
         deliveryEngine: true,
         repoPath,
-        visionPath: parsed.visionPath,
-        specPath: parsed.specPath,
-        deployMode: parsed.deployMode,
-        reviewMode: parsed.reviewMode,
+        visionPath: prepared.visionPath,
+        specPath: prepared.specPath,
+        deployMode: prepared.deployMode,
+        reviewMode: prepared.reviewMode,
         resourceId,
       },
       requestContextKeys: ['repoPath'],
-      tags: ['delivery-engine', `deploy:${parsed.deployMode}`, `review:${parsed.reviewMode}`],
+      tags: ['delivery-engine', `deploy:${prepared.deployMode}`, `review:${prepared.reviewMode}`],
     },
     outputOptions: {
-      includeState: parsed.includeState,
+      includeState: prepared.includeState,
     },
   };
 

@@ -86,6 +86,17 @@ test('delivery state normalizes document paths inside repo and rejects outside d
   );
 });
 
+test('delivery state accepts a vision-only run without a separate spec document', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-state-vision-only-'));
+  writeFileSync(join(repoPath, 'vision.md'), '# Vision\nBuild a Worker from this source document.\n');
+
+  const run = initializeDeliveryRun({ repoPath, visionPath: 'vision.md' });
+
+  assert.equal(run.vision, 'vision.md');
+  assert.equal(run.spec, undefined);
+  assert.equal(readDeliveryRun(repoPath).spec, undefined);
+});
+
 test('delivery artifact writes are confined to .delivery/artifacts', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-artifact-containment-'));
 

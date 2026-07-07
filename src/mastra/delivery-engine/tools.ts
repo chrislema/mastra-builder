@@ -80,7 +80,7 @@ export const initializeDeliveryRunTool = createTool({
   inputSchema: z.object({
     repoPath: repoPathField,
     visionPath: z.string(),
-    specPath: z.string(),
+    specPath: z.string().optional(),
   }),
   outputSchema: z.object({
     run_id: z.string(),

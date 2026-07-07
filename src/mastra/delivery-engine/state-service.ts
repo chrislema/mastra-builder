@@ -122,12 +122,12 @@ export async function initializeDeliveryRunState({
 }: {
   repoPath: string;
   visionPath: string;
-  specPath: string;
+  specPath?: string;
   mastra?: MastraLike;
 }) {
   const repo = resolve(repoPath);
   const vision = repoRelativeExistingFile({ repoPath: repo, path: visionPath, label: 'vision' });
-  const spec = repoRelativeExistingFile({ repoPath: repo, path: specPath, label: 'spec' });
+  const spec = specPath ? repoRelativeExistingFile({ repoPath: repo, path: specPath, label: 'spec' }) : undefined;
 
   const storedStatus = await readDeliveryRunStatusWithMastra({ repoPath: repo, mastra });
   const localRun = hasDeliveryRunProjection(repo) ? readDeliveryRun(repo) : undefined;

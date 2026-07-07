@@ -220,3 +220,16 @@ test('delivery state service stores normalized repo-relative document paths', as
   assert.equal(run.vision, 'docs/vision.md');
   assert.equal(run.spec, 'docs/spec.md');
 });
+
+test('delivery state service accepts a vision-only run without a separate spec document', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-state-service-vision-only-'));
+  writeFileSync(join(repoPath, 'vision.md'), '# Vision\nBuild a Worker from this source document.\n');
+
+  const run = await initializeDeliveryRunState({
+    repoPath,
+    visionPath: 'vision.md',
+  });
+
+  assert.equal(run.vision, 'vision.md');
+  assert.equal(run.spec, undefined);
+});

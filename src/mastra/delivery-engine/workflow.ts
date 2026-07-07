@@ -68,7 +68,10 @@ const deliveryDeployModeSchema = z.preprocess((value) => {
 const workflowInputSchema = z.object({
   repoPath: z.string().describe('Absolute path to the target repo.'),
   visionPath: z.string().describe('Path to vision.md inside repoPath; relative paths are resolved under repoPath.'),
-  specPath: z.string().describe('Path to spec.md inside repoPath; relative paths are resolved under repoPath.'),
+  specPath: z
+    .string()
+    .optional()
+    .describe('Optional path to spec.md inside repoPath; relative paths are resolved under repoPath.'),
   maxRetries: z.number().int().min(0).default(2),
   deployMode: deliveryDeployModeSchema.describe('local/production target. mock/real remain supported aliases.'),
   reviewMode: z.enum(['fast', 'thorough']).default('thorough'),
@@ -3306,8 +3309,9 @@ export function implementationJudgmentCanComplete({
   return shouldProceedAfterNonActionableImplementationJudgment({ judgment, deterministicResults, note, task });
 }
 
-function repoFileContents(repoPath: string, paths: string[]) {
+function repoFileContents(repoPath: string, paths: Array<string | undefined>) {
   return paths
+    .filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
     .map((path) => {
       const normalizedPath = normalizeDeliveryPathReference(path);
       const fullPath = isAbsolute(normalizedPath) ? normalizedPath : join(resolve(repoPath), normalizedPath);
@@ -9767,9 +9771,22 @@ const createPlannerArtifactsStep = createStep({
           .join('\n')}${resumeData.notes ? `\nAdditional notes: ${resumeData.notes}` : ''}\n`
       : '';
     const sourceDocuments = repoFileContents(inputData.repoPath, [inputData.visionPath, inputData.specPath]);
-    if (sourceDocuments.length !== 2) {
-      throw new Error(`planner could not load ${inputData.visionPath} and ${inputData.specPath}`);
+    const loadedVision = sourceDocuments.some(
+      (document) => document.path === normalizeDeliveryPathReference(inputData.visionPath),
+    );
+    const normalizedSpecPath = inputData.specPath ? normalizeDeliveryPathReference(inputData.specPath) : undefined;
+    const loadedSpec =
+      !inputData.specPath ||
+      sourceDocuments.some((document) => document.path === normalizedSpecPath);
+    if (!loadedVision) {
+      throw new Error(`planner could not load required vision document ${inputData.visionPath}`);
     }
+    if (!loadedSpec) {
+      throw new Error(`planner could not load spec document ${inputData.specPath}`);
+    }
+    const specContextLine = inputData.specPath
+      ? ''
+      : '\n- No separate spec document was provided. Treat the vision document as authoritative, infer safe implementation details from the project policy, and ask only for decisions that genuinely block implementation.';
     const repoScaffoldState = {
       packageJson: existsSync(join(inputData.repoPath, 'package.json')) ? 'present' : 'missing',
       tsconfigJson: existsSync(join(inputData.repoPath, 'tsconfig.json')) ? 'present' : 'missing',
@@ -9834,6 +9851,7 @@ Open-decision hygiene:
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
 - If an unknown is a non-blocking delivery concern, put it in taskPlan.risks.
 ${bookmarksAdapterPolicyLine(sourcePolicy)}
+${specContextLine}
 - Every open_decisions entry must be one string with this exact field shape:
   "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
 - The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.
