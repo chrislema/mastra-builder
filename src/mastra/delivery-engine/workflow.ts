@@ -1976,11 +1976,14 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
   const sessionTasks = tasks.filter(taskOwnsSessionRoute);
   if (!hasPublicApp || !authTasks.length) return { tasks, changed: false };
 
+  const scaffoldRootTasks = tasks.filter((task) => taskIsRootScaffold(task));
   const routeTasks = tasks.filter(taskOwnsRouteModule);
   const safeAuthTasks = authTasks.filter(
     (authTask) => !routeTasks.some((routeTask) => taskListDependsOn(tasks, authTask.id, routeTask.id)),
   );
-  const sessionDependencyTasks = safeAuthTasks.length ? [...safeAuthTasks, ...routerTasks] : routerTasks;
+  const sessionDependencyTasks = safeAuthTasks.length
+    ? [...scaffoldRootTasks, ...safeAuthTasks, ...routerTasks]
+    : [...scaffoldRootTasks, ...routerTasks];
   const sessionDependencyIds = Array.from(
     new Set(sessionDependencyTasks.map((task) => sessionBoundaryDependencyId(tasks, task))),
   );

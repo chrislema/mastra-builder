@@ -1230,6 +1230,7 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /Every declared API endpoint is reachable through the router/);
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /protection matrix/);
   assert.ok(normalized.tasks.find((task) => task.id === 'E20-auth-session'));
+  assert.ok(byId['E20-auth-session'].depends_on.includes('T01'));
   assert.match(criteria('E20-auth-session'), /stateless signed expiring session cookie/);
 });
 
@@ -1512,7 +1513,7 @@ test('task plan normalization injects session auth before late admin auth and ro
   const criteria = (id: string) => byId[id].acceptance_criteria.join('\n');
 
   assert.ok(byId['E20-auth-session']);
-  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T02-part-3']);
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T02-part-3']);
   assert.ok(indexOf('E20-auth-session') < indexOf('T07'));
   assert.deepEqual(byId.T07.depends_on, ['T02-part-3', 'E20-auth-session']);
   assert.deepEqual(byId['T08-part-2'].depends_on, ['T08', 'T02-part-3', 'E20-auth-session']);
