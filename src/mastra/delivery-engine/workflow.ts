@@ -1623,11 +1623,18 @@ function emptyBookmarkCompletesWithoutTranscriptCriterion(criterion: string) {
   );
 }
 
+function emptyBookmarkCompletedNoContentCriterion(criterion: string) {
+  return /\bempty (?:bookmark )?list\b[\s\S]{0,120}\b(?:completed\/no_content|completed_empty)\b[\s\S]{0,120}\bwithout transcript/i.test(
+    criterion,
+  );
+}
+
 function withoutLifecycleDriftCriteria(task: Task) {
   const isDriftCriterion = (criterion: string) =>
     runLifecycleWithoutEmptyTerminalCriterion(criterion) ||
     workflowEmptyBookmarkCompletedCriterion(criterion) ||
     emptyBookmarkCompletesWithoutTranscriptCriterion(criterion) ||
+    emptyBookmarkCompletedNoContentCriterion(criterion) ||
     (taskOwnsWorkflowSurface(task) &&
       (workflowCreatesRunningRunCriterion(criterion) || workflowCreateRunStepCriterion(criterion)));
   const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !isDriftCriterion(criterion));
@@ -1674,6 +1681,7 @@ function withoutWorkflowExportDriftCriteria(task: Task) {
 
 function canonicalizeCompletedEmptyStatusText(criterion: string) {
   return criterion
+    .replace(/\bcompleted\/no_content\b/gi, 'completed_empty')
     .replace(/\bcompleted_no_bookmarks\b/gi, 'completed_empty')
     .replace(/\bno_bookmarks\b/gi, 'completed_empty');
 }

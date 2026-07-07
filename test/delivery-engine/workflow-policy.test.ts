@@ -1683,6 +1683,7 @@ test('task plan normalization canonicalizes no-bookmark status and workflow expo
       owned_surfaces: ['src/workflow.js', 'src/index.js'],
       acceptance_criteria: [
         'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may delegate to src/weeklyWorkflow.js without changing the configured export.',
+        'An empty bookmark list marks the run completed/no_content without transcript generation.',
       ],
     },
   ]);
@@ -1696,7 +1697,9 @@ test('task plan normalization canonicalizes no-bookmark status and workflow expo
   assert.doesNotMatch(criteria('T02'), /completed_no_bookmarks/);
   assert.match(criteria('T02'), /completed_empty/);
   assert.doesNotMatch(criteria('T10'), /src\/weeklyWorkflow\.js/);
+  assert.doesNotMatch(criteria('T10'), /completed\/no_content/);
   assert.match(criteria('T10'), /fill in or delegate implementation details/);
+  assert.match(criteria('T10'), /completed_empty terminal run/);
 });
 
 test('task plan normalization removes empty-run lifecycle drift outside workflow-named files', () => {
