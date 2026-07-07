@@ -7,6 +7,8 @@ const blankStringToUndefined = (value: unknown) =>
 
 export const optionalNonEmptyStringSchema = z.preprocess(blankStringToUndefined, z.string().min(1).optional());
 
+const requiredNonEmptyStringSchema = z.string().trim().min(1);
+
 const defaultedNonEmptyStringSchema = (fallback: string) =>
   z.preprocess(blankStringToUndefined, z.string().min(1).default(fallback));
 
@@ -27,13 +29,7 @@ const deliveryReviewModeSchema = z.preprocess(
   z.enum(['fast', 'thorough']).default('thorough'),
 );
 
-const deliveryWorkflowInputShape = {
-  projectFolder: optionalNonEmptyStringSchema.describe(
-    'Project folder to build in. This can be a new folder with vision.md; it does not need to already be a Git repo.',
-  ),
-  repoPath: optionalNonEmptyStringSchema.describe(
-    'Compatibility alias for projectFolder. Existing API/CLI callers may keep using repoPath.',
-  ),
+const deliveryWorkflowSharedInputShape = {
   visionPath: defaultedNonEmptyStringSchema('vision.md').describe(
     'Path to the vision document inside the project folder. Defaults to vision.md.',
   ),
@@ -45,9 +41,29 @@ const deliveryWorkflowInputShape = {
   reviewMode: deliveryReviewModeSchema.describe('fast or thorough review. Defaults to thorough.'),
 };
 
+const deliveryWorkflowInputShape = {
+  projectFolder: optionalNonEmptyStringSchema.describe(
+    'Project folder to build in. This can be a new folder with vision.md; it does not need to already be a Git repo.',
+  ),
+  repoPath: optionalNonEmptyStringSchema.describe(
+    'Compatibility alias for projectFolder. Existing API/CLI callers may keep using repoPath.',
+  ),
+  ...deliveryWorkflowSharedInputShape,
+};
+
+const deliveryWorkflowStudioInputShape = {
+  projectFolder: requiredNonEmptyStringSchema.describe(
+    'Required project folder to build in. This can be a new folder with vision.md; it does not need to already be a Git repo.',
+  ),
+  repoPath: optionalNonEmptyStringSchema.describe(
+    'Compatibility alias for projectFolder. Leave blank in Studio unless an existing API caller still sends repoPath.',
+  ),
+  ...deliveryWorkflowSharedInputShape,
+};
+
 export const deliveryWorkflowInputBaseSchema = z.object(deliveryWorkflowInputShape);
 
-function projectFolderIssue(input: z.output<typeof deliveryWorkflowInputBaseSchema>) {
+function projectFolderIssue(input: { projectFolder?: string; repoPath?: string }) {
   if (!input.projectFolder && !input.repoPath) {
     return {
       code: z.ZodIssueCode.custom,
@@ -67,7 +83,12 @@ function projectFolderIssue(input: z.output<typeof deliveryWorkflowInputBaseSche
   return undefined;
 }
 
-export const deliveryWorkflowInputSchema = deliveryWorkflowInputBaseSchema.superRefine((input, ctx) => {
+const deliveryWorkflowCompatibilityInputSchema = deliveryWorkflowInputBaseSchema.superRefine((input, ctx) => {
+  const issue = projectFolderIssue(input);
+  if (issue) ctx.addIssue(issue);
+});
+
+export const deliveryWorkflowInputSchema = z.object(deliveryWorkflowStudioInputShape).superRefine((input, ctx) => {
   const issue = projectFolderIssue(input);
   if (issue) ctx.addIssue(issue);
 });
@@ -88,7 +109,7 @@ export function normalizeDeliveryWorkflowInput(
   input: unknown,
   { inferSpecPath = true }: { inferSpecPath?: boolean } = {},
 ): NormalizedDeliveryWorkflowInput {
-  const parsed = deliveryWorkflowInputSchema.parse(input);
+  const parsed = deliveryWorkflowCompatibilityInputSchema.parse(input);
   const projectFolder = parsed.projectFolder ?? parsed.repoPath;
   if (!projectFolder) throw new Error('Project folder is required. Use projectFolder, or repoPath for compatibility.');
 

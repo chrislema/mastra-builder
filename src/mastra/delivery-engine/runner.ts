@@ -289,6 +289,7 @@ async function prepareDeliveryWorkflowRun(host: DeliveryWorkflowHost, input: Del
   });
   const startOptions = {
     inputData: {
+      projectFolder: repoPath,
       repoPath,
       visionPath: prepared.visionPath,
       specPath: prepared.specPath,

@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { zodToJsonSchema } from '@mastra/core/utils/zod-to-json';
+import { deliveryWorkflowInputSchema } from '../../src/mastra/delivery-engine/run-input.ts';
 import { deliveryApiRoutes } from '../../src/mastra/delivery-engine/routes.ts';
 import {
   createDeliveryWorkflowRequestContext,
@@ -90,6 +92,7 @@ test('delivery workflow runner creates a resource-scoped workflow run', async ()
     resourceId: deliveryWorkflowResourceId(repoPath),
   });
   assert.deepEqual(captured.startOptions?.inputData, {
+    projectFolder: repoPath,
     repoPath,
     visionPath: 'docs/vision.md',
     specPath: 'docs/spec.md',
@@ -174,6 +177,7 @@ test('delivery workflow runner accepts a project folder and infers source docs a
     deployMode: '' as any,
   });
 
+  assert.equal(startOptions?.inputData.projectFolder, resolve(projectFolder));
   assert.equal(startOptions?.inputData.repoPath, resolve(projectFolder));
   assert.equal(startOptions?.inputData.visionPath, 'vision.md');
   assert.equal(startOptions?.inputData.specPath, 'spec.md');
@@ -206,6 +210,7 @@ test('delivery workflow runner accepts a vision-only project folder without a gi
     projectFolder,
   });
 
+  assert.equal(startOptions?.inputData.projectFolder, resolve(projectFolder));
   assert.equal(startOptions?.inputData.repoPath, resolve(projectFolder));
   assert.equal(startOptions?.inputData.visionPath, 'vision.md');
   assert.equal(startOptions?.inputData.specPath, undefined);
@@ -396,6 +401,7 @@ test('delivery workflow async runner starts without waiting for completion', asy
   });
 
   assert.equal(startCalled, false);
+  assert.equal(startAsyncOptions?.inputData.projectFolder, resolve('/tmp/delivery-target'));
   assert.equal(startAsyncOptions?.inputData.repoPath, resolve('/tmp/delivery-target'));
   assert.equal(startAsyncOptions?.inputData.reviewMode, 'thorough');
   assert.equal(startAsyncOptions?.requestContext.get('repoPath'), resolve('/tmp/delivery-target'));
@@ -429,8 +435,23 @@ test('delivery workflow runner can write inline vision content without requiring
 
   assert.equal(readFileSync(join(repoPath, 'vision.md'), 'utf8'), '# Vision\nBuild a vanilla Worker app.\n');
   assert.equal(existsSync(join(repoPath, 'spec.md')), false);
+  assert.equal(startOptions?.inputData.projectFolder, resolve(repoPath));
   assert.equal(startOptions?.inputData.visionPath, 'vision.md');
   assert.equal(startOptions?.inputData.specPath, undefined);
+});
+
+test('delivery workflow input schema advertises projectFolder as required for Studio', () => {
+  const jsonSchema = zodToJsonSchema(deliveryWorkflowInputSchema) as {
+    required?: string[];
+    properties?: Record<string, { type?: string; default?: unknown; enum?: string[] }>;
+  };
+
+  assert.deepEqual(jsonSchema.required, ['projectFolder']);
+  assert.equal(jsonSchema.properties?.projectFolder?.type, 'string');
+  assert.equal(jsonSchema.properties?.visionPath?.default, 'vision.md');
+  assert.equal(jsonSchema.properties?.maxRetries?.default, 2);
+  assert.equal(jsonSchema.properties?.deployMode?.default, 'local');
+  assert.deepEqual(jsonSchema.properties?.deployMode?.enum, ['local', 'production']);
 });
 
 test('delivery workflow request context carries the resolved repo path', () => {
