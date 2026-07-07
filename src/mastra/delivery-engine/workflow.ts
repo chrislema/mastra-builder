@@ -1926,6 +1926,20 @@ export function workflowStepIntegrationGaps(repoPath: string, task: Task) {
     });
 }
 
+export function workflowEntrypointImportGaps(repoPath: string, task: Task) {
+  return taskBoundarySurfaces(repoPath, task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .filter((path) => /\.(?:[cm]?[jt]s)$/.test(path))
+    .filter((path) => existsSync(join(resolve(repoPath), path)))
+    .flatMap((path) => {
+      const source = readFileSync(join(resolve(repoPath), path), 'utf8');
+      if (!/\bextends\s+WorkflowEntrypoint\b/.test(source)) return [];
+      if (/import\s*\{[^}]*\bWorkflowEntrypoint\b[^}]*\}\s*from\s*['"]cloudflare:workers['"]/.test(source)) return [];
+      return [`${path} extends WorkflowEntrypoint but does not import WorkflowEntrypoint from cloudflare:workers.`];
+    });
+}
+
 function routeOwnedSurfaces(task: Task) {
   return effectiveOwnedSurfaces(task)
     .map(concreteOwnedSurfacePath)
@@ -6516,6 +6530,7 @@ export function implementationDeterministicResults({
   const missingSurfaces = missingOwnedSurfacePaths(repoPath, task);
   const unreplacedStubs = unreplacedPreflightStubPaths(repoPath, task);
   const workflowIntegrationGaps = workflowStepIntegrationGaps(repoPath, task);
+  const workflowEntrypointGaps = workflowEntrypointImportGaps(repoPath, task);
   const routeMiddlewareGaps = routeMiddlewareBypassGaps(repoPath, task);
   const aiBindingGaps = workersAiBindingGaps(repoPath, task);
   const workerConfigGaps = workerConfigHygieneGaps(repoPath, task);
@@ -6562,6 +6577,12 @@ export function implementationDeterministicResults({
       check: 'workflow_step_integrated',
       passed: workflowIntegrationGaps.length === 0,
       reason: workflowIntegrationGaps.length ? workflowIntegrationGaps.join('; ') : 'ok',
+    },
+    {
+      id: 'workflow_entrypoint_imported',
+      check: 'workflow_entrypoint_imported',
+      passed: workflowEntrypointGaps.length === 0,
+      reason: workflowEntrypointGaps.length ? workflowEntrypointGaps.join('; ') : 'ok',
     },
     {
       id: 'route_middleware_layering',
@@ -6626,6 +6647,7 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'owned_surfaces_present',
         'preflight_stubs_replaced',
         'workflow_step_integrated',
+        'workflow_entrypoint_imported',
         'route_middleware_layering',
         'middleware_layering',
         'workers_ai_binding_required',

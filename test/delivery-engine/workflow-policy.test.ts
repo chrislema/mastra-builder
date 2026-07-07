@@ -87,6 +87,7 @@ import {
   typeScriptDiagnosticsFromText,
   unreplacedPreflightStubPaths,
   verificationWithAcceptanceGaps,
+  workflowEntrypointImportGaps,
   workflowStepIntegrationGaps,
   workersAiBindingGaps,
   workerConfigHygieneGaps,
@@ -4155,6 +4156,27 @@ test('JavaScript workflow step implementation must be integrated into WeeklyWork
   );
 
   assert.deepEqual(workflowStepIntegrationGaps(repoPath, task), []);
+});
+
+test('WorkflowEntrypoint implementations import Cloudflare Workflow base class', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workflow-entrypoint-import-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/workflow.js'),
+    'export class WeeklyWorkflow extends WorkflowEntrypoint { async run() {} }\n',
+  );
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/workflow.js'] }]).tasks;
+
+  assert.deepEqual(workflowEntrypointImportGaps(repoPath, task), [
+    'src/workflow.js extends WorkflowEntrypoint but does not import WorkflowEntrypoint from cloudflare:workers.',
+  ]);
+
+  writeFileSync(
+    join(repoPath, 'src/workflow.js'),
+    "import { WorkflowEntrypoint } from 'cloudflare:workers';\nexport class WeeklyWorkflow extends WorkflowEntrypoint { async run() {} }\n",
+  );
+
+  assert.deepEqual(workflowEntrypointImportGaps(repoPath, task), []);
 });
 
 test('engine policy mismatch stops retries for normalized in-boundary paths', () => {
