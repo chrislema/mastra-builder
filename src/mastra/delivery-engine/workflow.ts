@@ -1377,7 +1377,7 @@ function taskOwnsStaticAssetWiringSurface(task: Task) {
 }
 
 function taskOwnsRouteModule(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes(?:\/|[A-Z]).*|[A-Za-z0-9_-]*(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes(?:\/.*|[A-Z].*)?|[A-Za-z0-9_-]*(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsSessionRoute(task: Task) {
@@ -2043,11 +2043,66 @@ function finalGeneratedSliceTaskId(tasks: Task[], taskId: string) {
   return [...family].sort((left, right) => generatedSliceRank(right.id) - generatedSliceRank(left.id))[0]?.id ?? taskId;
 }
 
-function sessionBoundaryDependencyId(tasks: Task[], task: Task) {
+function generatedSliceFamilyTasks(tasks: Task[], task: Task) {
+  const familyId = generatedSliceFamilyId(task.id);
+  return tasks.filter((candidate) => generatedSliceFamilyId(candidate.id) === familyId);
+}
+
+function taskFamilyIncludesWorkflowEntrypointWork(tasks: Task[], task: Task) {
+  return generatedSliceFamilyTasks(tasks, task).some(
+    (candidate) => taskOwnsWorkflowExecutionSurface(candidate) || taskOwnsSchedulerSurface(candidate),
+  );
+}
+
+function taskHasFinalWorkerEntrypointContract(task: Task) {
+  return task.acceptance_criteria.some((criterion) => /^src\/index\.js is the final Worker module entrypoint/i.test(criterion));
+}
+
+function taskCanOwnFinalWorkerEntrypoint(tasks: Task[], task: Task) {
+  if (!taskOwnsIndexSurface(task) || taskIsRootScaffold(task)) return false;
+  return task.id.startsWith('E99-worker-entrypoint-integration') || taskFamilyIncludesWorkflowEntrypointWork(tasks, task);
+}
+
+function finalWorkerEntrypointCriterion(criterion: string) {
+  return (
+    /^src\/index\.js is the final Worker module entrypoint/i.test(criterion) ||
+    /^src\/index\.js delegates fetch handling to src\/router\.js/i.test(criterion) ||
+    /^src\/index\.js delegates scheduled handling to src\/scheduler\.js/i.test(criterion) ||
+    /^src\/index\.js exports the real WeeklyWorkflow implementation/i.test(criterion)
+  );
+}
+
+function withoutFinalWorkerEntrypointDrift(task: Task, finalDependencyIds: Set<string>) {
+  if (!taskOwnsIndexSurface(task) || taskIsRootScaffold(task)) return task;
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !finalWorkerEntrypointCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !finalWorkerEntrypointCriterion(criterion),
+  );
+  const depends_on = task.depends_on.filter((dependency) => !finalDependencyIds.has(dependency));
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    depends_on.length === task.depends_on.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    depends_on,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function preEntrypointBoundaryDependencyId(tasks: Task[], task: Task) {
   const finalTaskId = finalGeneratedSliceTaskId(tasks, task.id);
   const finalTask = tasks.find((candidate) => candidate.id === finalTaskId);
   if (!finalTask || finalTask.id === task.id) return task.id;
-  if (taskOwnsRouteModule(finalTask) || taskOwnsPublicAppSurface(finalTask)) return task.id;
+  if (taskOwnsRouteModule(finalTask) || taskOwnsPublicAppSurface(finalTask) || taskOwnsIndexSurface(finalTask)) {
+    return task.id;
+  }
   return finalTask.id;
 }
 
@@ -2077,7 +2132,7 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
     ? [...scaffoldRootTasks, ...safeAuthTasks, ...routerTasks]
     : [...scaffoldRootTasks, ...routerTasks];
   const sessionDependencyIds = Array.from(
-    new Set(sessionDependencyTasks.map((task) => sessionBoundaryDependencyId(tasks, task))),
+    new Set(sessionDependencyTasks.map((task) => preEntrypointBoundaryDependencyId(tasks, task))),
   );
 
   if (sessionTasks.length) {
@@ -2137,7 +2192,7 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   if (alreadyHasIntegration) {
     let changed = deduped.changed;
     const expectedDependencies = Array.from(
-      new Set([...routerTasks, ...routeTasks].map((task) => finalGeneratedSliceTaskId(tasks, task.id))),
+      new Set([...routerTasks, ...routeTasks].map((task) => preEntrypointBoundaryDependencyId(tasks, task))),
     );
     tasks = tasks.map((task) => {
       if (!taskHasRouteIntegrationContract(task)) return task;
@@ -2177,7 +2232,7 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
     /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/.test(path),
   ) ?? 'src/router.js';
   const depends_on = Array.from(
-    new Set([...routerTasks, ...routeTasks].map((task) => finalGeneratedSliceTaskId(tasks, task.id))),
+    new Set([...routerTasks, ...routeTasks].map((task) => preEntrypointBoundaryDependencyId(tasks, task))),
   );
   const routeNames = routeReachabilityNames(tasks, routeTasks);
 
@@ -2214,8 +2269,8 @@ function withWorkerEntrypointIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) 
   const dependencies = Array.from(
     new Set([
       integrationTask.id,
-      ...workflowTasks.map((task) => finalGeneratedSliceTaskId(tasks, task.id)),
-      ...schedulerTasks.map((task) => finalGeneratedSliceTaskId(tasks, task.id)),
+      ...workflowTasks.map((task) => preEntrypointBoundaryDependencyId(tasks, task)),
+      ...schedulerTasks.map((task) => preEntrypointBoundaryDependencyId(tasks, task)),
     ]),
   );
   const criteria = [
@@ -2224,22 +2279,30 @@ function withWorkerEntrypointIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) 
     'src/index.js delegates scheduled handling to src/scheduler.js so scheduled triggers create queued run records and start WEEKLY_WORKFLOW without duplicating workflow execution logic.',
     'src/index.js exports the real WeeklyWorkflow implementation with the configured class name "WeeklyWorkflow" and delegates execution to the workflow module rather than leaving the scaffold stub in place.',
   ];
+  const finalDependencyIds = new Set(dependencies);
+  const finalIndexTasks = nonRootIndexTasks.filter((task) => taskCanOwnFinalWorkerEntrypoint(tasks, task));
 
   if (nonRootIndexTasks.length) {
     let changed = false;
     let nextTasks = tasks.map((task) => {
       if (!nonRootIndexTasks.some((indexTask) => indexTask.id === task.id)) return task;
+      if (!finalIndexTasks.some((indexTask) => indexTask.id === task.id)) {
+        const sanitized = withoutFinalWorkerEntrypointDrift(task, finalDependencyIds);
+        if (sanitized !== task) changed = true;
+        return sanitized;
+      }
       const withDependencies = appendDependencies(task, dependencies);
       const withCriteria = appendTaskAcceptanceCriteria(withDependencies, criteria);
       if (withCriteria !== task) changed = true;
       return withCriteria;
     });
-    for (const task of nonRootIndexTasks) {
+    for (const task of finalIndexTasks) {
       const moved = moveTaskAfterDependencies(nextTasks, task.id);
       if (moved.changed) changed = true;
       nextTasks = moved.tasks;
     }
-    return { tasks: nextTasks, changed };
+    if (finalIndexTasks.length) return { tasks: nextTasks, changed };
+    tasks = nextTasks;
   }
 
   const entryTask = {
@@ -2330,8 +2393,8 @@ function appendDependencies(task: Task, dependencies: string[]) {
 function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
   const sanitized = withoutCyclicDependencies(tasks);
   tasks = sanitized.tasks;
-  const routerTaskIds = new Set(routerBoundaryProviderTasks(tasks).map((task) => finalGeneratedSliceTaskId(tasks, task.id)));
-  const sessionTaskIds = new Set(tasks.filter(taskOwnsSessionRoute).map((task) => finalGeneratedSliceTaskId(tasks, task.id)));
+  const routerTaskIds = new Set(routerBoundaryProviderTasks(tasks).map((task) => preEntrypointBoundaryDependencyId(tasks, task)));
+  const sessionTaskIds = new Set(tasks.filter(taskOwnsSessionRoute).map((task) => preEntrypointBoundaryDependencyId(tasks, task)));
   const profileSummaryTaskIds = new Set(tasks.filter(taskOwnsProfileSummarySurface).map((task) => finalGeneratedSliceTaskId(tasks, task.id)));
   const integrationTask = tasks.find(taskHasRouteIntegrationContract);
   let changed = sanitized.changed;
@@ -2357,6 +2420,7 @@ function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
       !taskIsRootScaffold(task) &&
       taskOwnsIndexSurface(task) &&
       !taskOwnsRouterSurface(task) &&
+      taskHasFinalWorkerEntrypointContract(task) &&
       integrationTask &&
       task.id !== integrationTask.id
     ) {

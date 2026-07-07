@@ -1460,7 +1460,7 @@ test('task plan normalization keeps existing auth session before generated route
 
   assert.deepEqual(byId['E20-auth-session'].depends_on, ['T12']);
   assert.deepEqual(byId['T12-part-2'].depends_on, ['T12', 'E20-auth-session']);
-  assert.deepEqual(byId['T12-part-3'].depends_on, ['T12-part-2', 'E20-auth-session']);
+  assert.deepEqual(byId['T12-part-3'].depends_on, ['T12-part-2', 'T12', 'E20-auth-session']);
   assert.deepEqual(byId.T13.depends_on, ['T12-part-3', 'E20-auth-session', 'E98-route-integration']);
 });
 
@@ -1778,6 +1778,126 @@ test('task plan normalization defaults endpoint contracts for sliced route owner
   assert.doesNotMatch(runCriteria, /GET \/latest returns/);
   assert.match(latestCriteria, /GET \/latest returns the latest completed transcript/);
   assert.doesNotMatch(latestCriteria, /POST \/runs creates/);
+});
+
+test('task plan normalization keeps session and route integration before generated index slices', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
+    },
+    {
+      id: 'T02',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/domain.js', 'src/http.js'],
+    },
+    {
+      id: 'T06',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/auth.js', 'src/routes.js'],
+    },
+    {
+      id: 'T06-part-2',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/index.js'],
+    },
+    {
+      id: 'T07',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/profileHandlers.js'],
+    },
+    {
+      id: 'T08',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/runHandlers.js', 'src/transcriptHandlers.js'],
+    },
+    {
+      id: 'T14',
+      owner: 'designer',
+      depends_on: ['T07', 'T08'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+
+  assert.ok(byId['E20-auth-session']);
+  assert.ok(byId['E98-route-integration']);
+  assert.ok(byId['E20-auth-session'].depends_on.includes('T06'));
+  assert.ok(!byId['E20-auth-session'].depends_on.includes('T06-part-2'));
+  assert.ok(byId['E98-route-integration'].depends_on.includes('T06'));
+  assert.ok(!byId['E98-route-integration'].depends_on.includes('T06-part-2'));
+});
+
+test('task plan normalization attaches final entrypoint contracts only to workflow index slices', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
+    },
+    {
+      id: 'T02',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/domain.js', 'src/http.js'],
+    },
+    {
+      id: 'T06',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/auth.js', 'src/routes.js'],
+    },
+    {
+      id: 'T06-part-2',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/index.js'],
+      acceptance_criteria: [
+        'src/index.js is the final Worker module entrypoint after router, scheduler, and workflow modules exist.',
+        'src/index.js delegates scheduled handling to src/scheduler.js so scheduled triggers create queued run records and start WEEKLY_WORKFLOW without duplicating workflow execution logic.',
+      ],
+    },
+    {
+      id: 'T07',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/profileHandlers.js'],
+    },
+    {
+      id: 'T08',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/runHandlers.js'],
+    },
+    {
+      id: 'T13',
+      depends_on: ['T08'],
+      owned_surfaces: ['src/workflows/weeklyWorkflow.js', 'src/scheduler.js'],
+    },
+    {
+      id: 'T13-part-2',
+      depends_on: ['T13'],
+      owned_surfaces: ['src/index.js'],
+    },
+    {
+      id: 'T14',
+      owner: 'designer',
+      depends_on: ['T07', 'T08'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const earlyIndexCriteria = byId['T06-part-2'].acceptance_criteria.join('\n');
+  const finalIndexCriteria = byId['T13-part-2'].acceptance_criteria.join('\n');
+
+  assert.doesNotMatch(earlyIndexCriteria, /final Worker module entrypoint/);
+  assert.doesNotMatch(earlyIndexCriteria, /delegates scheduled handling to src\/scheduler\.js/);
+  assert.ok(!byId['T06-part-2'].depends_on.includes('E98-route-integration'));
+  assert.ok(!byId['T06-part-2'].depends_on.includes('T13'));
+  assert.match(finalIndexCriteria, /final Worker module entrypoint/);
+  assert.match(finalIndexCriteria, /exports the real WeeklyWorkflow implementation/);
+  assert.ok(byId['T13-part-2'].depends_on.includes('E98-route-integration'));
+  assert.ok(byId['T13-part-2'].depends_on.includes('T13'));
 });
 
 test('task plan normalization canonicalizes no-bookmark status and workflow export contracts', () => {
