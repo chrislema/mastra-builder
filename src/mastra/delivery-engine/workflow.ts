@@ -866,6 +866,15 @@ function normalizeScaffoldRootTask(repoPath: string, task: Task, includeWorkerCo
     );
   }
 
+  if (ownsJavaScriptInputSurface(task) && !ownsTypeScriptInputSurface(task)) {
+    if (!ownsExactSurface(task, 'scripts/check-js.js')) {
+      ownedSurfaces.push('scripts/check-js.js');
+    }
+    acceptanceCriteria.push(
+      'package.json includes scripts.typecheck exactly "node scripts/check-js.js" and scripts/check-js.js validates current repo JavaScript files with node --check without adding TypeScript or a no-op gate.',
+    );
+  }
+
   return {
     ...task,
     owned_surfaces: Array.from(new Set(ownedSurfaces)),
@@ -877,6 +886,10 @@ function workerSourceSurfaceIsTypeScript(surface: string) {
   const normalized = surface.toLowerCase();
   if (/\.d\.(?:ts|mts|cts)$/.test(normalized)) return false;
   return /\.(?:ts|tsx|mts|cts)$/.test(normalized);
+}
+
+function workerSourceSurfaceIsJavaScript(surface: string) {
+  return /\.(?:js|mjs|cjs)$/.test(surface.toLowerCase());
 }
 
 function workerSourceSurfaceIsJavaScriptOrTypeScript(surface: string) {
@@ -894,6 +907,16 @@ function workerSourceSurfaceIsConcrete(surface: string) {
 
 function ownsWorkerSourceInputSurface(task: Task) {
   return normalizedOwnedSurfaces(task).some(workerSourceSurfaceIsConcrete);
+}
+
+function ownsJavaScriptInputSurface(task: Task) {
+  return normalizedOwnedSurfaces(task).some(
+    (surface) =>
+      surface === 'src/**' ||
+      surface === 'workers/**' ||
+      (surface.startsWith('src/') || surface.startsWith('workers/') || surface.startsWith('worker.')) &&
+        workerSourceSurfaceIsJavaScript(surface),
+  );
 }
 
 function ownsTypeScriptInputSurface(task: Task) {
@@ -1337,6 +1360,155 @@ export function configSchemaTaskSplitHygiene(taskPlan: TaskPlan) {
   };
 }
 
+function taskOwnsPathMatching(task: Task, pattern: RegExp) {
+  return taskOwnedBoundaryPaths(task).some((path) => pattern.test(path));
+}
+
+function taskOwnsRouterSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:http\/)?router\.[cm]?[jt]s$/);
+}
+
+function taskOwnsRouteModule(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/routes(?:\/|[A-Z]).*\.[cm]?[jt]s$/);
+}
+
+function taskOwnsProfileRoute(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*profiles?|routesProfiles)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsProfileRepositorySurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:storage\/profiles|profileRepository)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsAuthSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/auth\.[cm]?[jt]s$/);
+}
+
+function taskOwnsPublicAppSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^public\/(?:index\.html|app\.js)$/);
+}
+
+function taskOwnsIndexSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/index\.[cm]?[jt]s$/);
+}
+
+function taskOwnsReadme(task: Task) {
+  return taskOwnedBoundaryPaths(task).includes('README.md');
+}
+
+function appendTaskAcceptanceCriteria(task: Task, criteria: string[]) {
+  const acceptance_criteria = Array.from(new Set([...task.acceptance_criteria, ...criteria]));
+  return acceptance_criteria.length === task.acceptance_criteria.length ? task : { ...task, acceptance_criteria };
+}
+
+function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
+  const routeTasks = tasks.filter(taskOwnsRouteModule);
+  const routerTasks = tasks.filter(taskOwnsRouterSurface);
+  if (!routeTasks.length || !routerTasks.length) return { tasks, changed: false };
+
+  const alreadyHasIntegration = tasks.some((task) =>
+    taskOwnsRouterSurface(task) &&
+    task.acceptance_criteria.some((criterion) => /reachable through (?:src\/)?router|all declared endpoints/i.test(criterion)),
+  );
+  if (alreadyHasIntegration) return { tasks, changed: false };
+
+  const routerSurface = taskOwnedBoundaryPaths(routerTasks[routerTasks.length - 1]).find((path) =>
+    /^src\/(?:http\/)?router\.[cm]?[jt]s$/.test(path),
+  ) ?? 'src/router.js';
+  const depends_on = Array.from(new Set([...routerTasks, ...routeTasks].map((task) => task.id)));
+
+  return {
+    tasks: [
+      ...tasks,
+      {
+        id: uniqueTaskId({ ...taskPlan, tasks }, 'E98-route-integration'),
+        owner: 'engineer' as const,
+        deliverable: 'Wire generated API route modules through the Worker router after all route modules exist.',
+        depends_on,
+        acceptance_criteria: [
+          `${routerSurface} is the single API route registration boundary after feature route modules exist.`,
+          `${routerSurface} makes profile, run, latest, regenerate, health, and static asset fallback routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`,
+          'Every declared API endpoint is reachable through the router after this task completes.',
+        ],
+        owned_surfaces: [routerSurface],
+      },
+    ],
+    changed: true,
+  };
+}
+
+export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): TaskPlan {
+  let changed = false;
+  const indexOwnerCount = taskPlan.tasks.filter(taskOwnsIndexSurface).length;
+  const hasAuthSurface = taskPlan.tasks.some(taskOwnsAuthSurface);
+  const hasProfileState = taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
+
+  let tasks = taskPlan.tasks.map((task) => {
+    const criteria: string[] = [];
+
+    if (taskOwnsAuthSurface(task)) {
+      criteria.push(
+        'src/auth.js defines the protected endpoint credential contract as Authorization: Bearer <ADMIN_TOKEN>, rejects missing or invalid credentials with structured 401/403 responses, and never reads committed or static secrets.',
+      );
+    }
+
+    if (hasAuthSurface && taskOwnsPublicAppSurface(task)) {
+      criteria.push(
+        'public/app.js collects the admin token at runtime for protected profile, run, activation, and regeneration calls; sends Authorization: Bearer <ADMIN_TOKEN>; handles missing or invalid token responses; and never hardcodes secrets in public files.',
+      );
+    }
+
+    if (taskOwnsD1MigrationFile(task) && hasProfileState) {
+      criteria.push(
+        'migrations/0001_schema.sql enforces at most one active profile_artifacts row per kind with a D1/SQLite partial unique index where is_active = 1 and constrains valid profile kinds.',
+      );
+    }
+
+    if (taskOwnsProfileRepositorySurface(task)) {
+      criteria.push(
+        'Profile storage activation runs in a D1 transaction that deactivates the previous active profile for the same kind and activates the selected profile atomically.',
+      );
+    }
+
+    if (taskOwnsProfileRoute(task)) {
+      criteria.push(
+        'Profile upload and activation routes use the profile repository transaction for active-profile state changes instead of duplicating active-state authority in route code.',
+      );
+    }
+
+    if (taskOwnsRouterSurface(task)) {
+      criteria.push(
+        'The router surface remains the single API route registration boundary; feature routes must be registered through the router rather than dispatched directly from src/index.js.',
+      );
+    }
+
+    if (indexOwnerCount > 1 && taskOwnsIndexSurface(task)) {
+      criteria.push(
+        'src/index.js changes preserve the existing default fetch handler, scheduled handler wiring, static asset fallback path, and WeeklyWorkflow export introduced by earlier tasks.',
+      );
+    }
+
+    if (taskOwnsReadme(task)) {
+      criteria.push(
+        'README.md documents the Authorization: Bearer <ADMIN_TOKEN> flow for protected endpoints and states that ADMIN_TOKEN is a Cloudflare secret that must not be committed or embedded in public assets.',
+      );
+    }
+
+    if (!criteria.length) return task;
+    const next = appendTaskAcceptanceCriteria(task, criteria);
+    if (next !== task) changed = true;
+    return next;
+  });
+
+  const withIntegration = withRouteIntegrationTask(taskPlan, tasks);
+  if (withIntegration.changed) {
+    changed = true;
+    tasks = withIntegration.tasks;
+  }
+
+  return changed ? { ...taskPlan, tasks } : taskPlan;
+}
+
 function taskPlanHasOperatorDocumentation(taskPlan: TaskPlan) {
   return taskPlan.tasks.some((task) => taskOwnedBoundaryPaths(task).includes('README.md'));
 }
@@ -1619,9 +1791,11 @@ function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): Tas
   return normalizeTaskPlanOperatorDocumentation(
     normalizeTaskPlanGeneratedSliceDependencies(
       normalizeTaskPlanLargeStorageTasks(
-        normalizeTaskPlanConfigSchemaTasks(
-          normalizeTaskPlanRoleBoundaries(
-            normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+        normalizeTaskPlanCloudflareWorkerContracts(
+          normalizeTaskPlanConfigSchemaTasks(
+            normalizeTaskPlanRoleBoundaries(
+              normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
+            ),
           ),
         ),
       ),

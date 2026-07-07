@@ -35,6 +35,7 @@ import {
   normalizeTaskPlanConfigSchemaTasks,
   normalizeTaskPlanGeneratedSliceDependencies,
   normalizeTaskPlanOperatorDocumentation,
+  normalizeTaskPlanCloudflareWorkerContracts,
   normalizeReadoutSafeAdapterAmbiguities,
   missingOwnedSurfacePaths,
   normalizeTaskPlanProfileContractDependencies,
@@ -526,9 +527,10 @@ test('bare Worker project plans normalize root scaffold surfaces and static asse
 
   const normalized = normalizeTaskPlanScaffoldDependencies(repoPath, plan);
 
-  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'src/index.js', '.gitignore']);
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'src/index.js', '.gitignore', 'scripts/check-js.js']);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\.delivery/);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\*\.cpuprofile/);
+  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /scripts\.typecheck exactly "node scripts\/check-js\.js"/);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
   assert.equal(projectScaffoldHygiene(repoPath, normalized).passed, false);
   assert.match(projectScaffoldHygiene(repoPath, normalized).reason, /root task/);
@@ -549,8 +551,15 @@ test('bare Worker project plans can auto-add missing root Wrangler config', () =
 
   const normalized = normalizeTaskPlanScaffoldDependencies(repoPath, plan);
 
-  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'src/index.js', '.gitignore', 'wrangler.jsonc']);
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, [
+    'package.json',
+    'src/index.js',
+    '.gitignore',
+    'wrangler.jsonc',
+    'scripts/check-js.js',
+  ]);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /Wrangler validation can run from the first build slice/);
+  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /node --check/);
   assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
   assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
 });
@@ -1143,6 +1152,74 @@ test('task plan normalization splits Worker config and D1 schema tasks', () => {
   assert.deepEqual(normalized.tasks[1].owned_surfaces, ['migrations/0001_schema.sql']);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1-d1-schema']);
   assert.deepEqual(configSchemaTaskSplitHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('task plan normalization adds Cloudflare Worker auth, profile, router, and index contracts', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'src/index.js', 'wrangler.jsonc'],
+    },
+    {
+      id: 'T02',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/auth.js', 'src/router.js'],
+    },
+    {
+      id: 'T03',
+      depends_on: ['T02'],
+      owned_surfaces: ['migrations/0001_schema.sql'],
+    },
+    {
+      id: 'T04',
+      depends_on: ['T03'],
+      owned_surfaces: ['src/storage/profiles.js'],
+    },
+    {
+      id: 'T05',
+      depends_on: ['T04'],
+      owned_surfaces: ['src/routes/profiles.js'],
+    },
+    {
+      id: 'T06',
+      depends_on: ['T05'],
+      owned_surfaces: ['src/routes/runs.js', 'src/routes/latest.js'],
+    },
+    {
+      id: 'T07',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/scheduler.js', 'src/index.js'],
+    },
+    {
+      id: 'T08',
+      depends_on: ['T06'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+    },
+    {
+      id: 'T09',
+      depends_on: ['T08'],
+      owned_surfaces: ['README.md'],
+    },
+  ]);
+  plan.tasks[7].owner = 'designer';
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const criteria = (id: string) => byId[id].acceptance_criteria.join('\n');
+  const integration = normalized.tasks.find((task) => task.id === 'E98-route-integration');
+
+  assert.match(criteria('T02'), /Authorization: Bearer <ADMIN_TOKEN>/);
+  assert.match(criteria('T03'), /partial unique index where is_active = 1/);
+  assert.match(criteria('T04'), /D1 transaction/);
+  assert.match(criteria('T05'), /repository transaction/);
+  assert.match(criteria('T07'), /preserve the existing default fetch handler/);
+  assert.match(criteria('T08'), /collects the admin token at runtime/);
+  assert.match(criteria('T09'), /ADMIN_TOKEN is a Cloudflare secret/);
+  assert.ok(integration);
+  assert.deepEqual(integration?.owned_surfaces, ['src/router.js']);
+  assert.deepEqual(integration?.depends_on, ['T02', 'T05', 'T06']);
+  assert.match(integration?.acceptance_criteria.join('\n') ?? '', /Every declared API endpoint is reachable through the router/);
 });
 
 test('task plan normalization appends operator documentation task', () => {
