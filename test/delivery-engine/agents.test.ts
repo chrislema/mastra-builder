@@ -7,6 +7,15 @@ import {
   deliverySupervisorAgent,
   deliveryWorkingMemorySchema,
 } from '../../src/mastra/delivery-engine/agents.ts';
+import {
+  architectModel,
+  deliveryModel,
+  designerModel,
+  engineerModel,
+  judgeModel,
+  plannerModel,
+  testerModel,
+} from '../../src/mastra/delivery-engine/models.ts';
 
 test('delivery agents include a native supervisor surface', () => {
   assert.equal(deliveryAgents.deliverySupervisor, deliverySupervisorAgent);
@@ -21,6 +30,17 @@ test('delivery agents publish a typed repoPath request context contract', () => 
   for (const agent of Object.values(deliveryAgents)) {
     assert.equal(agent.requestContextSchema, deliveryAgentRequestContextSchema);
   }
+});
+
+test('delivery agents use role-specific model slots', () => {
+  assert.equal((deliveryAgents.planner as any).model, plannerModel);
+  assert.equal((deliveryAgents.architect as any).model, architectModel);
+  assert.equal((deliveryAgents.engineer as any).model, engineerModel);
+  assert.equal((deliveryAgents.designer as any).model, designerModel);
+  assert.equal((deliveryAgents.tester as any).model, testerModel);
+  assert.equal((deliveryAgents.deployer as any).model, deliveryModel);
+  assert.equal((deliveryAgents.deliverySupervisor as any).model, deliveryModel);
+  assert.equal((deliveryAgents.judge as any).model, judgeModel);
 });
 
 test('delivery agents share a thread-scoped working memory contract', async () => {

@@ -5,10 +5,33 @@ const configuredModel = (env: NodeJS.ProcessEnv, name: string, fallback: string)
 export const configuredDeliveryModel = (env: NodeJS.ProcessEnv = process.env) =>
   configuredModel(env, 'DELIVERY_MODEL', defaultDeliveryModel);
 
+export const configuredPlanningModel = (env: NodeJS.ProcessEnv = process.env) =>
+  configuredModel(env, 'DELIVERY_PLANNING_MODEL', configuredDeliveryModel(env));
+
+export const configuredArchitectModel = (env: NodeJS.ProcessEnv = process.env) =>
+  configuredModel(env, 'DELIVERY_ARCHITECT_MODEL', configuredPlanningModel(env));
+
+export const configuredExecutionModel = (env: NodeJS.ProcessEnv = process.env) =>
+  configuredModel(env, 'DELIVERY_EXECUTION_MODEL', configuredDeliveryModel(env));
+
+export const configuredEngineerModel = (env: NodeJS.ProcessEnv = process.env) =>
+  configuredModel(env, 'DELIVERY_ENGINEER_MODEL', configuredExecutionModel(env));
+
+export const configuredDesignerModel = (env: NodeJS.ProcessEnv = process.env) =>
+  configuredModel(env, 'DELIVERY_DESIGNER_MODEL', configuredExecutionModel(env));
+
+export const configuredTesterModel = (env: NodeJS.ProcessEnv = process.env) =>
+  configuredModel(env, 'DELIVERY_TESTER_MODEL', configuredExecutionModel(env));
+
 export const configuredJudgeModel = (env: NodeJS.ProcessEnv = process.env) =>
   configuredModel(env, 'DELIVERY_JUDGE_MODEL', configuredDeliveryModel(env));
 
 export const deliveryModel = configuredDeliveryModel();
+export const plannerModel = configuredPlanningModel();
+export const architectModel = configuredArchitectModel();
+export const engineerModel = configuredEngineerModel();
+export const designerModel = configuredDesignerModel();
+export const testerModel = configuredTesterModel();
 export const judgeModel = configuredJudgeModel();
 export const deliveryStructuredOutputOptions = {
   jsonPromptInjection: true,
@@ -48,6 +71,11 @@ export function requiredEnvVarsForModel(model: string) {
 export function missingEnvVarsForDeliveryModels(env: NodeJS.ProcessEnv = process.env) {
   const required = new Set([
     ...requiredEnvVarsForModel(configuredDeliveryModel(env)),
+    ...requiredEnvVarsForModel(configuredPlanningModel(env)),
+    ...requiredEnvVarsForModel(configuredArchitectModel(env)),
+    ...requiredEnvVarsForModel(configuredEngineerModel(env)),
+    ...requiredEnvVarsForModel(configuredDesignerModel(env)),
+    ...requiredEnvVarsForModel(configuredTesterModel(env)),
     ...requiredEnvVarsForModel(configuredJudgeModel(env)),
   ]);
   return [...required].filter((name) => !isConfiguredEnvValue(env[name]));
@@ -60,7 +88,7 @@ export function assertDeliveryModelEnvironment(env: NodeJS.ProcessEnv = process.
   throw new Error(
     [
       `Delivery workflow requires ${missing.join(', ')} for the configured delivery models.`,
-      `Delivery model: ${configuredDeliveryModel(env)}. Judge model: ${configuredJudgeModel(env)}.`,
+      `Planning model: ${configuredPlanningModel(env)}. Architect model: ${configuredArchitectModel(env)}. Execution model: ${configuredExecutionModel(env)}. Judge model: ${configuredJudgeModel(env)}.`,
       'Set it in your shell or in .env, then rerun npm run delivery:run.',
     ].join(' '),
   );

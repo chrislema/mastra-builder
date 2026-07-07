@@ -14,7 +14,15 @@ import {
   deliveryReviewWorkflow,
   deliveryWorkflow,
 } from './workflow';
-import { deliveryModel, judgeModel } from './models';
+import {
+  architectModel,
+  deliveryModel,
+  designerModel,
+  engineerModel,
+  judgeModel,
+  plannerModel,
+  testerModel,
+} from './models';
 
 const deliveryRoleSchema = z.enum(['planner', 'architect', 'engineer', 'designer', 'tester', 'deployer', 'judge', 'supervisor']);
 
@@ -102,7 +110,7 @@ export const plannerAgent = new Agent({
   name: 'Planner',
   description:
     'Turns product documents, specs, and user intent into dependency-aware task plans with acceptance criteria.',
-  model: deliveryModel,
+  model: plannerModel,
   instructions: `${sharedInstructions}
 # Planner Agent
 
@@ -185,7 +193,7 @@ export const architectAgent = new Agent({
   name: 'Architect',
   description:
     'Reviews plans and designs for boundaries, sequencing, blast radius, state authority, and structural risk.',
-  model: deliveryModel,
+  model: architectModel,
   instructions: `${sharedInstructions}
 # Architect Agent
 
@@ -248,7 +256,7 @@ export const engineerAgent = new Agent({
   name: 'Engineer',
   description:
     'Implements scoped standalone Cloudflare Workers tasks with minimal coherent changes and direct verification.',
-  model: deliveryModel,
+  model: engineerModel,
   instructions: `${sharedInstructions}
 # Engineer Agent
 
@@ -311,7 +319,7 @@ export const designerAgent = new Agent({
   name: 'Designer',
   description:
     'Implements frontend-heavy vanilla HTML/CSS/JS work with strong visual and interaction patterns.',
-  model: deliveryModel,
+  model: designerModel,
   instructions: `${sharedInstructions}
 # Designer Agent
 
@@ -346,7 +354,7 @@ export const testerAgent = new Agent({
   name: 'Tester',
   description:
     'Writes and runs tests, audits implementation wiring, collects evidence, and makes release-gate calls.',
-  model: deliveryModel,
+  model: testerModel,
   instructions: `${sharedInstructions}
 # Tester Agent
 

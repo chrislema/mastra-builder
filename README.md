@@ -29,8 +29,17 @@ The default weather scaffold has been removed.
 ## Run Locally
 
 Create `.env` from `.env.example` and set `OPENAI_API_KEY`. The default delivery and
-judge models are `openai/gpt-5.5`; Z.ai / GLM can still be selected per slot with
-`DELIVERY_MODEL` or `DELIVERY_JUDGE_MODEL`.
+judge models are `openai/gpt-5.5`. To test a smaller execution model while keeping
+planner/architect/judge on GPT 5.5, set:
+
+```shell
+ZHIPU_API_KEY=your-zai-api-key
+DELIVERY_EXECUTION_MODEL=zai-coding-plan/glm-5.2
+```
+
+You can also override individual slots with `DELIVERY_PLANNING_MODEL`,
+`DELIVERY_ARCHITECT_MODEL`, `DELIVERY_ENGINEER_MODEL`, `DELIVERY_DESIGNER_MODEL`,
+`DELIVERY_TESTER_MODEL`, and `DELIVERY_JUDGE_MODEL`.
 
 ```shell
 npm install
