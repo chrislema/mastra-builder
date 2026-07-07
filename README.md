@@ -1,10 +1,40 @@
-# Delivery Engine for Mastra
+# Mastra Builder for Cloudflare Workers
 
-This project is a Mastra-native port of the delivery engine ideas from
-`github.com/chrislema/claude-environments`. The Claude repo remains the Claude-specific
-implementation. This repo uses Mastra first-class pieces: agents, tools, workflow steps,
-workspace hooks, typed artifacts, deterministic checks, rubric aggregation, native scorers,
-working memory, and custom API routes.
+This project is a Mastra-native delivery harness for building Cloudflare Worker web
+applications and SaaS products. It is intentionally opinionated around standalone Workers,
+Worker Static Assets for vanilla HTML/CSS/JS frontends, Wrangler, D1, KV, R2, Durable
+Objects, Queues, Workers AI, and custom-domain-ready deployment paths. The default bias is
+Workers over Pages; Pages and Pages Functions are allowed only when the vision/spec
+documents explicitly call for them.
+
+The project takes inspiration from `github.com/chrislema/claude-environments`, but it is
+not a Claude wrapper and does not keep Claude-specific plugins, hooks, or commands. Those
+ideas have been translated into Mastra first-class citizens: registered role agents,
+native workflows, Mastra workspace hooks, delivery tools, processors, thread-scoped
+working memory, LibSQL storage, observability exporters, custom API routes, native
+scorers, datasets, eval gates, and human-in-the-loop suspend/resume.
+
+## First-Class Mastra + Cloudflare Shape
+
+The harness is designed to look and behave like an advanced Mastra project, not a prompt
+bundle that happens to run inside Mastra:
+
+- Native workflows split planning, review, build, per-task build execution, release gate,
+  and deployment into inspectable Mastra workflow surfaces.
+- Agents are registered with role-specific models, shared processors, `requestContext`
+  contracts, a repo-bound Mastra workspace, delivery tools, skills, and run-scoped memory.
+- Workspace hooks enforce role/task file boundaries, command policy, dependency-read
+  budget, write tracking, and event capture before and after tool calls.
+- Delivery state is portable in `.delivery/` and also mirrored into Mastra storage and
+  observability so Studio can inspect workflow runs, logs, traces, and terminal snapshots.
+- Scorers and eval suites are registered as native Mastra resources, with deterministic
+  gates for handoffs, rubric floors, pass rates, Cloudflare topology, binding hygiene,
+  service fit, sequencing, and Wrangler deployment hygiene.
+- Human input uses Mastra suspend/resume for planner blockers and production deployment
+  approval instead of ad hoc pauses.
+- Cloudflare guidance is encoded as task-plan gates, role instructions, skills, release
+  evidence, and eval fixtures so the builder produces Worker-first systems rather than
+  generic web apps.
 
 ## What Is Registered
 
