@@ -70,7 +70,7 @@ const workflowInputSchema = z.object({
   specPath: z.string().describe('Path to spec.md inside repoPath; relative paths are resolved under repoPath.'),
   maxRetries: z.number().int().min(0).default(2),
   deployMode: deliveryDeployModeSchema.describe('local/production target. mock/real remain supported aliases.'),
-  reviewMode: z.enum(['fast', 'thorough']).default('fast'),
+  reviewMode: z.enum(['fast', 'thorough']).default('thorough'),
 });
 
 const taskSchema = z.object({
@@ -390,7 +390,7 @@ const deliveryStageOutputSchema = workflowOutputSchema.extend({
   repoPath: z.string(),
   maxRetries: z.number().int().min(0),
   deployMode: z.enum(['local', 'production']),
-  reviewMode: z.enum(['fast', 'thorough']).default('fast'),
+  reviewMode: z.enum(['fast', 'thorough']).default('thorough'),
   sourcePolicy: sourcePolicySchema.optional(),
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),

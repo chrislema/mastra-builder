@@ -24,7 +24,7 @@ export const deliveryWorkflowRunInputSchema = z.object({
   specPath: z.string().min(1).default('spec.md').describe('Path to spec.md inside repoPath.'),
   maxRetries: z.coerce.number().int().min(0).default(2),
   deployMode: deliveryDeployModeSchema.describe('local/production target. mock/real remain supported aliases.'),
-  reviewMode: z.enum(['fast', 'thorough']).default('fast'),
+  reviewMode: z.enum(['fast', 'thorough']).default('thorough'),
   resourceId: z.string().min(1).optional().describe('Optional resource id for filtering persisted workflow runs.'),
   runId: z.string().min(1).optional().describe('Optional workflow run id for repeatable external orchestration.'),
   includeState: z.boolean().default(true).describe('Include native workflow state in the returned workflow result.'),

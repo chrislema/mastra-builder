@@ -293,7 +293,10 @@ test('delivery workflow async runner starts without waiting for completion', asy
 
   assert.equal(startCalled, false);
   assert.equal(startAsyncOptions?.inputData.repoPath, resolve('/tmp/delivery-target'));
+  assert.equal(startAsyncOptions?.inputData.reviewMode, 'thorough');
   assert.equal(startAsyncOptions?.requestContext.get('repoPath'), resolve('/tmp/delivery-target'));
+  assert.equal(startAsyncOptions?.tracingOptions.metadata.reviewMode, 'thorough');
+  assert.equal(startAsyncOptions?.tracingOptions.tags.includes('review:thorough'), true);
   assert.equal(response.status, 'started');
   assert.equal(response.runId, 'async-run');
 });
