@@ -9,6 +9,12 @@ import { deliveryApiRoutes } from './delivery-engine/routes';
 import { deliveryScorers } from './delivery-engine/scorers';
 import { deliveryStateTools } from './delivery-engine/tools';
 import {
+  deliveryMastraObservabilityServiceName,
+  deliveryMastraStorageId,
+  ensureLocalMastraStorageDirectory,
+  getDeliveryMastraStorageUrl,
+} from './config';
+import {
   deliveryBuildTaskWorkflow,
   deliveryBuildWorkflow,
   deliveryDeploymentWorkflow,
@@ -27,6 +33,9 @@ export {
   runDeliveryRegressionExperiment,
 } from './delivery-engine/evals';
 
+const deliveryMastraStorageUrl = getDeliveryMastraStorageUrl();
+ensureLocalMastraStorageDirectory(deliveryMastraStorageUrl);
+
 export const mastra = new Mastra({
   workflows: {
     deliveryWorkflow,
@@ -44,11 +53,11 @@ export const mastra = new Mastra({
   tools: deliveryStateTools,
   workspace: deliveryWorkspace,
   storage: new LibSQLStore({
-    id: "mastra-storage",
-    url: process.env.MASTRA_STORAGE_URL ?? "file:./mastra.db",
+    id: deliveryMastraStorageId,
+    url: deliveryMastraStorageUrl,
   }),
   logger: new ConsoleLogger({
-    name: 'Mastra',
+    name: 'Builders Delivery Engine',
     level: 'info',
   }),
   server: {
@@ -57,7 +66,7 @@ export const mastra = new Mastra({
   observability: new Observability({
     configs: {
       default: {
-        serviceName: 'mastra',
+        serviceName: deliveryMastraObservabilityServiceName,
         exporters: [
           new MastraStorageExporter(), // Persists observability events to Mastra Storage
           new MastraPlatformExporter(), // Sends observability events to Mastra Platform (if MASTRA_PLATFORM_ACCESS_TOKEN is set)

@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { SaveScorePayload, ScoreRowData } from '@mastra/core/evals';
 import { EntityType, SpanType } from '@mastra/core/observability';
+import {
+  deliveryMastraObservabilityServiceName,
+  legacyDeliveryMastraObservabilityServiceName,
+} from '../config';
 import { getDeliveryRunStatus, readDeliveryEvents, readDeliveryRun, type DeliveryRun } from './state';
 import type { DeliveryEvent } from './checks';
 
@@ -76,7 +80,10 @@ export type DeliveryStateSnapshot = {
 
 const deliverySource = 'delivery-engine';
 const deliveryExecutionSource = 'mastra-delivery';
-const deliveryServiceName = 'builders';
+const deliveryServiceName = deliveryMastraObservabilityServiceName;
+const deliveryReadableServiceNames = Array.from(
+  new Set([deliveryServiceName, legacyDeliveryMastraObservabilityServiceName]),
+);
 const deliveryWorkflowEntity = 'delivery-workflow';
 const deliveryScoreSource = 'delivery-rubric-judge';
 const mastraStorageMaxPageSize = 100;
@@ -790,18 +797,36 @@ export async function listDeliveryStateRecords({
   const normalizedPerPage = normalizePageSize(perPage);
 
   if (!store.listTraces && store.listLogs) {
-    const listed = await store.listLogs({
-      filters: {
-        // Query only durable cross-store columns; delivery-specific source checks happen in memory.
-        serviceName: deliveryServiceName,
-        ...(repoPath ? { resourceId: resolve(repoPath) } : {}),
+    const listedByService = await Promise.all(
+      deliveryReadableServiceNames.map((serviceName) =>
+        store.listLogs?.({
+          filters: {
+            // Query only durable cross-store columns; delivery-specific source checks happen in memory.
+            serviceName,
+            ...(repoPath ? { resourceId: resolve(repoPath) } : {}),
+          },
+          pagination: { page: normalizedPage, perPage: normalizedPerPage },
+          orderBy: { field: 'timestamp', direction: 'DESC' },
+        }),
+      ),
+    );
+    const listed = {
+      logs: listedByService.flatMap((result) => result?.logs ?? []),
+      pagination: {
+        page: normalizedPage,
+        perPage: normalizedPerPage,
+        hasMore: listedByService.some((result) => hasMorePages(result?.pagination)),
       },
-      pagination: { page: normalizedPage, perPage: normalizedPerPage },
-      orderBy: { field: 'timestamp', direction: 'DESC' },
-    });
+    };
     return {
       ...listed,
-      logs: listed.logs.filter((log) => isDeliveryStateLog(log, runId)),
+      logs: listed.logs
+        .filter((log) => isDeliveryStateLog(log, runId))
+        .sort(
+          (left, right) =>
+            toDate(right.timestamp, new Date().toISOString()).getTime() -
+            toDate(left.timestamp, new Date().toISOString()).getTime(),
+        ),
     };
   }
 
@@ -809,17 +834,29 @@ export async function listDeliveryStateRecords({
     throw new Error('Mastra observability storage does not support delivery state listing');
   }
 
-  const listed = await store.listTraces({
-    filters: {
-      source: deliverySource,
-      serviceName: deliveryServiceName,
-      entityType: EntityType.WORKFLOW_RUN,
-      ...(repoPath ? { resourceId: resolve(repoPath) } : {}),
-      ...(runId ? { runId } : {}),
+  const listedByService = await Promise.all(
+    deliveryReadableServiceNames.map((serviceName) =>
+      store.listTraces?.({
+        filters: {
+          source: deliverySource,
+          serviceName,
+          entityType: EntityType.WORKFLOW_RUN,
+          ...(repoPath ? { resourceId: resolve(repoPath) } : {}),
+          ...(runId ? { runId } : {}),
+        },
+        pagination: { page: normalizedPage, perPage: normalizedPerPage },
+        orderBy: { field: 'startedAt', direction: 'DESC' },
+      }),
+    ),
+  );
+  const listed = {
+    spans: listedByService.flatMap((result) => result?.spans ?? []),
+    pagination: {
+      page: normalizedPage,
+      perPage: normalizedPerPage,
+      hasMore: listedByService.some((result) => hasMorePages(result?.pagination)),
     },
-    pagination: { page: normalizedPage, perPage: normalizedPerPage },
-    orderBy: { field: 'startedAt', direction: 'DESC' },
-  });
+  };
   const spans = (
     await Promise.all(
       listed.spans.map(async (span) => {

@@ -5,6 +5,10 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { LibSQLStore } from '@mastra/libsql';
 import {
+  deliveryMastraObservabilityServiceName,
+  legacyDeliveryMastraObservabilityServiceName,
+} from '../../src/mastra/config.ts';
+import {
   buildDeliveryJudgmentScoreEvents,
   buildDeliveryJudgmentScorePayloads,
   buildDeliveryStatePersistenceLogs,
@@ -25,6 +29,11 @@ import {
   updateDeliveryTask,
   writeDeliveryArtifact,
 } from '../../src/mastra/delivery-engine/state.ts';
+
+const readableServiceNames = new Set([
+  deliveryMastraObservabilityServiceName,
+  legacyDeliveryMastraObservabilityServiceName,
+]);
 
 const createRepo = () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-observability-'));
@@ -52,6 +61,7 @@ test('delivery state persistence logs include a snapshot plus append-only events
   const snapshot = logs[0] as Record<string, any>;
   assert.equal(snapshot.source, 'delivery-engine');
   assert.equal(snapshot.executionSource, 'mastra-delivery');
+  assert.equal(snapshot.serviceName, deliveryMastraObservabilityServiceName);
   assert.equal(snapshot.entityType, 'workflow_run');
   assert.equal(snapshot.entityName, 'delivery-workflow');
   assert.equal(snapshot.resourceId, resolve(repoPath));
@@ -78,7 +88,7 @@ test('delivery state persistence writes and lists through the observability stor
     async listLogs({ filters, pagination, orderBy }) {
       assert.deepEqual(orderBy, { field: 'timestamp', direction: 'DESC' });
       assert.equal(filters?.source, undefined);
-      assert.equal(filters?.serviceName, 'builders');
+      assert.equal(readableServiceNames.has(String(filters?.serviceName)), true);
       return {
         logs: written.filter((log) => {
           if (filters?.serviceName && log.serviceName !== filters.serviceName) return false;
@@ -98,7 +108,7 @@ test('delivery state persistence writes and lists through the observability stor
 
   const summary = await persistDeliveryStateToObservability({ repoPath, store });
   written.push({
-    serviceName: 'builders',
+    serviceName: deliveryMastraObservabilityServiceName,
     resourceId: resolve(repoPath),
     runId: summary.runId,
     timestamp: new Date(),
@@ -123,7 +133,7 @@ test('delivery snapshot reads page past unrelated observability rows', async () 
     async listLogs({ filters, pagination, orderBy }) {
       assert.deepEqual(orderBy, { field: 'timestamp', direction: 'DESC' });
       assert.equal(filters?.source, undefined);
-      assert.equal(filters?.serviceName, 'builders');
+      assert.equal(readableServiceNames.has(String(filters?.serviceName)), true);
       assert.ok((pagination?.perPage ?? 0) <= 100);
 
       const page = pagination?.page ?? 0;
@@ -152,7 +162,7 @@ test('delivery snapshot reads page past unrelated observability rows', async () 
   const now = Date.now();
   written.push(
     ...Array.from({ length: 125 }, (_, index) => ({
-      serviceName: 'builders',
+      serviceName: deliveryMastraObservabilityServiceName,
       resourceId: resolve(repoPath),
       runId: `noise-${index}`,
       timestamp: new Date(now + 1000 + index),
@@ -176,7 +186,7 @@ test('delivery status reads prefer Mastra storage snapshots over the local proje
     },
     async listLogs({ filters }) {
       assert.equal(filters?.source, undefined);
-      assert.equal(filters?.serviceName, 'builders');
+      assert.equal(readableServiceNames.has(String(filters?.serviceName)), true);
       return {
         logs: written.filter((log) => {
           if (filters?.serviceName && log.serviceName !== filters.serviceName) return false;
@@ -194,6 +204,31 @@ test('delivery status reads prefer Mastra storage snapshots over the local proje
   const storedStatus = await readDeliveryRunStatusFromMastraStorage({ store, repoPath });
   assert.deepEqual(storedStatus?.tasks, ['T1:complete']);
   assert.equal(storedStatus?.status, 'complete');
+});
+
+test('delivery state listing keeps reading legacy service records', async () => {
+  const repoPath = createRepo();
+  const written: Record<string, any>[] = buildDeliveryStatePersistenceLogs(repoPath).logs.map((log) => ({
+    ...(log as Record<string, any>),
+    serviceName: legacyDeliveryMastraObservabilityServiceName,
+  }));
+  const store: DeliveryObservabilityStore = {
+    async listLogs({ filters }) {
+      assert.equal(readableServiceNames.has(String(filters?.serviceName)), true);
+      return {
+        logs: written.filter((log) => {
+          if (filters?.serviceName && log.serviceName !== filters.serviceName) return false;
+          if (filters?.resourceId && log.resourceId !== filters.resourceId) return false;
+          return true;
+        }),
+      };
+    },
+  };
+
+  const storedStatus = await readDeliveryRunStatusFromMastraStorage({ store, repoPath });
+
+  assert.equal(storedStatus?.status, 'complete');
+  assert.deepEqual(storedStatus?.tasks, ['T1:complete']);
 });
 
 test('delivery state listing is compatible with real LibSQL observability storage', async () => {

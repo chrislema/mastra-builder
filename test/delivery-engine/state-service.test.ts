@@ -3,6 +3,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import {
+  deliveryMastraObservabilityServiceName,
+  legacyDeliveryMastraObservabilityServiceName,
+} from '../../src/mastra/config.ts';
 import type { DeliveryObservabilityStore, MastraLike } from '../../src/mastra/delivery-engine/observability.ts';
 import {
   getDeliveryRunStatusState,
@@ -34,6 +38,11 @@ const createMastra = (store: DeliveryObservabilityStore): MastraLike => ({
   }),
 });
 
+const readableServiceNames = new Set([
+  deliveryMastraObservabilityServiceName,
+  legacyDeliveryMastraObservabilityServiceName,
+]);
+
 const createMemoryObservabilityStore = () => {
   let order = 0;
   const written: Record<string, any>[] = [];
@@ -43,7 +52,7 @@ const createMemoryObservabilityStore = () => {
     },
     async listLogs({ filters, pagination }) {
       assert.equal(filters?.source, undefined);
-      assert.equal(filters?.serviceName, 'builders');
+      assert.equal(readableServiceNames.has(String(filters?.serviceName)), true);
       const page = pagination?.page ?? 0;
       const perPage = pagination?.perPage ?? 25;
       const filtered = written

@@ -184,11 +184,16 @@ scores.
 ## Native Delivery State Storage
 
 `.delivery/run.json` and `.delivery/events.jsonl` remain the portable inspection layer
-inside the target repo. Mastra also gets first-class observability records:
+inside the target repo. Mastra runtime state defaults to the ignored repo-local database
+`.mastra/builders.db`, or to `MASTRA_STORAGE_URL` / `MASTRA_STORAGE_PATH` when either is
+set in `.env`. The configured storage id is `builders-delivery-storage`, and traces/logs use
+the `builders-delivery-engine` observability service name. Mastra also gets first-class
+observability records:
 
 - `persist-delivery-state` writes one delivery snapshot log plus event logs into the
   configured observability store.
 - `list-delivery-state-records` queries those records by `repoPath` and/or `runId`.
+- reads still recognize older records written under the legacy `builders` service name.
 - `mirror-delivery-state` and `list-delivery-state-mirrors` remain compatibility aliases.
 - The workflow automatically persists terminal states after finalizing a run.
 
