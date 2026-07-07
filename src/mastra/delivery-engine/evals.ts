@@ -3,6 +3,7 @@ import type { Mastra } from '@mastra/core/mastra';
 import { z } from 'zod';
 
 export const deliveryRegressionDatasetName = 'delivery-scorecard-regression';
+export const deliveryRegressionSuiteVersion = 2;
 
 export const deliveryRegressionScorerIds = [
   'delivery-workflow-completion',
@@ -14,6 +15,8 @@ export const deliveryRegressionScorerIds = [
   'delivery-build-to-tester-handoff',
   'delivery-tester-to-deployer-handoff',
 ] as const;
+
+export type DeliveryRegressionScorerId = (typeof deliveryRegressionScorerIds)[number];
 
 const deliveryScorecardInputSchema = z.object({
   status: z.enum([
@@ -91,7 +94,57 @@ const passingChecks = [
   { check: 'tier_order', passed: true, reason: 'ok' },
 ];
 
+const expectedScores = (overrides: Partial<Record<DeliveryRegressionScorerId, number>>) =>
+  Object.fromEntries(deliveryRegressionScorerIds.map((scorerId) => [scorerId, overrides[scorerId] ?? 0])) as Record<
+    DeliveryRegressionScorerId,
+    number
+  >;
+
 export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
+  {
+    metadata: { caseId: 'planner-ready-handoff', stage: 'planning' },
+    input: {
+      status: 'planned',
+      runId: 'run-planned',
+      summary: 'Planner produced an executable task plan.',
+      taskPlan: { tasks: [{ id: 'task-1' }] },
+      checks: passingChecks,
+      judgments: [passingJudgments[0]],
+      nextSteps: ['review plan'],
+    },
+    groundTruth: {
+      caseId: 'planner-ready-handoff',
+      expectedScores: expectedScores({
+        'delivery-plan-to-architect-handoff': 1,
+        'delivery-rubric-floor': 0.92,
+        'delivery-judgment-pass-rate': 1,
+        'delivery-deterministic-checks': 1,
+      }),
+      rationale: 'A planned run should hand off to architect review, not later stages.',
+    },
+  },
+  {
+    metadata: { caseId: 'architect-ready-handoff', stage: 'review' },
+    input: {
+      status: 'reviewed',
+      runId: 'run-reviewed',
+      summary: 'Architect approved the task plan for build.',
+      taskPlan: { tasks: [{ id: 'task-1' }] },
+      checks: passingChecks,
+      judgments: [passingJudgments[0]],
+      nextSteps: ['build task-1'],
+    },
+    groundTruth: {
+      caseId: 'architect-ready-handoff',
+      expectedScores: expectedScores({
+        'delivery-architect-to-build-handoff': 1,
+        'delivery-rubric-floor': 0.92,
+        'delivery-judgment-pass-rate': 1,
+        'delivery-deterministic-checks': 1,
+      }),
+      rationale: 'A reviewed run should hand off to engineer/designer build work.',
+    },
+  },
   {
     metadata: { caseId: 'complete-delivery', stage: 'deployment' },
     input: {
@@ -106,12 +159,12 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
     },
     groundTruth: {
       caseId: 'complete-delivery',
-      expectedScores: {
+      expectedScores: expectedScores({
         'delivery-workflow-completion': 1,
         'delivery-rubric-floor': 0.84,
         'delivery-judgment-pass-rate': 1,
         'delivery-deterministic-checks': 1,
-      },
+      }),
       rationale: 'A completed delivery with passing checks and judgments should score cleanly.',
     },
   },
@@ -129,13 +182,13 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
     },
     groundTruth: {
       caseId: 'tester-ready-handoff',
-      expectedScores: {
+      expectedScores: expectedScores({
         'delivery-workflow-completion': 0,
         'delivery-tester-to-deployer-handoff': 1,
         'delivery-rubric-floor': 0.84,
         'delivery-judgment-pass-rate': 1,
         'delivery-deterministic-checks': 1,
-      },
+      }),
       rationale: 'A release-ready run is deployable but not yet workflow-complete.',
     },
   },
@@ -152,14 +205,48 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
     },
     groundTruth: {
       caseId: 'build-ready-handoff',
-      expectedScores: {
+      expectedScores: expectedScores({
         'delivery-workflow-completion': 0,
         'delivery-build-to-tester-handoff': 1,
         'delivery-rubric-floor': 0.84,
         'delivery-judgment-pass-rate': 1,
         'delivery-deterministic-checks': 1,
-      },
+      }),
       rationale: 'A built run should hand off to tester, not claim deployment completion.',
+    },
+  },
+  {
+    metadata: { caseId: 'release-gate-failed', stage: 'release-gate' },
+    input: {
+      status: 'gate_failed',
+      runId: 'run-release-gate-failed',
+      summary: 'Tester blocked release on failed local evidence.',
+      taskPlan: { tasks: [{ id: 'task-1' }] },
+      releaseGate: { decision: 'fail', blockers: ['local smoke check failed'] },
+      checks: [
+        { check: 'plan_schema_complete', passed: true, reason: 'ok' },
+        { check: 'runtime_probe_passed', passed: false, reason: 'health route failed' },
+      ],
+      judgments: [
+        passingJudgments[0],
+        {
+          subject: '.delivery/artifacts/release-gate.json',
+          rubric: 'release-gate',
+          path: '.delivery/artifacts/judgments/release-gate.judgment.json',
+          overall: 0.55,
+          passed: false,
+        },
+      ],
+      nextSteps: ['repair release gate blockers'],
+    },
+    groundTruth: {
+      caseId: 'release-gate-failed',
+      expectedScores: expectedScores({
+        'delivery-rubric-floor': 0.55,
+        'delivery-judgment-pass-rate': 0.5,
+        'delivery-deterministic-checks': 0.5,
+      }),
+      rationale: 'A failed release gate should preserve failed evidence without handing off to deployment.',
     },
   },
   {
@@ -187,13 +274,29 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
     },
     groundTruth: {
       caseId: 'stuck-with-failed-evidence',
-      expectedScores: {
+      expectedScores: expectedScores({
         'delivery-workflow-completion': 0,
         'delivery-rubric-floor': 0.4,
         'delivery-judgment-pass-rate': 0.5,
         'delivery-deterministic-checks': 0.5,
-      },
+      }),
       rationale: 'A stuck run should preserve the rubric floor and failed evidence rates.',
+    },
+  },
+  {
+    metadata: { caseId: 'blocked-on-planner-questions', stage: 'planning' },
+    input: {
+      status: 'blocked_on_questions',
+      runId: 'run-blocked-on-questions',
+      summary: 'Planner needs a source-document decision before work can proceed.',
+      checks: [],
+      judgments: [],
+      nextSteps: ['answer planner questions'],
+    },
+    groundTruth: {
+      caseId: 'blocked-on-planner-questions',
+      expectedScores: expectedScores({}),
+      rationale: 'A human-input pause is not a failed build, but no delivery handoff or quality score is ready yet.',
     },
   },
 ];
@@ -207,15 +310,55 @@ export type DeliveryRegressionScoreMismatch = {
   reason?: string | null;
 };
 
+export type DeliveryRegressionVerdict = 'passed' | 'scored' | 'failed';
+
+export type DeliveryRegressionGateResult = {
+  id: string;
+  passed: boolean;
+  score: number;
+  reason: string;
+};
+
+export type DeliveryRegressionThreshold = number | { min?: number; max?: number };
+
+export type DeliveryRegressionThresholdResult = {
+  id: string;
+  passed: boolean;
+  averageScore: number;
+  threshold: DeliveryRegressionThreshold;
+  reason: string;
+};
+
+export type DeliveryRegressionScorerCoverage = {
+  scorerId: string;
+  expectedItems: number;
+  scoredItems: number;
+  positiveExamples: number;
+  negativeExamples: number;
+  missingScoreCaseIds: string[];
+};
+
+export type DeliveryRegressionCoverageReport = {
+  totalScorers: number;
+  coveredScorers: number;
+  missingScorers: string[];
+  totalExpectations: number;
+  scorerCoverage: DeliveryRegressionScorerCoverage[];
+};
+
 export type DeliveryRegressionGateThresholds = {
   minTotalItems: number;
   minSucceededRate: number;
   maxFailedItems: number;
   maxMismatches: number;
+  maxPersistenceFailures: number;
+  minScorerCoverageRate: number;
+  minScoreAlignmentRate: number;
 };
 
 export type DeliveryRegressionGateReport = {
   generatedAt: string;
+  suiteVersion: number;
   datasetId: string;
   experimentId: string;
   status: string;
@@ -223,8 +366,13 @@ export type DeliveryRegressionGateReport = {
   succeededCount: number;
   failedCount: number;
   succeededRate: number;
+  persistenceFailures: number;
   scorerAverages: Record<string, number>;
+  coverage: DeliveryRegressionCoverageReport;
   thresholds: DeliveryRegressionGateThresholds;
+  gateResults: DeliveryRegressionGateResult[];
+  thresholdResults: DeliveryRegressionThresholdResult[];
+  verdict: DeliveryRegressionVerdict;
   mismatches: DeliveryRegressionScoreMismatch[];
   gate: {
     passed: boolean;
@@ -243,6 +391,9 @@ export const deliveryRegressionGateThresholds: DeliveryRegressionGateThresholds 
   minSucceededRate: 1,
   maxFailedItems: 0,
   maxMismatches: 0,
+  maxPersistenceFailures: 0,
+  minScorerCoverageRate: 1,
+  minScoreAlignmentRate: 1,
 };
 
 function datasetItemsFromListResult(result: Awaited<ReturnType<Dataset['listItems']>>) {
@@ -269,7 +420,12 @@ export async function ensureDeliveryRegressionDataset(mastra: Mastra) {
         targetType: 'scorer',
         targetIds: [...deliveryRegressionScorerIds],
         scorerIds: [...deliveryRegressionScorerIds],
-        metadata: { suite: 'delivery-engine', kind: 'scorecard-regression' },
+        metadata: {
+          suite: 'delivery-engine',
+          kind: 'scorecard-regression',
+          suiteVersion: deliveryRegressionSuiteVersion,
+          scorerIds: [...deliveryRegressionScorerIds],
+        },
       });
 
   if (existingRecord) {
@@ -280,7 +436,12 @@ export async function ensureDeliveryRegressionDataset(mastra: Mastra) {
       targetType: 'scorer',
       targetIds: [...deliveryRegressionScorerIds],
       scorerIds: [...deliveryRegressionScorerIds],
-      metadata: { suite: 'delivery-engine', kind: 'scorecard-regression' },
+      metadata: {
+        suite: 'delivery-engine',
+        kind: 'scorecard-regression',
+        suiteVersion: deliveryRegressionSuiteVersion,
+        scorerIds: [...deliveryRegressionScorerIds],
+      },
     });
   }
 
@@ -332,6 +493,98 @@ export function collectDeliveryRegressionScoreMismatches(
 
 const rounded = (score: number) => Math.round(score * 1000) / 1000;
 
+function thresholdPassed(value: number, threshold: DeliveryRegressionThreshold) {
+  if (typeof threshold === 'number') return value >= threshold;
+  if (typeof threshold.min === 'number' && value < threshold.min) return false;
+  if (typeof threshold.max === 'number' && value > threshold.max) return false;
+  return true;
+}
+
+function thresholdReason(id: string, value: number, threshold: DeliveryRegressionThreshold) {
+  if (typeof threshold === 'number') return `${id} ${value} must be at least ${threshold}.`;
+  const parts = [];
+  if (typeof threshold.min === 'number') parts.push(`at least ${threshold.min}`);
+  if (typeof threshold.max === 'number') parts.push(`at most ${threshold.max}`);
+  return `${id} ${value} must be ${parts.join(' and ')}.`;
+}
+
+export function buildDeliveryRegressionCoverageReport(
+  summary: Pick<DeliveryExperimentSummary, 'results'>,
+): DeliveryRegressionCoverageReport {
+  const scorerCoverage = deliveryRegressionScorerIds.map((scorerId) => {
+    let expectedItems = 0;
+    let scoredItems = 0;
+    let positiveExamples = 0;
+    let negativeExamples = 0;
+    const missingScoreCaseIds: string[] = [];
+
+    for (const result of summary.results) {
+      const groundTruth = deliveryScoreExpectationSchema.safeParse(result.groundTruth);
+      if (!groundTruth.success) continue;
+
+      const expected = groundTruth.data.expectedScores[scorerId];
+      if (typeof expected !== 'number') continue;
+
+      expectedItems += 1;
+      if (expected > 0) positiveExamples += 1;
+      else negativeExamples += 1;
+
+      const score = result.scores.find((candidate) => candidate.scorerId === scorerId);
+      if (typeof score?.score === 'number') scoredItems += 1;
+      else missingScoreCaseIds.push(groundTruth.data.caseId);
+    }
+
+    return {
+      scorerId,
+      expectedItems,
+      scoredItems,
+      positiveExamples,
+      negativeExamples,
+      missingScoreCaseIds,
+    };
+  });
+
+  const missingScorers = scorerCoverage
+    .filter((coverage) => coverage.expectedItems === 0 || coverage.positiveExamples === 0 || coverage.negativeExamples === 0)
+    .map((coverage) => coverage.scorerId);
+
+  return {
+    totalScorers: deliveryRegressionScorerIds.length,
+    coveredScorers: deliveryRegressionScorerIds.length - missingScorers.length,
+    missingScorers,
+    totalExpectations: scorerCoverage.reduce((sum, coverage) => sum + coverage.expectedItems, 0),
+    scorerCoverage,
+  };
+}
+
+function buildGateResult({ id, passed, reason }: { id: string; passed: boolean; reason: string }): DeliveryRegressionGateResult {
+  return {
+    id,
+    passed,
+    score: passed ? 1 : 0,
+    reason,
+  };
+}
+
+function buildThresholdResult({
+  id,
+  averageScore,
+  threshold,
+}: {
+  id: string;
+  averageScore: number;
+  threshold: DeliveryRegressionThreshold;
+}): DeliveryRegressionThresholdResult {
+  const passed = thresholdPassed(averageScore, threshold);
+  return {
+    id,
+    passed,
+    averageScore,
+    threshold,
+    reason: passed ? `${id} ${averageScore} satisfies threshold.` : thresholdReason(id, averageScore, threshold),
+  };
+}
+
 function scorerAverages(summary: DeliveryExperimentSummary) {
   const byScorer = new Map<string, number[]>();
   for (const result of summary.results) {
@@ -365,25 +618,80 @@ export function buildDeliveryRegressionGateReport({
   previousReport?: DeliveryRegressionGateReport;
 }): DeliveryRegressionGateReport {
   const succeededRate = summary.totalItems ? rounded(summary.succeededCount / summary.totalItems) : 0;
-  const reasons: string[] = [];
+  const persistenceFailures = summary.persistenceFailures ?? 0;
+  const coverage = buildDeliveryRegressionCoverageReport(summary);
+  const scorerCoverageRate = coverage.totalScorers ? rounded(coverage.coveredScorers / coverage.totalScorers) : 0;
+  const scoreAlignmentRate = coverage.totalExpectations
+    ? rounded((coverage.totalExpectations - mismatches.length) / coverage.totalExpectations)
+    : 0;
 
-  if (summary.status !== 'completed') reasons.push(`Experiment status is ${summary.status}, expected completed.`);
-  if (summary.totalItems < thresholds.minTotalItems) {
-    reasons.push(`Experiment ran ${summary.totalItems} item(s), expected at least ${thresholds.minTotalItems}.`);
-  }
-  if (summary.failedCount > thresholds.maxFailedItems) {
-    reasons.push(`Experiment had ${summary.failedCount} failed item(s), allowed ${thresholds.maxFailedItems}.`);
-  }
-  if (succeededRate < thresholds.minSucceededRate) {
-    reasons.push(`Experiment success rate ${succeededRate} is below ${thresholds.minSucceededRate}.`);
-  }
-  if (mismatches.length > thresholds.maxMismatches) {
-    reasons.push(`Experiment had ${mismatches.length} score mismatch(es), allowed ${thresholds.maxMismatches}.`);
-  }
+  const gateResults: DeliveryRegressionGateResult[] = [
+    buildGateResult({
+      id: 'experiment-completed',
+      passed: summary.status === 'completed',
+      reason: `Experiment status is ${summary.status}, expected completed.`,
+    }),
+    buildGateResult({
+      id: 'minimum-dataset-size',
+      passed: summary.totalItems >= thresholds.minTotalItems,
+      reason: `Experiment ran ${summary.totalItems} item(s), expected at least ${thresholds.minTotalItems}.`,
+    }),
+    buildGateResult({
+      id: 'failed-items',
+      passed: summary.failedCount <= thresholds.maxFailedItems,
+      reason: `Experiment had ${summary.failedCount} failed item(s), allowed ${thresholds.maxFailedItems}.`,
+    }),
+    buildGateResult({
+      id: 'persistence-failures',
+      passed: persistenceFailures <= thresholds.maxPersistenceFailures,
+      reason: `Experiment had ${persistenceFailures} persistence failure(s), allowed ${thresholds.maxPersistenceFailures}.`,
+    }),
+    buildGateResult({
+      id: 'score-mismatches',
+      passed: mismatches.length <= thresholds.maxMismatches,
+      reason: `Experiment had ${mismatches.length} score mismatch(es), allowed ${thresholds.maxMismatches}.`,
+    }),
+    buildGateResult({
+      id: 'scorer-coverage',
+      passed: coverage.missingScorers.length === 0,
+      reason: coverage.missingScorers.length
+        ? `Missing positive/negative coverage for scorer(s): ${coverage.missingScorers.join(', ')}.`
+        : 'Every delivery scorer has positive and negative regression coverage.',
+    }),
+  ];
+
+  const thresholdResults: DeliveryRegressionThresholdResult[] = [
+    buildThresholdResult({
+      id: 'succeeded-rate',
+      averageScore: succeededRate,
+      threshold: { min: thresholds.minSucceededRate },
+    }),
+    buildThresholdResult({
+      id: 'scorer-coverage-rate',
+      averageScore: scorerCoverageRate,
+      threshold: { min: thresholds.minScorerCoverageRate },
+    }),
+    buildThresholdResult({
+      id: 'score-alignment-rate',
+      averageScore: scoreAlignmentRate,
+      threshold: { min: thresholds.minScoreAlignmentRate },
+    }),
+  ];
+
+  const verdict: DeliveryRegressionVerdict = gateResults.some((result) => !result.passed)
+    ? 'failed'
+    : thresholdResults.some((result) => !result.passed)
+      ? 'scored'
+      : 'passed';
+  const reasons = [
+    ...gateResults.filter((result) => !result.passed).map((result) => result.reason),
+    ...thresholdResults.filter((result) => !result.passed).map((result) => result.reason),
+  ];
 
   const currentAverages = scorerAverages(summary);
   const report: DeliveryRegressionGateReport = {
     generatedAt: new Date().toISOString(),
+    suiteVersion: deliveryRegressionSuiteVersion,
     datasetId,
     experimentId: summary.experimentId,
     status: summary.status,
@@ -391,11 +699,16 @@ export function buildDeliveryRegressionGateReport({
     succeededCount: summary.succeededCount,
     failedCount: summary.failedCount,
     succeededRate,
+    persistenceFailures,
     scorerAverages: currentAverages,
+    coverage,
     thresholds,
+    gateResults,
+    thresholdResults,
+    verdict,
     mismatches,
     gate: {
-      passed: reasons.length === 0,
+      passed: verdict === 'passed',
       reasons,
     },
   };
@@ -439,6 +752,8 @@ export async function runDeliveryRegressionExperiment(
     metadata: {
       suite: 'delivery-engine',
       kind: 'scorecard-regression',
+      suiteVersion: deliveryRegressionSuiteVersion,
+      scorerIds: [...deliveryRegressionScorerIds],
       ...options.metadata,
     },
   });

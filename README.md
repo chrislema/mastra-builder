@@ -215,6 +215,21 @@ The current scorer set covers:
 - rubric judgment pass rate
 - deterministic check pass rate
 
+## Native Eval Suite
+
+The delivery eval suite uses a Mastra Dataset named `delivery-scorecard-regression` with
+`targetType: scorer`, scorer IDs attached as dataset metadata, and stored experiments for CI
+history. Each fixture carries explicit expected scores for every registered delivery scorer,
+with positive and negative coverage for each scorer.
+
+`npm run eval:delivery:gate` writes a Mastra-style gate report with:
+
+- hard gate results for experiment completion, item failures, persistence failures, score
+  mismatches, dataset size, and scorer coverage
+- threshold results for success rate, score alignment rate, and scorer coverage rate
+- a `passed`, `scored`, or `failed` verdict that mirrors Mastra gates-and-threshold semantics
+- trend deltas when `DELIVERY_EVAL_BASELINE` points to a previous report
+
 ## Native HITL
 
 The workflow uses Mastra suspend/resume for human input:
