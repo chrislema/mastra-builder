@@ -2725,6 +2725,53 @@ test('acceptance contracts use task-boundary file evidence', () => {
   assert.match(contracts[0].evidence.join('\n'), /file evidence covered/);
 });
 
+test('acceptance contracts verify Worker static asset fallback through helper', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-assets-fallback-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      '',
+      'type Env = { ASSETS: { fetch: (request: Request) => Promise<Response> } };',
+      'const app = new Hono<{ Bindings: Env }>();',
+      '',
+      'app.notFound((c) => {',
+      '  if (!c.req.path.startsWith("/api/")) {',
+      '    return fetchStaticAsset(c.env, c.req.raw);',
+      '  }',
+      '  return c.json({ ok: false, error: "Route not found." }, 404);',
+      '});',
+      '',
+      'function fetchStaticAsset(env: Env, request: Request): Promise<Response> {',
+      '  return env.ASSETS.fetch(request);',
+      '}',
+      '',
+      'export default app;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T04',
+      depends_on: [],
+      owned_surfaces: ['src/index.ts'],
+      acceptance_criteria: [
+        'Non-API routes fall through to env.ASSETS.fetch(request) so public/index.html and related assets are served by the same Worker.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contracts[0].status, 'verified');
+  assert.match(contracts[0].evidence.join('\n'), /non-API routes fall through to env\.ASSETS\.fetch\(request\)/);
+});
+
 test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-scaffold-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

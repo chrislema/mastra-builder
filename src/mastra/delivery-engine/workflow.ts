@@ -8519,6 +8519,43 @@ function workerEntrypointExportContractEvidence({
   };
 }
 
+function workerStaticAssetFallbackContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\b(?:static asset fallback|ASSETS\.fetch|env\.ASSETS|Non-API routes?)\b/i.test(criterion)) return undefined;
+  if (!/\b(?:public\/index\.html|related assets|same Worker|static assets?)\b/i.test(criterion)) return undefined;
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  if (!/\benv\.ASSETS\.fetch\s*\(\s*request\s*\)/.test(source)) {
+    gaps.push(`${indexPath} must call env.ASSETS.fetch(request) for the static asset fallback.`);
+  }
+  if (!/!\s*[^;\n]*\.startsWith\s*\(\s*['"]\/api\/['"]\s*\)/.test(source)) {
+    gaps.push(`${indexPath} must route non-API requests to the static asset fallback before returning API 404s.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured ${indexPath} evidence verified non-API routes fall through to env.ASSETS.fetch(request)`],
+    gaps: [],
+  };
+}
+
 function workerWorkflowEntrypointContractEvidence({
   criterion,
   repoPath,
@@ -8595,6 +8632,9 @@ function acceptanceCriterionEvidence({
 
   const workerEntrypointEvidence = workerEntrypointExportContractEvidence({ criterion, repoPath, task });
   if (workerEntrypointEvidence) return workerEntrypointEvidence;
+
+  const workerStaticAssetFallbackEvidence = workerStaticAssetFallbackContractEvidence({ criterion, repoPath, task });
+  if (workerStaticAssetFallbackEvidence) return workerStaticAssetFallbackEvidence;
 
   const workflowEntrypointEvidence = workerWorkflowEntrypointContractEvidence({ criterion, repoPath, task });
   if (workflowEntrypointEvidence) return workflowEntrypointEvidence;
