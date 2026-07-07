@@ -2772,6 +2772,76 @@ test('acceptance contracts verify Worker static asset fallback through helper', 
   assert.match(contracts[0].evidence.join('\n'), /non-API routes fall through to env\.ASSETS\.fetch\(request\)/);
 });
 
+test('acceptance contracts verify Worker type constants and result envelopes structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-types-contracts-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/types.ts'),
+    [
+      'export const MAX_MODELS_PER_RUN = 8 as const;',
+      'export const MAX_USER_PROMPT_CHARS = 100000 as const;',
+      'export const MAX_REQUEST_BYTES = 262144 as const;',
+      'export const PROVIDER_TIMEOUT_MS = 60000 as const;',
+      '',
+      'export type PerModelApiResultOkTrue = {',
+      '  id: string;',
+      '  label: string;',
+      '  vendor: string;',
+      '  ok: true;',
+      '  text: string;',
+      '  latencyMs: number;',
+      '};',
+      '',
+      'export type PerModelApiResultOkFalse = {',
+      '  id: string;',
+      '  label: string;',
+      '  vendor: string;',
+      '  ok: false;',
+      '  error: string;',
+      '  latencyMs: number;',
+      '};',
+      '',
+      'export type ProviderSecretBindings = {',
+      '  ANTHROPIC_API_KEY?: string;',
+      '  OPENAI_API_KEY?: string;',
+      '  ZAI_API_KEY?: string;',
+      '};',
+      'export type WorkerEnvironmentBindings = ProviderSecretBindings & {',
+      '  AI: WorkersAiBinding;',
+      '  ASSETS: StaticAssetsBinding;',
+      '};',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T02',
+      depends_on: [],
+      owned_surfaces: ['src/types.ts'],
+      acceptance_criteria: [
+        'src/types.ts defines per-model API result shapes for ok true and ok false cases including id, label, vendor, and latency fields where applicable.',
+        'src/types.ts defines Worker environment bindings including AI, ASSETS, and optional provider secret names.',
+        'src/types.ts sets MAX_MODELS_PER_RUN to 8 so one API request cannot fan out to an unbounded number of paid/external provider calls.',
+        'src/types.ts sets MAX_USER_PROMPT_CHARS to 100000 so reference-enriched prompts have a deterministic server-side ceiling.',
+        'src/types.ts sets MAX_REQUEST_BYTES to 262144 so oversized JSON bodies can fail before provider fan-out.',
+        'src/types.ts sets PROVIDER_TIMEOUT_MS to 60000 so each provider call has a deterministic maximum wait.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.deepEqual(
+    contracts.map((contract) => contract.status),
+    ['verified', 'verified', 'verified', 'verified', 'verified', 'verified'],
+  );
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /structured src\/types\.ts evidence/);
+});
+
 test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-scaffold-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

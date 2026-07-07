@@ -8556,6 +8556,73 @@ function workerStaticAssetFallbackContractEvidence({
   };
 }
 
+function workerTypesContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bsrc\/types\.ts\b/i.test(criterion)) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('src/types.ts')) return undefined;
+
+  const fullPath = join(resolve(repoPath), 'src/types.ts');
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  let inspected = false;
+
+  if (/\bper-model API result shapes\b|\bok true\b|\bok false\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bok\s*:\s*true\b/.test(source)) gaps.push('src/types.ts must define an ok: true model result shape.');
+    if (!/\bok\s*:\s*false\b/.test(source)) gaps.push('src/types.ts must define an ok: false model result shape.');
+    for (const field of ['id', 'label', 'vendor']) {
+      if (!new RegExp(`\\b${field}\\s*:\\s*string\\b`).test(source)) {
+        gaps.push(`src/types.ts must include ${field}: string on per-model API result shapes.`);
+      }
+    }
+    if (!/\blatency(?:Ms|Millis|Milliseconds)?\s*:\s*number\b/i.test(source)) {
+      gaps.push('src/types.ts must include a numeric latency field on per-model API result shapes.');
+    }
+  }
+
+  if (/\bWorker environment bindings\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bAI\s*:\s*[A-Za-z_$][\w$]*/.test(source)) gaps.push('src/types.ts must define an AI binding.');
+    if (!/\bASSETS\s*:\s*[A-Za-z_$][\w$]*/.test(source)) gaps.push('src/types.ts must define an ASSETS binding.');
+    if (!/\b(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|ZAI_API_KEY|ProviderSecret)\b/.test(source)) {
+      gaps.push('src/types.ts must include optional provider secret names.');
+    }
+  }
+
+  const constantExpectations: Array<[string, string]> = [
+    ['MAX_MODELS_PER_RUN', '8'],
+    ['MAX_USER_PROMPT_CHARS', '100000'],
+    ['MAX_REQUEST_BYTES', '262144'],
+    ['PROVIDER_TIMEOUT_MS', '60000'],
+  ];
+  for (const [name, value] of constantExpectations) {
+    if (!new RegExp(`\\b${name}\\b`).test(criterion)) continue;
+    inspected = true;
+    if (!new RegExp(`\\bconst\\s+${name}\\s*=\\s*${value}\\b`).test(source)) {
+      gaps.push(`src/types.ts must set ${name} to ${value}.`);
+    }
+  }
+
+  if (!inspected) return undefined;
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured src/types.ts evidence verified Worker type contracts and exact request boundary constants'],
+    gaps: [],
+  };
+}
+
 function workerWorkflowEntrypointContractEvidence({
   criterion,
   repoPath,
@@ -8635,6 +8702,9 @@ function acceptanceCriterionEvidence({
 
   const workerStaticAssetFallbackEvidence = workerStaticAssetFallbackContractEvidence({ criterion, repoPath, task });
   if (workerStaticAssetFallbackEvidence) return workerStaticAssetFallbackEvidence;
+
+  const workerTypesEvidence = workerTypesContractEvidence({ criterion, repoPath, task });
+  if (workerTypesEvidence) return workerTypesEvidence;
 
   const workflowEntrypointEvidence = workerWorkflowEntrypointContractEvidence({ criterion, repoPath, task });
   if (workflowEntrypointEvidence) return workflowEntrypointEvidence;
