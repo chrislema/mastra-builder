@@ -82,6 +82,12 @@ function deliveryChecks(output: unknown) {
   return asDeliveryOutput(output).checks ?? [];
 }
 
+function deliveryAcceptanceContractChecks(output: unknown) {
+  return deliveryChecks(output).filter((check) =>
+    ['acceptance_criteria_contracts', 'task_plan_acceptance_contract_regression'].includes(check.check),
+  );
+}
+
 const rounded = (score: number) => Math.round(score * 1000) / 1000;
 const scoreEveryRun = { type: 'ratio', rate: 1 } satisfies ScoringSamplingConfig;
 
@@ -319,6 +325,26 @@ export const deliveryDeterministicChecksScorer = createScorer<unknown, DeliveryW
     return `${score} check pass rate. Failed checks: ${failed.map((check) => `${check.check}: ${check.reason}`).join('; ')}.`;
   });
 
+export const deliveryAcceptanceContractCoverageScorer = createScorer<unknown, DeliveryWorkflowScorerOutput>({
+  id: 'delivery-acceptance-contract-coverage',
+  name: 'Delivery Acceptance Contract Coverage',
+  description: 'Scores whether first-class acceptance contract checks are present and passing.',
+})
+  .generateScore(({ run }) => {
+    const checks = deliveryAcceptanceContractChecks(run.output);
+    if (!checks.length) return 0;
+    return rounded(checks.filter((check) => check.passed).length / checks.length);
+  })
+  .generateReason(({ run, score }) => {
+    const checks = deliveryAcceptanceContractChecks(run.output);
+    if (!checks.length) return 'No acceptance contract checks were recorded.';
+    const failed = checks.filter((check) => !check.passed);
+    if (!failed.length) return `All ${checks.length} acceptance contract check(s) passed.`;
+    return `${score} acceptance contract coverage. Failed contracts: ${failed
+      .map((check) => `${check.check}: ${check.reason}`)
+      .join('; ')}.`;
+  });
+
 export const cloudflareWorkerFirstTopologyScorer = createScorer<unknown, CloudflareArchitectureScorerOutput>({
   id: 'cloudflare-worker-first-topology',
   name: 'Cloudflare Worker First Topology',
@@ -485,6 +511,7 @@ export const deliveryScorers = {
   deliveryRubricFloorScorer,
   deliveryJudgmentPassRateScorer,
   deliveryDeterministicChecksScorer,
+  deliveryAcceptanceContractCoverageScorer,
   cloudflareWorkerFirstTopologyScorer,
   cloudflareStorageFitScorer,
   cloudflareBindingsHygieneScorer,
@@ -503,6 +530,10 @@ const deliveryQualityStepScorers = {
   },
   deterministicChecks: {
     scorer: deliveryDeterministicChecksScorer,
+    sampling: scoreEveryRun,
+  },
+  acceptanceContractCoverage: {
+    scorer: deliveryAcceptanceContractCoverageScorer,
     sampling: scoreEveryRun,
   },
 } satisfies MastraScorers;

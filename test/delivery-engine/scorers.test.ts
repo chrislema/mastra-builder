@@ -6,6 +6,7 @@ import {
   cloudflareStorageFitScorer,
   cloudflareTaskSequencingScorer,
   cloudflareWorkerFirstTopologyScorer,
+  deliveryAcceptanceContractCoverageScorer,
   deliveryArchitectToBuildHandoffScorer,
   deliveryBuildToTesterHandoffScorer,
   deliveryDeterministicChecksScorer,
@@ -23,6 +24,7 @@ const completeOutput = {
   checks: [
     { check: 'plan_schema_complete', passed: true, reason: 'ok' },
     { check: 'tier_order', passed: true, reason: 'ok' },
+    { check: 'acceptance_criteria_contracts', passed: true, reason: 'ok' },
   ],
   judgments: [
     {
@@ -132,6 +134,36 @@ test('deliveryDeterministicChecksScorer scores deterministic check pass fraction
   });
   assert.equal(score.score, 0.5);
   assert.match(score.reason ?? '', /tier_order/);
+});
+
+test('deliveryAcceptanceContractCoverageScorer scores contract gates separately', async () => {
+  const passing = await deliveryAcceptanceContractCoverageScorer.run({ input: {}, output: completeOutput });
+  assert.equal(passing.score, 1);
+  assert.match(passing.reason ?? '', /acceptance contract/);
+
+  const failing = await deliveryAcceptanceContractCoverageScorer.run({
+    input: {},
+    output: {
+      ...completeOutput,
+      checks: [
+        { check: 'acceptance_criteria_contracts', passed: true, reason: 'ok' },
+        {
+          check: 'task_plan_acceptance_contract_regression',
+          passed: false,
+          reason: 'T11 dropped WeeklyWorkflow pipeline contract',
+        },
+      ],
+    },
+  });
+  assert.equal(failing.score, 0.5);
+  assert.match(failing.reason ?? '', /WeeklyWorkflow pipeline/);
+
+  const missing = await deliveryAcceptanceContractCoverageScorer.run({
+    input: {},
+    output: { ...completeOutput, checks: [] },
+  });
+  assert.equal(missing.score, 0);
+  assert.match(missing.reason ?? '', /No acceptance contract checks/);
 });
 
 test('cloudflareWorkerFirstTopologyScorer enforces Worker-first and explicit Pages exceptions', async () => {

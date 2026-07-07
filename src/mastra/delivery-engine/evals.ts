@@ -10,6 +10,7 @@ export const deliveryRegressionScorerIds = [
   'delivery-rubric-floor',
   'delivery-judgment-pass-rate',
   'delivery-deterministic-checks',
+  'delivery-acceptance-contract-coverage',
   'delivery-plan-to-architect-handoff',
   'delivery-architect-to-build-handoff',
   'delivery-build-to-tester-handoff',
@@ -92,6 +93,7 @@ const passingJudgments = [
 const passingChecks = [
   { check: 'plan_schema_complete', passed: true, reason: 'ok' },
   { check: 'tier_order', passed: true, reason: 'ok' },
+  { check: 'acceptance_criteria_contracts', passed: true, reason: 'ok' },
 ];
 
 const expectedScores = (overrides: Partial<Record<DeliveryRegressionScorerId, number>>) =>
@@ -119,6 +121,7 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
         'delivery-rubric-floor': 0.92,
         'delivery-judgment-pass-rate': 1,
         'delivery-deterministic-checks': 1,
+        'delivery-acceptance-contract-coverage': 1,
       }),
       rationale: 'A planned run should hand off to architect review, not later stages.',
     },
@@ -141,6 +144,7 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
         'delivery-rubric-floor': 0.92,
         'delivery-judgment-pass-rate': 1,
         'delivery-deterministic-checks': 1,
+        'delivery-acceptance-contract-coverage': 1,
       }),
       rationale: 'A reviewed run should hand off to engineer/designer build work.',
     },
@@ -164,6 +168,7 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
         'delivery-rubric-floor': 0.84,
         'delivery-judgment-pass-rate': 1,
         'delivery-deterministic-checks': 1,
+        'delivery-acceptance-contract-coverage': 1,
       }),
       rationale: 'A completed delivery with passing checks and judgments should score cleanly.',
     },
@@ -188,6 +193,7 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
         'delivery-rubric-floor': 0.84,
         'delivery-judgment-pass-rate': 1,
         'delivery-deterministic-checks': 1,
+        'delivery-acceptance-contract-coverage': 1,
       }),
       rationale: 'A release-ready run is deployable but not yet workflow-complete.',
     },
@@ -211,6 +217,7 @@ export const deliveryRegressionDatasetItems: DeliveryRegressionDatasetItem[] = [
         'delivery-rubric-floor': 0.84,
         'delivery-judgment-pass-rate': 1,
         'delivery-deterministic-checks': 1,
+        'delivery-acceptance-contract-coverage': 1,
       }),
       rationale: 'A built run should hand off to tester, not claim deployment completion.',
     },
