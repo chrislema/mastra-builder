@@ -1396,6 +1396,22 @@ function taskOwnsRunRoute(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|candidate)|(?:run|latest|regeneration|candidate)(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
+function taskOwnsManualRunRoute(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/runs?|run(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsLatestRoute(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/latest|latest(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsRegenerationRoute(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/regeneration|routes\/regenerate|regeneration(?:Routes|Handlers)|regenerate(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsCandidateRoute(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/candidates?|candidate(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+}
+
 function taskOwnsRunRepositorySurface(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:storage\/runs|runRepository)\.[cm]?[jt]s$/i);
 }
@@ -1406,6 +1422,14 @@ function taskOwnsTranscriptRepositorySurface(task: Task) {
 
 function taskOwnsWorkflowSurface(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:(?:workflows\/)?weeklyWorkflow|workflow|scheduler)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsWorkflowExecutionSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:(?:workflows\/)?weeklyWorkflow|workflow)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsSchedulerSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/scheduler\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsContractSurface(task: Task) {
@@ -1707,9 +1731,142 @@ function routeEndpointContractCriterion(criterion: string) {
   );
 }
 
+function routeEndpointCriterionBelongsToTask(task: Task, criterion: string) {
+  if (/\/profiles?(?:\b|\/|:)/i.test(criterion)) return taskOwnsProfileRoute(task);
+  if (/\/latest\b/i.test(criterion)) return taskOwnsLatestRoute(task);
+  if (/(?:\/runs\/:id\/regenerate|regenerat)/i.test(criterion)) return taskOwnsRegenerationRoute(task);
+  if (/(?:\/runs\/:id\/candidates?|candidates?)\b/i.test(criterion)) return taskOwnsCandidateRoute(task);
+  if (/\/runs(?:\b|\/:id\b)/i.test(criterion)) return taskOwnsManualRunRoute(task);
+  if (/\b(?:session|login|logout)\b/i.test(criterion)) return taskOwnsSessionRoute(task);
+  if (/\b(?:GET|POST|PUT|PATCH|DELETE)\s+\//i.test(criterion)) return false;
+  return true;
+}
+
 function taskRouteEndpointSourceCriteria(task: Task) {
   if (!taskOwnsRouteModule(task) || !task.source_acceptance_criteria?.length) return [];
-  return task.source_acceptance_criteria.filter(routeEndpointContractCriterion);
+  return task.source_acceptance_criteria.filter(
+    (criterion) => routeEndpointContractCriterion(criterion) && routeEndpointCriterionBelongsToTask(task, criterion),
+  );
+}
+
+function taskRunRouteFamilyLabel(task: Task) {
+  const families = [
+    taskOwnsManualRunRoute(task) ? 'run' : undefined,
+    taskOwnsLatestRoute(task) ? 'latest' : undefined,
+    taskOwnsRegenerationRoute(task) ? 'regeneration' : undefined,
+    taskOwnsCandidateRoute(task) ? 'candidate' : undefined,
+  ].filter(Boolean);
+  return families.length ? families.join(', ') : 'run';
+}
+
+function runRouteMutationCriterion(task: Task) {
+  const mutations = [
+    taskOwnsManualRunRoute(task) ? 'run creation' : undefined,
+    taskOwnsRegenerationRoute(task) ? 'regeneration' : undefined,
+  ].filter(Boolean);
+  if (!mutations.length) return undefined;
+  return `Cookie-authenticated ${mutations.join(' and ')} mutations enforce the session CSRF token or same-origin Origin validation contract from the auth/session boundary.`;
+}
+
+function routeReachabilityNames(tasks: Task[], routeTasks: Task[]) {
+  return [
+    tasks.some(taskOwnsSessionRoute) ? 'browser session' : undefined,
+    routeTasks.some(taskOwnsProfileRoute) ? 'profile' : undefined,
+    routeTasks.some(taskOwnsManualRunRoute) ? 'run' : undefined,
+    routeTasks.some(taskOwnsLatestRoute) ? 'latest' : undefined,
+    routeTasks.some(taskOwnsRegenerationRoute) ? 'regenerate' : undefined,
+    routeTasks.some(taskOwnsCandidateRoute) ? 'candidate' : undefined,
+    'health',
+    'static asset fallback',
+  ].filter(Boolean);
+}
+
+function routeReachabilityCriterion(criterion: string) {
+  return /\bmakes? .+ routes reachable through the Worker fetch path\b/i.test(criterion);
+}
+
+function routeIntegrationCriterion(routerSurface: string, routeNames: Array<string | undefined>) {
+  return `${routerSurface} makes ${routeNames.join(', ')} routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`;
+}
+
+function sessionRouteCriteria(surface: string) {
+  return [
+    `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
+    `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
+    `${surface} issues a stateless signed expiring session cookie whose payload includes an expiration timestamp, whose signature is verified with WebCrypto HMAC using SESSION_SECRET when configured or ADMIN_TOKEN as the fallback signing secret, and whose validation rejects tampered or expired cookies before protected route handlers run.`,
+    `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, returns structured 401/403 responses for invalid credentials, and establishes the CSRF token or same-origin Origin validation contract used by cookie-authenticated browser mutations.`,
+  ];
+}
+
+function routeOwnershipDriftCriterion(task: Task, criterion: string) {
+  if (taskOwnsRouterSurface(task) && !taskHasRouteIntegrationContract(task)) {
+    if (
+      /router surface explicitly registers the browser session endpoint/i.test(criterion) ||
+      /Route integration defines and enforces the protection matrix/i.test(criterion)
+    ) {
+      return true;
+    }
+  }
+
+  if (!taskOwnsRouteModule(task)) return false;
+  if (routeEndpointContractCriterion(criterion) && !routeEndpointCriterionBelongsToTask(task, criterion)) return true;
+
+  if (taskOwnsRunRoute(task)) {
+    if (/^Run, latest, candidate, and regeneration routes delegate/i.test(criterion)) return true;
+    if (!taskOwnsRegenerationRoute(task) && /Transcript regeneration inserts/i.test(criterion)) return true;
+  }
+
+  return false;
+}
+
+function withoutRouteOwnershipDriftCriteria(task: Task) {
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !routeOwnershipDriftCriterion(task, criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !routeOwnershipDriftCriterion(task, criterion),
+  );
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function schedulerWorkflowExecutionCriterion(criterion: string) {
+  return (
+    /^Scheduled triggers and manual run routes create queued run records only/i.test(criterion) ||
+    /^Workflow treats an empty bookmark list as a completed_empty terminal run/i.test(criterion) ||
+    /^Workflow execution receives or resumes a queued run/i.test(criterion) ||
+    /^Workflow profile-loading steps call the profile summary service boundary/i.test(criterion)
+  );
+}
+
+function withoutSchedulerWorkflowExecutionCriteria(task: Task) {
+  if (!taskOwnsSchedulerSurface(task) || taskOwnsWorkflowExecutionSurface(task)) return task;
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !schedulerWorkflowExecutionCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !schedulerWorkflowExecutionCriterion(criterion),
+  );
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
 }
 
 function insertTaskAfterDependencies(tasks: Task[], task: Task) {
@@ -1825,12 +1982,18 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
     const expectedDependencies = sessionDependencyIds;
     let nextTasks = tasks.map((task) => {
         if (!taskOwnsSessionRoute(task)) return task;
+        const surface = taskOwnedBoundaryPaths(task).find((path) =>
+          /^src\/(?:routes\/session|sessionRoutes)\.[cm]?[jt]s$/i.test(path),
+        ) ?? 'src/sessionRoutes.js';
         const depends_on = expectedDependencies.filter((dependency) => dependency !== task.id);
-        if (depends_on.length === task.depends_on.length && depends_on.every((dependency, index) => dependency === task.depends_on[index])) {
+        const withCriteria = appendTaskAcceptanceCriteria(task, sessionRouteCriteria(surface));
+        const dependenciesUnchanged =
+          depends_on.length === task.depends_on.length && depends_on.every((dependency, index) => dependency === task.depends_on[index]);
+        if (dependenciesUnchanged && withCriteria === task) {
           return task;
         }
         changed = true;
-        return { ...task, depends_on };
+        return { ...withCriteria, depends_on };
       });
     for (const task of sessionTasks) {
       const moved = moveTaskAfterDependencies(nextTasks, task.id);
@@ -1849,11 +2012,7 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
     owner: 'engineer' as const,
     deliverable: 'Implement the browser-safe auth/session route boundary before protected feature routes and UI work.',
     depends_on: sessionDependencyIds,
-    acceptance_criteria: [
-      `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
-      `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
-      `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, returns structured 401/403 responses for invalid credentials, and establishes the CSRF token or same-origin Origin validation contract used by cookie-authenticated browser mutations.`,
-    ],
+    acceptance_criteria: sessionRouteCriteria(surface),
     owned_surfaces: [surface],
   };
 
@@ -1880,11 +2039,28 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
     tasks = tasks.map((task) => {
       if (!taskHasRouteIntegrationContract(task)) return task;
       const depends_on = expectedDependencies.filter((dependency) => dependency !== task.id);
-      if (depends_on.length === task.depends_on.length && depends_on.every((dependency, index) => dependency === task.depends_on[index])) {
+      const routerSurface = taskOwnedBoundaryPaths(task).find((path) =>
+        /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/.test(path),
+      ) ?? 'src/router.js';
+      const expectedRouteCriterion = routeIntegrationCriterion(routerSurface, routeReachabilityNames(tasks, routeTasks));
+      let replacedReachability = false;
+      const acceptance_criteria = task.acceptance_criteria.map((criterion) => {
+        if (!routeReachabilityCriterion(criterion)) return criterion;
+        replacedReachability = true;
+        return expectedRouteCriterion;
+      });
+      if (!replacedReachability) acceptance_criteria.push(expectedRouteCriterion);
+      const withCriteria = { ...task, acceptance_criteria: Array.from(new Set(acceptance_criteria)) };
+      const dependenciesUnchanged =
+        depends_on.length === task.depends_on.length && depends_on.every((dependency, index) => dependency === task.depends_on[index]);
+      const criteriaUnchanged =
+        withCriteria.acceptance_criteria.length === task.acceptance_criteria.length &&
+        withCriteria.acceptance_criteria.every((criterion, index) => criterion === task.acceptance_criteria[index]);
+      if (dependenciesUnchanged && criteriaUnchanged) {
         return task;
       }
       changed = true;
-      return { ...task, depends_on };
+      return { ...withCriteria, depends_on };
     });
     for (const task of tasks.filter(taskHasRouteIntegrationContract)) {
       const moved = moveTaskAfterDependencies(tasks, task.id);
@@ -1900,6 +2076,7 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   const depends_on = Array.from(
     new Set([...routerTasks, ...routeTasks].map((task) => finalGeneratedSliceTaskId(tasks, task.id))),
   );
+  const routeNames = routeReachabilityNames(tasks, routeTasks);
 
   const integrationTask = {
     id: uniqueTaskId({ ...taskPlan, tasks }, 'E98-route-integration'),
@@ -1908,7 +2085,7 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
     depends_on,
     acceptance_criteria: [
       `${routerSurface} is the single API route registration boundary after feature route modules exist.`,
-      `${routerSurface} makes browser session, profile, run, latest, regenerate, candidate, health, and static asset fallback routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`,
+      routeIntegrationCriterion(routerSurface, routeNames),
       'Every declared API endpoint is reachable through the router after this task completes.',
       'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
     ],
@@ -1917,6 +2094,62 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
 
   return {
     tasks: insertTaskAfterDependencies(tasks, integrationTask),
+    changed: true,
+  };
+}
+
+function withWorkerEntrypointIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
+  const rootScaffoldIndexTask = tasks.find((task) => taskIsRootScaffold(task) && taskOwnsIndexSurface(task));
+  if (!rootScaffoldIndexTask) return { tasks, changed: false };
+
+  const nonRootIndexTasks = tasks.filter((task) => taskOwnsIndexSurface(task) && !taskIsRootScaffold(task));
+  const integrationTask = tasks.find(taskHasRouteIntegrationContract);
+  const workflowTasks = tasks.filter(taskOwnsWorkflowExecutionSurface);
+  const schedulerTasks = tasks.filter(taskOwnsSchedulerSurface);
+  if (!integrationTask || !workflowTasks.length || !schedulerTasks.length) return { tasks, changed: false };
+
+  const dependencies = Array.from(
+    new Set([
+      integrationTask.id,
+      ...workflowTasks.map((task) => finalGeneratedSliceTaskId(tasks, task.id)),
+      ...schedulerTasks.map((task) => finalGeneratedSliceTaskId(tasks, task.id)),
+    ]),
+  );
+  const criteria = [
+    'src/index.js is the final Worker module entrypoint after router, scheduler, and workflow modules exist.',
+    'src/index.js delegates fetch handling to src/router.js and keeps static asset fallback reachable through the router/fetch path.',
+    'src/index.js delegates scheduled handling to src/scheduler.js so scheduled triggers create queued run records and start WEEKLY_WORKFLOW without duplicating workflow execution logic.',
+    'src/index.js exports the real WeeklyWorkflow implementation with the configured class name "WeeklyWorkflow" and delegates execution to the workflow module rather than leaving the scaffold stub in place.',
+  ];
+
+  if (nonRootIndexTasks.length) {
+    let changed = false;
+    let nextTasks = tasks.map((task) => {
+      if (!nonRootIndexTasks.some((indexTask) => indexTask.id === task.id)) return task;
+      const withDependencies = appendDependencies(task, dependencies);
+      const withCriteria = appendTaskAcceptanceCriteria(withDependencies, criteria);
+      if (withCriteria !== task) changed = true;
+      return withCriteria;
+    });
+    for (const task of nonRootIndexTasks) {
+      const moved = moveTaskAfterDependencies(nextTasks, task.id);
+      if (moved.changed) changed = true;
+      nextTasks = moved.tasks;
+    }
+    return { tasks: nextTasks, changed };
+  }
+
+  const entryTask = {
+    id: uniqueTaskId({ ...taskPlan, tasks }, 'E99-worker-entrypoint-integration'),
+    owner: 'engineer' as const,
+    deliverable: 'Wire the final Worker entrypoint after routes, scheduler, and workflow implementation exist.',
+    depends_on: dependencies,
+    acceptance_criteria: criteria,
+    owned_surfaces: ['src/index.js'],
+  };
+
+  return {
+    tasks: insertTaskAfterDependencies(tasks, entryTask),
     changed: true,
   };
 }
@@ -2008,7 +2241,7 @@ function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
       if (!taskOwnsAuthSurface(task)) dependencies.push(...sessionTaskIds);
     }
 
-    if ((taskOwnsProfileRoute(task) || taskOwnsWorkflowSurface(task)) && !taskOwnsProfileSummarySurface(task)) {
+    if ((taskOwnsProfileRoute(task) || taskOwnsWorkflowExecutionSurface(task)) && !taskOwnsProfileSummarySurface(task)) {
       dependencies.push(...profileSummaryTaskIds);
     }
 
@@ -2092,6 +2325,18 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       task = workflowExportSanitized;
     }
 
+    const schedulerSanitized = withoutSchedulerWorkflowExecutionCriteria(task);
+    if (schedulerSanitized !== task) {
+      changed = true;
+      task = schedulerSanitized;
+    }
+
+    const routeOwnershipSanitized = withoutRouteOwnershipDriftCriteria(task);
+    if (routeOwnershipSanitized !== task) {
+      changed = true;
+      task = routeOwnershipSanitized;
+    }
+
     const migrationCanonicalized = canonicalizeProfileMigrationCriterionSurface(task);
     if (migrationCanonicalized !== task) {
       changed = true;
@@ -2120,6 +2365,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       } else {
         criteria.push(
           `${authSurface} provides a browser-safe auth/session boundary for the public UI: a dedicated session endpoint may exchange the operator credential for a short-lived HttpOnly SameSite cookie, and protected browser mutations must validate that session instead of requiring public/app.js to handle the raw ADMIN_TOKEN repeatedly.`,
+          `${authSurface} centralizes browser session validation for a stateless signed expiring session cookie: the cookie payload includes an expiration timestamp, is signed with WebCrypto HMAC using SESSION_SECRET when configured or ADMIN_TOKEN as the fallback signing secret, rejects tampering and expired sessions, and never stores the raw ADMIN_TOKEN in the cookie.`,
           `${authSurface} defines the browser mutation request-forgery guard for cookie-authenticated requests, using SameSite=Strict plus explicit Origin validation or CSRF token issuance and validation.`,
         );
       }
@@ -2166,7 +2412,13 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       );
     }
 
-    if (taskOwnsWorkflowSurface(task) && !taskIsRootScaffold(task)) {
+    if (taskOwnsSchedulerSurface(task) && !taskOwnsWorkflowExecutionSurface(task) && !taskIsRootScaffold(task)) {
+      criteria.push(
+        'Scheduled trigger handling creates or reuses queued run records and starts WEEKLY_WORKFLOW; scheduler code does not perform workflow execution, candidate scoring, transcript generation, or terminal completed/completed_empty/failed transitions directly.',
+      );
+    }
+
+    if (taskOwnsWorkflowExecutionSurface(task) && !taskIsRootScaffold(task)) {
       criteria.push(
         'Scheduled triggers and manual run routes create queued run records only; workflow execution is the boundary that transitions queued runs to running and then completed or failed.',
         'Workflow treats an empty bookmark list as a completed_empty terminal run with no transcript_id, records a no-bookmarks/no-transcript reason, and keeps latest transcript lookup focused on completed runs with transcripts.',
@@ -2176,13 +2428,15 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     }
 
     if (taskOwnsRunRoute(task)) {
+      const routeFamilies = taskRunRouteFamilyLabel(task);
+      const mutationCriterion = runRouteMutationCriterion(task);
       criteria.push(
-        'Run, latest, candidate, and regeneration routes delegate queued run creation, lifecycle transitions, transcript versioning, and candidate selection to service/repository boundaries instead of mutating D1 state directly in route handlers.',
-        'Cookie-authenticated run creation and regeneration mutations enforce the session CSRF token or same-origin Origin validation contract from the auth/session boundary.',
+        `${routeFamilies} route handlers delegate their owned run creation, lifecycle reads, latest transcript lookup, transcript versioning, or candidate selection behavior to service/repository boundaries instead of mutating D1 state directly in route handlers.`,
       );
+      if (mutationCriterion) criteria.push(mutationCriterion);
     }
 
-    if (taskOwnsTranscriptRepositorySurface(task) || taskOwnsRunRoute(task)) {
+    if (taskOwnsTranscriptRepositorySurface(task) || taskOwnsRegenerationRoute(task)) {
       criteria.push(
         'Transcript regeneration inserts a new transcript row, preserves prior transcript rows, updates the run current transcript pointer only when intended, and keeps GET /latest deterministic for the latest completed run.',
       );
@@ -2195,9 +2449,13 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (taskOwnsRouterSurface(task)) {
       criteria.push(
         'The router surface remains the single API route registration boundary; feature routes must be registered through the router rather than dispatched directly from src/index.js.',
-        'The router surface explicitly registers the browser session endpoint before UI work depends on it, so public/app.js can authenticate through the session route without handling raw ADMIN_TOKEN on feature mutations.',
-        'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
       );
+      if (taskHasRouteIntegrationContract(task)) {
+        criteria.push(
+          'The router surface explicitly registers the browser session endpoint before UI work depends on it, so public/app.js can authenticate through the session route without handling raw ADMIN_TOKEN on feature mutations.',
+          'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
+        );
+      }
     }
 
     criteria.push(...taskRouteEndpointSourceCriteria(task));
@@ -2217,7 +2475,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     if (taskOwnsReadme(task)) {
       criteria.push(
-        'README.md documents direct Authorization: Bearer <ADMIN_TOKEN> API/operator access, the browser-safe session/cookie flow for the public UI, and states that ADMIN_TOKEN is a Cloudflare secret that must not be committed or embedded in public assets.',
+        'README.md documents direct Authorization: Bearer <ADMIN_TOKEN> API/operator access, the browser-safe signed session/cookie flow for the public UI, SESSION_SECRET when configured, the ADMIN_TOKEN fallback signing behavior, and states that secrets must not be committed or embedded in public assets.',
       );
     }
 
@@ -2243,6 +2501,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
   if (withSummary.changed) {
     changed = true;
     tasks = withSummary.tasks;
+  }
+
+  const withEntrypoint = withWorkerEntrypointIntegrationTask(taskPlan, tasks);
+  if (withEntrypoint.changed) {
+    changed = true;
+    tasks = withEntrypoint.tasks;
   }
 
   const withDependencies = withCloudflareWorkerDependencyContracts(tasks);

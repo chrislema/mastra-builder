@@ -1214,6 +1214,7 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
 
   assert.match(criteria('T02'), /Authorization: Bearer <ADMIN_TOKEN>/);
   assert.match(criteria('T02'), /browser-safe auth\/session boundary/);
+  assert.match(criteria('T02'), /stateless signed expiring session cookie/);
   assert.match(criteria('T03'), /partial unique index where is_active = 1/);
   assert.match(criteria('T04'), /D1 transaction/);
   assert.match(criteria('T05'), /repository transaction/);
@@ -1221,7 +1222,7 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.match(criteria('T07'), /preserve the existing default fetch handler/);
   assert.match(criteria('T08'), /browser-safe auth\/session flow/);
   assert.doesNotMatch(criteria('T08'), /collects the admin token at runtime/);
-  assert.match(criteria('T09'), /ADMIN_TOKEN is a Cloudflare secret/);
+  assert.match(criteria('T09'), /signed session\/cookie flow/);
   assert.ok(integration);
   assert.deepEqual(integration?.owned_surfaces, ['src/router.js']);
   assert.deepEqual(integration?.depends_on, ['T02', 'E20-auth-session', 'T05', 'T06']);
@@ -1229,6 +1230,7 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /Every declared API endpoint is reachable through the router/);
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /protection matrix/);
   assert.ok(normalized.tasks.find((task) => task.id === 'E20-auth-session'));
+  assert.match(criteria('E20-auth-session'), /stateless signed expiring session cookie/);
 });
 
 test('task plan normalization keeps profile migration contracts on the owned migration filename', () => {
@@ -1254,6 +1256,77 @@ test('task plan normalization keeps profile migration contracts on the owned mig
 
   assert.match(criteria, /migrations\/0001_initial_schema\.sql enforces at most one active profile_artifacts row/);
   assert.doesNotMatch(criteria, /migrations\/0001_schema\.sql enforces at most one active profile_artifacts row/);
+});
+
+test('task plan normalization adds a final Worker entrypoint integration task when only scaffold owns src/index.js', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
+    },
+    {
+      id: 'T02',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/router.js', 'src/auth.js'],
+    },
+    {
+      id: 'T03',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/routes/runs.js'],
+    },
+    {
+      id: 'T04',
+      depends_on: ['T03'],
+      owned_surfaces: ['src/scheduler.js'],
+    },
+    {
+      id: 'T05',
+      depends_on: ['T04'],
+      owned_surfaces: ['src/workflow.js'],
+    },
+    {
+      id: 'T06',
+      depends_on: ['T03'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+      owner: 'designer',
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const entrypoint = byId['E99-worker-entrypoint-integration'];
+  const integration = byId['E98-route-integration'];
+
+  assert.ok(entrypoint);
+  assert.deepEqual(entrypoint.owned_surfaces, ['src/index.js']);
+  assert.ok(entrypoint.depends_on.includes(integration.id));
+  assert.ok(entrypoint.depends_on.includes('T04'));
+  assert.ok(entrypoint.depends_on.includes('T05'));
+  assert.match(entrypoint.acceptance_criteria.join('\n'), /delegates fetch handling to src\/router\.js/);
+  assert.match(entrypoint.acceptance_criteria.join('\n'), /exports the real WeeklyWorkflow implementation/);
+});
+
+test('task plan normalization does not declare candidate routes without an owned candidate route', () => {
+  const plan = taskPlan([
+    {
+      id: 'T02',
+      depends_on: [],
+      owned_surfaces: ['src/router.js', 'src/auth.js'],
+    },
+    {
+      id: 'T03',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/routes/runs.js', 'src/routes/latest.js', 'src/routes/regenerate.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const integration = normalized.tasks.find((task) => task.id === 'E98-route-integration');
+
+  assert.ok(integration);
+  assert.doesNotMatch(integration.acceptance_criteria.join('\n'), /candidate/);
+  assert.match(integration.acceptance_criteria.join('\n'), /run, latest, regenerate/);
 });
 
 test('task plan normalization recognizes flat Worker http and route module names', () => {
@@ -1514,6 +1587,23 @@ test('task plan normalization attaches Worker lifecycle contracts to workflow an
   assert.match(criteria, /completed_empty terminal run/);
 });
 
+test('task plan normalization keeps scheduler-only slices out of workflow terminal-state ownership', () => {
+  const plan = taskPlan([
+    {
+      id: 'T08-part-2',
+      depends_on: ['T08'],
+      owned_surfaces: ['src/regenerateRoutes.js', 'src/scheduler.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const criteria = normalized.tasks[0].acceptance_criteria.join('\n');
+
+  assert.match(criteria, /starts WEEKLY_WORKFLOW/);
+  assert.doesNotMatch(criteria, /completed_empty terminal run/);
+  assert.doesNotMatch(criteria, /transitions queued runs to running and then completed or failed/);
+});
+
 test('task plan normalization promotes route source endpoint contracts into task-local acceptance criteria', () => {
   const plan = taskPlan([
     {
@@ -1532,6 +1622,43 @@ test('task plan normalization promotes route source endpoint contracts into task
 
   assert.match(criteria, /POST \/runs\/:id\/regenerate stores a new transcript version/);
   assert.match(criteria, /GET \/runs\/:id\/candidates returns candidate briefs/);
+});
+
+test('task plan normalization scopes copied endpoint contracts to the owning route slice', () => {
+  const sourceContracts = [
+    'POST /runs creates a manual run with a default seven-day window when windowDays is omitted.',
+    'GET /runs/:id returns run status, window, profile IDs, selected candidate ID, and transcript ID.',
+    'GET /latest returns the latest completed transcript with title, hook, transcript, captions, sourceUrls, primarySegment, and whyThisWasPicked.',
+    'POST /runs/:id/regenerate regenerates a transcript for the selected candidate or provided candidate ID using the stored profile versions and optional instruction.',
+  ];
+  const plan = taskPlan([
+    {
+      id: 'T08',
+      depends_on: ['T07'],
+      owned_surfaces: ['src/runRoutes.js', 'src/latestRoutes.js'],
+    },
+    {
+      id: 'T08-part-2',
+      depends_on: ['T08'],
+      owned_surfaces: ['src/regenerateRoutes.js', 'src/scheduler.js'],
+    },
+  ]);
+  (plan.tasks[0] as any).source_acceptance_criteria = sourceContracts;
+  (plan.tasks[1] as any).source_acceptance_criteria = sourceContracts;
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const firstSliceCriteria = byId.T08.acceptance_criteria.join('\n');
+  const secondSliceCriteria = byId['T08-part-2'].acceptance_criteria.join('\n');
+
+  assert.match(firstSliceCriteria, /POST \/runs creates a manual run/);
+  assert.match(firstSliceCriteria, /GET \/latest returns/);
+  assert.doesNotMatch(firstSliceCriteria, /POST \/runs\/:id\/regenerate/);
+  assert.doesNotMatch(firstSliceCriteria, /Transcript regeneration inserts/);
+  assert.doesNotMatch(firstSliceCriteria, /candidate, and regeneration routes/);
+  assert.match(secondSliceCriteria, /POST \/runs\/:id\/regenerate/);
+  assert.doesNotMatch(secondSliceCriteria, /GET \/latest returns/);
+  assert.match(secondSliceCriteria, /Transcript regeneration inserts/);
 });
 
 test('task plan normalization canonicalizes no-bookmark status and workflow export contracts', () => {
@@ -1736,7 +1863,8 @@ test('task plan normalization collapses duplicate route integration tasks and re
   assert.deepEqual(integrationTasks.map((task) => task.id), ['E98-route-integration']);
   assert.deepEqual(integrationTasks[0].depends_on, ['T06', 'E20-auth-session', 'T07']);
   assert.deepEqual(consumer?.depends_on, ['E98-route-integration', 'E20-auth-session']);
-  assert.match(integrationTasks[0].acceptance_criteria.join('\n'), /profile and run routes reachable/);
+  assert.match(integrationTasks[0].acceptance_criteria.join('\n'), /browser session, profile, health, static asset fallback routes reachable/);
+  assert.doesNotMatch(integrationTasks[0].acceptance_criteria.join('\n'), /profile and run routes reachable/);
 });
 
 test('task plan normalization appends operator documentation task', () => {
