@@ -1448,6 +1448,22 @@ test('task plan normalization attaches Worker lifecycle contracts to workflow an
   assert.match(criteria, /completed_empty terminal run/);
 });
 
+test('task plan normalization removes empty-run lifecycle drift outside workflow-named files', () => {
+  const plan = taskPlan([
+    {
+      id: 'T06',
+      depends_on: ['T05'],
+      owned_surfaces: ['src/prompts.js', 'src/pipeline.js'],
+      acceptance_criteria: ['src/pipeline.js treats an empty bookmark list as a completed run with no transcript.'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const criteria = normalized.tasks[0].acceptance_criteria.join('\n');
+
+  assert.doesNotMatch(criteria, /completed run with no transcript/);
+});
+
 test('task plan normalization moves AI output validation contracts to explicit validation surfaces', () => {
   const plan = taskPlan([
     {
