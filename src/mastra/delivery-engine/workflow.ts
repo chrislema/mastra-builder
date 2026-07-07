@@ -1365,19 +1365,47 @@ function taskOwnsPathMatching(task: Task, pattern: RegExp) {
 }
 
 function taskOwnsRouterSurface(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:http\/)?router\.[cm]?[jt]s$/);
+  return taskOwnsPathMatching(task, /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/);
 }
 
 function taskOwnsRouteModule(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/routes(?:\/|[A-Z]).*\.[cm]?[jt]s$/);
+  return taskOwnsPathMatching(task, /^src\/(?:routes(?:\/|[A-Z]).*|[A-Za-z0-9_-]*Routes)\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsProfileRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*profiles?|routesProfiles)\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*profiles?|routesProfiles|profileRoutes)\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsProfileRepositorySurface(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:storage\/profiles|profileRepository)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsRunRoute(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|candidate)|(?:run|latest|regeneration|candidate)Routes)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsRunRepositorySurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:storage\/runs|runRepository)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsTranscriptRepositorySurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:storage\/transcripts|transcriptRepository)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsWorkflowSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:workflows\/weeklyWorkflow|weeklyWorkflow)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsContractSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:contracts|validation)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsAiValidationSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:aiJson|validation|contracts)\.[cm]?[jt]s$/i);
+}
+
+function taskOwnsAiPipelineSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:candidatePipeline|scoring|transcriptGenerator|prompts|aiClient)\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsAuthSurface(task: Task) {
@@ -1399,6 +1427,35 @@ function taskOwnsReadme(task: Task) {
 function appendTaskAcceptanceCriteria(task: Task, criteria: string[]) {
   const acceptance_criteria = Array.from(new Set([...task.acceptance_criteria, ...criteria]));
   return acceptance_criteria.length === task.acceptance_criteria.length ? task : { ...task, acceptance_criteria };
+}
+
+function publicUiRawAdminTokenCriterion(criterion: string) {
+  return (
+    /\bpublic\/app\.js\b/i.test(criterion) &&
+    /\bADMIN_TOKEN\b/.test(criterion) &&
+    /\b(collects?|sends?|Authorization:\s*Bearer|raw)\b/i.test(criterion) &&
+    !/\b(browser-safe|session|cookie|HttpOnly)\b/i.test(criterion)
+  );
+}
+
+function withoutPublicUiRawAdminTokenCriteria(task: Task) {
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !publicUiRawAdminTokenCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !publicUiRawAdminTokenCriterion(criterion),
+  );
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
 }
 
 function taskHasRouteIntegrationContract(task: Task) {
@@ -1457,7 +1514,7 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   if (alreadyHasIntegration) return { tasks, changed: deduped.changed };
 
   const routerSurface = taskOwnedBoundaryPaths(routerTasks[routerTasks.length - 1]).find((path) =>
-    /^src\/(?:http\/)?router\.[cm]?[jt]s$/.test(path),
+    /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/.test(path),
   ) ?? 'src/router.js';
   const depends_on = Array.from(new Set([...routerTasks, ...routeTasks].map((task) => task.id)));
 
@@ -1488,17 +1545,26 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
   const hasProfileState = taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
 
   let tasks = taskPlan.tasks.map((task) => {
+    if (taskOwnsPublicAppSurface(task)) {
+      const sanitized = withoutPublicUiRawAdminTokenCriteria(task);
+      if (sanitized !== task) {
+        changed = true;
+        task = sanitized;
+      }
+    }
+
     const criteria: string[] = [];
 
     if (taskOwnsAuthSurface(task)) {
       criteria.push(
-        'src/auth.js defines the protected endpoint credential contract as Authorization: Bearer <ADMIN_TOKEN>, rejects missing or invalid credentials with structured 401/403 responses, and never reads committed or static secrets.',
+        'src/auth.js defines the protected operator credential contract as Authorization: Bearer <ADMIN_TOKEN> for API/operator calls, rejects missing or invalid credentials with structured 401/403 responses, fails closed when ADMIN_TOKEN is missing, and never reads committed or static secrets.',
+        'src/auth.js provides a browser-safe auth/session boundary for the public UI: a dedicated session endpoint may exchange the operator credential for a short-lived HttpOnly SameSite cookie, and protected browser mutations must validate that session instead of requiring public/app.js to handle the raw ADMIN_TOKEN repeatedly.',
       );
     }
 
     if (hasAuthSurface && taskOwnsPublicAppSurface(task)) {
       criteria.push(
-        'public/app.js collects the admin token at runtime for protected profile, run, activation, and regeneration calls; sends Authorization: Bearer <ADMIN_TOKEN>; handles missing or invalid token responses; and never hardcodes secrets in public files.',
+        'public/app.js uses the browser-safe auth/session flow for protected profile, run, activation, and regeneration calls; sends protected mutation requests with credentials included; handles unauthenticated responses; and never hardcodes, persists, or sends the raw ADMIN_TOKEN directly to feature mutation endpoints.',
       );
     }
 
@@ -1517,6 +1583,43 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (taskOwnsProfileRoute(task)) {
       criteria.push(
         'Profile upload and activation routes use the profile repository transaction for active-profile state changes instead of duplicating active-state authority in route code.',
+        'Profile upload, profile activation, and profile listing routes use the auth/session boundary; for this single-user private MVP, GET /profiles must not expose private profile metadata without authentication.',
+      );
+    }
+
+    if (taskOwnsContractSurface(task)) {
+      criteria.push(
+        'Run lifecycle contract defines the allowed state transitions queued -> running -> completed|failed, with route/scheduled code responsible for creating queued runs and workflow code responsible for running and terminal transitions.',
+      );
+    }
+
+    if (taskOwnsRunRepositorySurface(task)) {
+      criteria.push(
+        'Run repository exposes idempotent transition helpers that enforce the run lifecycle contract and record exact profile artifact IDs used by a run before processing begins.',
+      );
+    }
+
+    if (taskOwnsWorkflowSurface(task)) {
+      criteria.push(
+        'Workflow execution receives or resumes a queued run, transitions it to running and then completed or failed, and does not create duplicate run records for the same workflow invocation.',
+      );
+    }
+
+    if (taskOwnsRunRoute(task)) {
+      criteria.push(
+        'Run, latest, candidate, and regeneration routes delegate queued run creation, lifecycle transitions, transcript versioning, and candidate selection to service/repository boundaries instead of mutating D1 state directly in route handlers.',
+      );
+    }
+
+    if (taskOwnsTranscriptRepositorySurface(task) || taskOwnsRunRoute(task)) {
+      criteria.push(
+        'Transcript regeneration inserts a new transcript row, preserves prior transcript rows, updates the run current transcript pointer only when intended, and keeps GET /latest deterministic for the latest completed run.',
+      );
+    }
+
+    if (taskOwnsAiValidationSurface(task) || taskOwnsAiPipelineSurface(task)) {
+      criteria.push(
+        'AI output validation treats model JSON as untrusted input: scores are bounded integers, required rationales and transcript fields are non-empty, sourceUrls are preserved from selected sources, primarySegment is supplied, and word counts are computed by code before persistence.',
       );
     }
 
@@ -1529,12 +1632,13 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (indexOwnerCount > 1 && taskOwnsIndexSurface(task)) {
       criteria.push(
         'src/index.js changes preserve the existing default fetch handler, scheduled handler wiring, static asset fallback path, and WeeklyWorkflow export introduced by earlier tasks.',
+        'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may delegate to src/weeklyWorkflow.js without changing the configured export.',
       );
     }
 
     if (taskOwnsReadme(task)) {
       criteria.push(
-        'README.md documents the Authorization: Bearer <ADMIN_TOKEN> flow for protected endpoints and states that ADMIN_TOKEN is a Cloudflare secret that must not be committed or embedded in public assets.',
+        'README.md documents direct Authorization: Bearer <ADMIN_TOKEN> API/operator access, the browser-safe session/cookie flow for the public UI, and states that ADMIN_TOKEN is a Cloudflare secret that must not be committed or embedded in public assets.',
       );
     }
 
