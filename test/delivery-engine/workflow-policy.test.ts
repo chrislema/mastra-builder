@@ -2842,6 +2842,44 @@ test('acceptance contracts verify Worker type constants and result envelopes str
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /structured src\/types\.ts evidence/);
 });
 
+test('acceptance contracts verify minimal Hono Worker entrypoint structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-minimal-entrypoint-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      '',
+      'const app = new Hono();',
+      '',
+      'app.get("/", (c) => c.text("Benchmark Worker scaffold is running."));',
+      'app.get("/api/health", (c) => c.json({ ok: true }));',
+      '',
+      'export default app;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['src/index.ts'],
+      acceptance_criteria: [
+        'src/index.ts exists as a minimal Worker module entrypoint that can be loaded by Wrangler and returns a basic response before later API wiring.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contracts[0].status, 'verified');
+  assert.match(contracts[0].evidence.join('\n'), /minimal Worker entrypoint with a basic response/);
+});
+
 test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-scaffold-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

@@ -8368,6 +8368,50 @@ function honoWorkerEntrypointContractEvidence({
   };
 }
 
+function workerMinimalEntrypointContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bsrc\/index\.(js|ts)\b/i.test(criterion)) return undefined;
+  if (!/\bminimal Worker module entrypoint\b|\bloaded by Wrangler\b|\bbasic response\b/i.test(criterion)) return undefined;
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  const exportsWorker =
+    /export\s+default\s+[A-Za-z_$][\w$]*\s*;?/m.test(source) ||
+    /export\s+default\s+\{[\s\S]*\bfetch\s*(?:\(|:)[\s\S]*\}/m.test(source) ||
+    /export\s+(?:async\s+)?function\s+fetch\s*\(/m.test(source);
+  if (!exportsWorker) {
+    gaps.push(`${indexPath} must export a Worker module entrypoint.`);
+  }
+  if (!/(?:\bnew\s+Hono\b|\bfetch\s*\()/.test(source)) {
+    gaps.push(`${indexPath} must define a Worker fetch path or Hono app.`);
+  }
+  if (!/(?:\.(?:text|json|html)\s*\(|new\s+Response\s*\(|Response\.json\s*\()/.test(source)) {
+    gaps.push(`${indexPath} must return a basic Response before later API wiring.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured ${indexPath} evidence verified a minimal Worker entrypoint with a basic response`],
+    gaps: [],
+  };
+}
+
 function configScopeHasAdminTokenVar(scope: Record<string, unknown> | undefined) {
   const vars = recordValue(scope?.vars);
   return Boolean(vars && Object.prototype.hasOwnProperty.call(vars, 'ADMIN_TOKEN'));
@@ -8717,6 +8761,9 @@ function acceptanceCriterionEvidence({
 
   const honoEntrypointEvidence = honoWorkerEntrypointContractEvidence({ criterion, repoPath, task });
   if (honoEntrypointEvidence) return honoEntrypointEvidence;
+
+  const workerMinimalEntrypointEvidence = workerMinimalEntrypointContractEvidence({ criterion, repoPath, task });
+  if (workerMinimalEntrypointEvidence) return workerMinimalEntrypointEvidence;
 
   const fileEvidence = acceptanceCriterionFileEvidence({ criterion, repoPath, task });
   if (fileEvidence) return { passed: true, evidence: [fileEvidence], gaps: [] };
