@@ -1224,8 +1224,9 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.match(criteria('T09'), /ADMIN_TOKEN is a Cloudflare secret/);
   assert.ok(integration);
   assert.deepEqual(integration?.owned_surfaces, ['src/router.js']);
-  assert.deepEqual(integration?.depends_on, ['T02', 'T05', 'T06']);
+  assert.deepEqual(integration?.depends_on, ['T02', 'T05', 'T06', 'E20-auth-session']);
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /Every declared API endpoint is reachable through the router/);
+  assert.ok(normalized.tasks.find((task) => task.id === 'E20-auth-session'));
 });
 
 test('task plan normalization recognizes flat Worker http and route module names', () => {
@@ -1299,7 +1300,8 @@ test('task plan normalization recognizes flat Worker http and route module names
   assert.match(criteria('T10'), /browser-safe auth\/session flow/);
   assert.ok(integration);
   assert.deepEqual(integration?.owned_surfaces, ['src/http.js']);
-  assert.deepEqual(integration?.depends_on, ['T04', 'T06', 'T08']);
+  assert.deepEqual(integration?.depends_on, ['T04', 'T06', 'T08', 'E20-auth-session']);
+  assert.deepEqual(byId.T10.depends_on, ['T08', 'E20-auth-session', 'E98-route-integration']);
 });
 
 test('task plan normalization does not duplicate an existing route integration contract', () => {
@@ -1364,8 +1366,8 @@ test('task plan normalization collapses duplicate route integration tasks and re
   const consumer = normalized.tasks.find((task) => task.id === 'T13');
 
   assert.deepEqual(integrationTasks.map((task) => task.id), ['E98-route-integration']);
-  assert.deepEqual(integrationTasks[0].depends_on, ['T07']);
-  assert.deepEqual(consumer?.depends_on, ['E98-route-integration']);
+  assert.deepEqual(integrationTasks[0].depends_on, ['T06', 'T07', 'E20-auth-session']);
+  assert.deepEqual(consumer?.depends_on, ['E98-route-integration', 'E20-auth-session']);
   assert.match(integrationTasks[0].acceptance_criteria.join('\n'), /profile and run routes reachable/);
 });
 

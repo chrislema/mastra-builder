@@ -1372,6 +1372,10 @@ function taskOwnsRouteModule(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:routes(?:\/|[A-Z]).*|[A-Za-z0-9_-]*Routes)\.[cm]?[jt]s$/i);
 }
 
+function taskOwnsSessionRoute(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:routes\/session|sessionRoutes)\.[cm]?[jt]s$/i);
+}
+
 function taskOwnsProfileRoute(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:routes\/.*profiles?|routesProfiles|profileRoutes)\.[cm]?[jt]s$/i);
 }
@@ -1458,6 +1462,36 @@ function withoutPublicUiRawAdminTokenCriteria(task: Task) {
   };
 }
 
+function rootScaffoldWorkflowExecutionCriterion(criterion: string) {
+  return /\bWorkflow execution receives or resumes a queued run\b/i.test(criterion);
+}
+
+function taskIsRootScaffold(task: Task) {
+  return task.depends_on.length === 0 && ownsPackageScaffold(task) && taskOwnsIndexSurface(task);
+}
+
+function withoutRootScaffoldWorkflowExecutionCriteria(task: Task) {
+  if (!taskIsRootScaffold(task)) return task;
+
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !rootScaffoldWorkflowExecutionCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !rootScaffoldWorkflowExecutionCriterion(criterion),
+  );
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
 function taskHasRouteIntegrationContract(task: Task) {
   return (
     taskOwnsRouterSurface(task) &&
@@ -1502,16 +1536,65 @@ function dedupeRouteIntegrationTasks(tasks: Task[]) {
   };
 }
 
+function routeModuleStyle(tasks: Task[]) {
+  return tasks.some((task) => taskOwnedBoundaryPaths(task).some((path) => path.startsWith('src/routes/'))) ? 'nested' : 'flat';
+}
+
+function routerBoundaryProviderTasks(tasks: Task[]) {
+  return tasks.filter((task) => taskOwnsRouterSurface(task) && !taskHasRouteIntegrationContract(task));
+}
+
+function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
+  const hasPublicApp = tasks.some(taskOwnsPublicAppSurface);
+  const authTasks = tasks.filter(taskOwnsAuthSurface);
+  const routerTasks = routerBoundaryProviderTasks(tasks);
+  if (!hasPublicApp || !authTasks.length || tasks.some(taskOwnsSessionRoute)) return { tasks, changed: false };
+
+  const surface = routeModuleStyle(tasks) === 'nested' ? 'src/routes/session.js' : 'src/sessionRoutes.js';
+  return {
+    tasks: [
+      ...tasks,
+      {
+        id: uniqueTaskId({ ...taskPlan, tasks }, 'E20-auth-session'),
+        owner: 'engineer' as const,
+        deliverable: 'Implement the browser-safe auth/session route boundary before protected feature routes and UI work.',
+        depends_on: Array.from(new Set([...authTasks, ...routerTasks].map((task) => task.id))),
+        acceptance_criteria: [
+          `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
+          `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
+          `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, and returns structured 401/403 responses for invalid credentials.`,
+          'Protected profile, run, latest, and regeneration routes validate either direct API/operator Authorization: Bearer <ADMIN_TOKEN> access or the browser-safe session cookie through src/auth.js.',
+        ],
+        owned_surfaces: [surface],
+      },
+    ],
+    changed: true,
+  };
+}
+
 function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   const deduped = dedupeRouteIntegrationTasks(tasks);
   tasks = deduped.tasks;
 
   const routeTasks = tasks.filter(taskOwnsRouteModule);
-  const routerTasks = tasks.filter(taskOwnsRouterSurface);
+  const routerTasks = routerBoundaryProviderTasks(tasks);
   if (!routeTasks.length || !routerTasks.length) return { tasks, changed: deduped.changed };
 
   const alreadyHasIntegration = tasks.some(taskHasRouteIntegrationContract);
-  if (alreadyHasIntegration) return { tasks, changed: deduped.changed };
+  if (alreadyHasIntegration) {
+    let changed = deduped.changed;
+    const expectedDependencies = Array.from(new Set([...routerTasks, ...routeTasks].map((task) => task.id)));
+    tasks = tasks.map((task) => {
+      if (!taskHasRouteIntegrationContract(task)) return task;
+      const depends_on = expectedDependencies.filter((dependency) => dependency !== task.id);
+      if (depends_on.length === task.depends_on.length && depends_on.every((dependency, index) => dependency === task.depends_on[index])) {
+        return task;
+      }
+      changed = true;
+      return { ...task, depends_on };
+    });
+    return { tasks, changed };
+  }
 
   const routerSurface = taskOwnedBoundaryPaths(routerTasks[routerTasks.length - 1]).find((path) =>
     /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/.test(path),
@@ -1538,6 +1621,55 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   };
 }
 
+function taskDependsOnAny(task: Task, ids: Set<string>) {
+  return task.depends_on.some((dependency) => ids.has(dependency));
+}
+
+function appendDependencies(task: Task, dependencies: string[]) {
+  const depends_on = Array.from(new Set([...task.depends_on, ...dependencies.filter((dependency) => dependency !== task.id)]));
+  return depends_on.length === task.depends_on.length &&
+    depends_on.every((dependency, index) => dependency === task.depends_on[index])
+    ? task
+    : { ...task, depends_on };
+}
+
+function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
+  const routerTaskIds = new Set(routerBoundaryProviderTasks(tasks).map((task) => task.id));
+  const sessionTaskIds = new Set(tasks.filter(taskOwnsSessionRoute).map((task) => task.id));
+  const integrationTask = tasks.find(taskHasRouteIntegrationContract);
+  let changed = false;
+
+  const next = tasks.map((task) => {
+    const dependencies: string[] = [];
+
+    if (taskOwnsRouteModule(task) && !taskOwnsSessionRoute(task)) {
+      dependencies.push(...routerTaskIds, ...sessionTaskIds);
+    }
+
+    if (taskOwnsPublicAppSurface(task)) {
+      dependencies.push(...sessionTaskIds);
+      if (integrationTask) dependencies.push(integrationTask.id);
+    }
+
+    if (!taskIsRootScaffold(task) && taskOwnsIndexSurface(task) && integrationTask && task.id !== integrationTask.id) {
+      dependencies.push(integrationTask.id);
+    }
+
+    const filtered = dependencies.filter((dependency) => dependency !== task.id);
+    if (!filtered.length || taskDependsOnAny(task, new Set(filtered))) {
+      const appended = appendDependencies(task, filtered);
+      if (appended !== task) changed = true;
+      return appended;
+    }
+
+    const appended = appendDependencies(task, filtered);
+    if (appended !== task) changed = true;
+    return appended;
+  });
+
+  return { tasks: next, changed };
+}
+
 export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): TaskPlan {
   let changed = false;
   const indexOwnerCount = taskPlan.tasks.filter(taskOwnsIndexSurface).length;
@@ -1545,6 +1677,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
   const hasProfileState = taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
 
   let tasks = taskPlan.tasks.map((task) => {
+    const rootSanitized = withoutRootScaffoldWorkflowExecutionCriteria(task);
+    if (rootSanitized !== task) {
+      changed = true;
+      task = rootSanitized;
+    }
+
     if (taskOwnsPublicAppSurface(task)) {
       const sanitized = withoutPublicUiRawAdminTokenCriteria(task);
       if (sanitized !== task) {
@@ -1599,7 +1737,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       );
     }
 
-    if (taskOwnsWorkflowSurface(task)) {
+    if (taskOwnsWorkflowSurface(task) && !taskIsRootScaffold(task)) {
       criteria.push(
         'Workflow execution receives or resumes a queued run, transitions it to running and then completed or failed, and does not create duplicate run records for the same workflow invocation.',
       );
@@ -1648,10 +1786,22 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     return next;
   });
 
+  const withSession = withAuthSessionTask(taskPlan, tasks);
+  if (withSession.changed) {
+    changed = true;
+    tasks = withSession.tasks;
+  }
+
   const withIntegration = withRouteIntegrationTask(taskPlan, tasks);
   if (withIntegration.changed) {
     changed = true;
     tasks = withIntegration.tasks;
+  }
+
+  const withDependencies = withCloudflareWorkerDependencyContracts(tasks);
+  if (withDependencies.changed) {
+    changed = true;
+    tasks = withDependencies.tasks;
   }
 
   return changed ? { ...taskPlan, tasks } : taskPlan;
@@ -1937,9 +2087,9 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
 
 function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
   return normalizeTaskPlanOperatorDocumentation(
-    normalizeTaskPlanGeneratedSliceDependencies(
-      normalizeTaskPlanLargeStorageTasks(
-        normalizeTaskPlanCloudflareWorkerContracts(
+    normalizeTaskPlanCloudflareWorkerContracts(
+      normalizeTaskPlanGeneratedSliceDependencies(
+        normalizeTaskPlanLargeStorageTasks(
           normalizeTaskPlanConfigSchemaTasks(
             normalizeTaskPlanRoleBoundaries(
               normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
