@@ -1611,6 +1611,16 @@ function taskOwnsReadme(task: Task) {
   return taskOwnedBoundaryPaths(task).includes('README.md');
 }
 
+function taskPlanDeclaresWorkerWorkflow(tasks: Task[]) {
+  return tasks.some(
+    (task) =>
+      taskOwnsWorkflowSurface(task) ||
+      /\b(?:WorkflowEntrypoint|WeeklyWorkflow|WEEKLY_WORKFLOW|workflows\.class_name|Workers Workflows?)\b/i.test(
+        taskAcceptanceText(task),
+      ),
+  );
+}
+
 function appendTaskAcceptanceCriteria(task: Task, criteria: string[]) {
   const acceptance_criteria = Array.from(new Set([...task.acceptance_criteria, ...criteria]));
   return acceptance_criteria.length === task.acceptance_criteria.length ? task : { ...task, acceptance_criteria };
@@ -2696,6 +2706,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
   const hasAuthBoundary = taskPlan.tasks.some(taskOwnsOperatorAuthBoundary);
   const hasProfileState = taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
   const hasAiValidationSurface = taskPlan.tasks.some(taskOwnsAiValidationSurface);
+  const hasWorkerWorkflow = taskPlanDeclaresWorkerWorkflow(taskPlan.tasks);
 
   let tasks = taskPlan.tasks.map((task) => {
     const statusCanonicalized = withCanonicalCompletedEmptyStatus(task);
@@ -2890,20 +2901,20 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     criteria.push(...taskRouteEndpointDefaultCriteria(task));
     criteria.push(...taskRouteEndpointSourceCriteria(task));
 
-    if (taskIsRootScaffold(task) && taskOwnsWorkerConfigFile(task) && taskOwnsIndexSurface(task)) {
+    if (hasWorkerWorkflow && taskIsRootScaffold(task) && taskOwnsWorkerConfigFile(task) && taskOwnsIndexSurface(task)) {
       criteria.push(
         'src/index.js exports a minimal class named WeeklyWorkflow that extends WorkflowEntrypoint when wrangler.jsonc defines workflows.class_name "WeeklyWorkflow", so Wrangler dry-run validation succeeds before later workflow code fills in the implementation without changing the configured export name.',
       );
     }
 
-    if (indexOwnerCount > 1 && taskOwnsIndexSurface(task) && !taskIsRootScaffold(task)) {
+    if (hasWorkerWorkflow && indexOwnerCount > 1 && taskOwnsIndexSurface(task) && !taskIsRootScaffold(task)) {
       criteria.push(
         'src/index.js changes preserve the existing default fetch handler, scheduled handler wiring, static asset fallback path, and WeeklyWorkflow export introduced by earlier tasks.',
         'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may fill in or delegate implementation details without changing the configured export.',
       );
     }
 
-    if (taskOwnsReadme(task)) {
+    if (hasAuthBoundary && taskOwnsReadme(task)) {
       criteria.push(
         'README.md documents direct Authorization: Bearer <ADMIN_TOKEN> API/operator access, the browser-safe signed session/cookie flow for the public UI, the required separate SESSION_SECRET for session signing, and states that secrets must not be committed or embedded in public assets.',
       );
@@ -3087,12 +3098,25 @@ function generatedSliceAcceptanceCriterion(criterion: string) {
 
 function allProductAcceptanceContractCriteria(taskPlan: TaskPlan) {
   return allTaskAcceptanceContractCriteria(taskPlan).filter(
-    (contract) => !generatedSliceAcceptanceCriterion(contract.criterion),
+    (contract) =>
+      !generatedSliceAcceptanceCriterion(contract.criterion) &&
+      !conditionalGeneratedPolicyAcceptanceCriterion(contract.criterion),
   );
 }
 
 function revisedPlanCarriesCriterion(taskPlan: TaskPlan, criterion: string) {
   return taskPlan.tasks.some((task) => taskAcceptanceContractCriteria(task).includes(criterion));
+}
+
+function conditionalGeneratedPolicyAcceptanceCriterion(criterion: string) {
+  return (
+    /src\/index\.js exports a minimal class named WeeklyWorkflow that extends WorkflowEntrypoint when wrangler\.jsonc defines workflows\.class_name "WeeklyWorkflow"/i.test(
+      criterion,
+    ) ||
+    /src\/index\.js changes preserve the existing default fetch handler[\s\S]*WeeklyWorkflow export/i.test(criterion) ||
+    /src\/index\.js preserves a stable WeeklyWorkflow export/i.test(criterion) ||
+    /README\.md documents direct Authorization: Bearer <ADMIN_TOKEN>[\s\S]*SESSION_SECRET/i.test(criterion)
+  );
 }
 
 function revisedContractTargetIndex(tasks: Task[], contract: { taskId: string; sourceTaskId: string }) {

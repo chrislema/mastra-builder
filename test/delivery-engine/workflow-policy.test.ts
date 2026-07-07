@@ -1162,6 +1162,52 @@ test('task plan revision normalization carries forward dropped product contracts
   assert.deepEqual(preserved.taskPlan.tasks[0].source_acceptance_criteria, previous.tasks[0].acceptance_criteria);
 });
 
+test('task plan repair preservation ignores conditional generated policy contracts', () => {
+  const previous = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.ts'],
+      acceptance_criteria: [
+        'src/index.ts exports a Worker module entrypoint using Hono and returns JSON { ok: true, service: "benchmark" } from GET /api/health.',
+        'src/index.js exports a minimal class named WeeklyWorkflow that extends WorkflowEntrypoint when wrangler.jsonc defines workflows.class_name "WeeklyWorkflow", so Wrangler dry-run validation succeeds before later workflow code fills in the implementation without changing the configured export name.',
+      ],
+    },
+    {
+      id: 'T10',
+      depends_on: ['T01'],
+      owned_surfaces: ['README.md'],
+      acceptance_criteria: [
+        'README.md describes local Wrangler validation and human-approved production deployment.',
+        'README.md documents direct Authorization: Bearer <ADMIN_TOKEN> API/operator access, the browser-safe signed session/cookie flow for the public UI, the required separate SESSION_SECRET for session signing, and states that secrets must not be committed or embedded in public assets.',
+      ],
+    },
+  ]);
+  const revised = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.ts'],
+      acceptance_criteria: [
+        'src/index.ts exports a Worker module entrypoint using Hono and returns JSON { ok: true, service: "benchmark" } from GET /api/health.',
+      ],
+    },
+    {
+      id: 'T10',
+      depends_on: ['T01'],
+      owned_surfaces: ['README.md'],
+      acceptance_criteria: ['README.md describes local Wrangler validation and human-approved production deployment.'],
+    },
+  ]);
+
+  const preserved = preserveTaskPlanAcceptanceContracts(previous, revised);
+  const criteria = preserved.taskPlan.tasks.flatMap((task) => task.acceptance_criteria).join('\n');
+
+  assert.equal(preserved.carried, 0);
+  assert.deepEqual(taskPlanAcceptanceContractRegression(previous, revised), { passed: true, reason: 'ok' });
+  assert.doesNotMatch(criteria, /WeeklyWorkflow|WorkflowEntrypoint|ADMIN_TOKEN|SESSION_SECRET/);
+});
+
 test('task plan normalization splits Worker config and D1 schema tasks', () => {
   const plan = taskPlan([
     {
@@ -1293,6 +1339,59 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.match(criteria('E20-auth-session'), /stateless signed expiring session cookie/);
   assert.match(criteria('E20-auth-session'), /separate SESSION_SECRET/);
   assert.doesNotMatch(criteria('E20-auth-session'), /ADMIN_TOKEN as the fallback/);
+});
+
+test('task plan normalization does not inject workflow or auth contracts into stateless Worker plans', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', '.gitignore', 'wrangler.jsonc', 'tsconfig.json', 'src/index.ts'],
+      acceptance_criteria: [
+        'wrangler.jsonc sets main to "src/index.ts", configures Workers Static Assets, and mirrors an AI binding named "AI" in staging and production.',
+        'src/index.ts exports a Worker module entrypoint using Hono and returns JSON { ok: true, service: "benchmark" } from GET /api/health.',
+      ],
+    },
+    {
+      id: 'T04',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/index.ts'],
+      acceptance_criteria: [
+        'GET /api/models returns configured model rows without secret values.',
+        'POST /api/run executes requested model calls in parallel and isolates per-model failures.',
+      ],
+    },
+    {
+      id: 'T05',
+      owner: 'designer',
+      depends_on: ['T01'],
+      owned_surfaces: ['public/index.html'],
+      acceptance_criteria: ['public/index.html contains the model rail, setup form, and results area.'],
+    },
+    {
+      id: 'T07',
+      owner: 'designer',
+      depends_on: ['T04', 'T05'],
+      owned_surfaces: ['public/app.js'],
+      acceptance_criteria: [
+        'public/app.js keeps all run state in the browser and sends one /api/run request per selected model.',
+      ],
+    },
+    {
+      id: 'T10',
+      depends_on: ['T07'],
+      owned_surfaces: ['README.md'],
+      acceptance_criteria: [
+        'README.md documents Wrangler local validation, required Cloudflare bindings, optional provider secrets, git checkpoints, and human-approved wrangler deploy.',
+      ],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const criteria = normalized.tasks.flatMap((task) => task.acceptance_criteria).join('\n');
+
+  assert.doesNotMatch(criteria, /WeeklyWorkflow|WorkflowEntrypoint|workflows\.class_name/);
+  assert.doesNotMatch(criteria, /ADMIN_TOKEN|SESSION_SECRET|signed session|auth\/session/);
 });
 
 test('task plan normalization keeps profile migration contracts on the owned migration filename', () => {
