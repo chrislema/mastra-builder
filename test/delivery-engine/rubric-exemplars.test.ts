@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { buildJudgeArtifactPrompt, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
+import {
+  buildJudgeArtifactPrompt,
+  deliveryEngineAssetPath,
+  loadDeliveryEngineRubric,
+} from '../../src/mastra/delivery-engine/judgment.ts';
 
 const rubricDir = join(process.cwd(), 'src/mastra/delivery-engine/rubrics');
 
@@ -65,4 +70,24 @@ test('task-plan rubric tells the judge safe adapter risks are not blockers', () 
   assert.match(prompt, /unspecified external service contract is not a blocker/);
   assert.match(prompt, /safe_assumptions or risks/);
   assert.match(prompt, /src\/serviceClient\.ts/);
+});
+
+test('delivery engine asset paths can resolve from an explicit root outside the bundle', () => {
+  const previous = process.env.DELIVERY_ENGINE_ASSET_ROOT;
+  const root = mkdtempSync(join(tmpdir(), 'delivery-engine-assets-'));
+  const rubricsDir = join(root, 'rubrics');
+  const rubricPath = join(rubricsDir, 'task-plan.rubric.json');
+  mkdirSync(rubricsDir, { recursive: true });
+  writeFileSync(rubricPath, '{}\n');
+
+  try {
+    process.env.DELIVERY_ENGINE_ASSET_ROOT = root;
+    assert.equal(deliveryEngineAssetPath('rubrics', 'task-plan.rubric.json'), rubricPath);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DELIVERY_ENGINE_ASSET_ROOT;
+    } else {
+      process.env.DELIVERY_ENGINE_ASSET_ROOT = previous;
+    }
+  }
 });

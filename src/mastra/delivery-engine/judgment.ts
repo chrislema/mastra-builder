@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { DeterministicCheckName } from './checks';
@@ -101,7 +101,18 @@ type JudgedDimension = {
 const engineRoot = dirname(fileURLToPath(import.meta.url));
 
 export function deliveryEngineAssetPath(...parts: string[]) {
-  return join(engineRoot, ...parts);
+  const explicitRoot = process.env.DELIVERY_ENGINE_ASSET_ROOT;
+  const projectRoot = process.env.MASTRA_PROJECT_ROOT ?? process.env.SKILLS_BASE_DIR;
+  const candidates = [
+    explicitRoot ? resolve(explicitRoot) : undefined,
+    projectRoot ? resolve(projectRoot, 'src', 'mastra', 'delivery-engine') : undefined,
+    resolve(process.cwd(), 'src', 'mastra', 'delivery-engine'),
+    engineRoot,
+  ]
+    .filter((root): root is string => Boolean(root))
+    .map((root) => join(root, ...parts));
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0] ?? join(engineRoot, ...parts);
 }
 
 export function readJsonFile<T>(path: string) {
