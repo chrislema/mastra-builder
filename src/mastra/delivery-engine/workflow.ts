@@ -8700,6 +8700,74 @@ function workerTypesContractEvidence({
   };
 }
 
+function modelCatalogContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bsrc\/models\.ts\b|\bmodel catalog\b|\bcatalog(?:\s+(?:array|entries?|includes))?\b/i.test(criterion)) {
+    return undefined;
+  }
+  if (!taskBoundarySurfaces(repoPath, task).includes('src/models.ts')) return undefined;
+
+  const fullPath = join(resolve(repoPath), 'src/models.ts');
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  let inspected = false;
+
+  if (/\b(?:catalog array|Workers AI|Anthropic|z\.ai|OpenAI-compatible|openai-compatible)\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bexport\s+const\s+\w*CATALOG\w*\s*=|\bexport\s+const\s+\w*MODELS\w*\s*=/i.test(source)) {
+      gaps.push('src/models.ts must export a model catalog array.');
+    }
+    for (const provider of ['workers-ai', 'anthropic', 'openai-compatible']) {
+      if (!new RegExp(`provider\\s*:\\s*['"]${provider}['"]`).test(source)) {
+        gaps.push(`src/models.ts must include a ${provider} catalog entry.`);
+      }
+    }
+    if (!/vendor\s*:\s*['"]z\.ai['"]/i.test(source) || !/baseUrl\s*:\s*['"]https:\/\/api\.z\.ai\/api\/anthropic['"]/.test(source)) {
+      gaps.push('src/models.ts must include z.ai as an Anthropic-compatible catalog entry.');
+    }
+    if (!/baseUrl\s*:\s*['"]https:\/\/api\.openai\.com\/v1['"]/.test(source)) {
+      gaps.push('src/models.ts must include OpenAI-compatible baseUrl https://api.openai.com/v1.');
+    }
+  }
+
+  if (/\bid, label, vendor, provider, model\b/i.test(criterion)) {
+    inspected = true;
+    for (const field of ['id', 'label', 'vendor', 'provider', 'model']) {
+      if (!new RegExp(`\\b${field}\\s*:`).test(source)) {
+        gaps.push(`src/models.ts catalog entries must include ${field}.`);
+      }
+    }
+  }
+
+  if (/\b(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|ZAI_API_KEY|secretKey|keyed models?)\b/i.test(criterion)) {
+    inspected = true;
+    for (const secret of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ZAI_API_KEY']) {
+      if (!new RegExp(`secretKey\\s*:\\s*['"]${secret}['"]`).test(source)) {
+        gaps.push(`src/models.ts must reference ${secret} for keyed catalog entries.`);
+      }
+    }
+  }
+
+  if (!inspected) return undefined;
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured src/models.ts evidence verified Benchmark model catalog provider families and keyed entries'],
+    gaps: [],
+  };
+}
+
 function workerWorkflowEntrypointContractEvidence({
   criterion,
   repoPath,
@@ -8782,6 +8850,9 @@ function acceptanceCriterionEvidence({
 
   const workerTypesEvidence = workerTypesContractEvidence({ criterion, repoPath, task });
   if (workerTypesEvidence) return workerTypesEvidence;
+
+  const modelCatalogEvidence = modelCatalogContractEvidence({ criterion, repoPath, task });
+  if (modelCatalogEvidence) return modelCatalogEvidence;
 
   const workflowEntrypointEvidence = workerWorkflowEntrypointContractEvidence({ criterion, repoPath, task });
   if (workflowEntrypointEvidence) return workflowEntrypointEvidence;

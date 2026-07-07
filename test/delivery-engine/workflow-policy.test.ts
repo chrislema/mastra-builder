@@ -2880,6 +2880,44 @@ test('acceptance contracts verify Worker type constants and result envelopes str
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /structured src\/types\.ts evidence/);
 });
 
+test('acceptance contracts verify Benchmark model catalog structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-model-catalog-contract-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/models.ts'),
+    [
+      'export const MODEL_CATALOG = [',
+      '  { id: "workers-ai-qwen", label: "Qwen", vendor: "Cloudflare Workers AI", provider: "workers-ai", model: "@cf/qwen/qwen3" },',
+      '  { id: "claude-sonnet", label: "Claude", vendor: "Anthropic", provider: "anthropic", model: "claude-sonnet", secretKey: "ANTHROPIC_API_KEY" },',
+      '  { id: "zai-glm", label: "GLM", vendor: "z.ai", provider: "anthropic", model: "glm", secretKey: "ZAI_API_KEY", baseUrl: "https://api.z.ai/api/anthropic" },',
+      '  { id: "openai-gpt", label: "GPT", vendor: "OpenAI", provider: "openai-compatible", model: "gpt-5", secretKey: "OPENAI_API_KEY", baseUrl: "https://api.openai.com/v1" },',
+      '] as const;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T02',
+      depends_on: [],
+      owned_surfaces: ['src/models.ts'],
+      acceptance_criteria: [
+        'src/models.ts exports a plain typed catalog array with Workers AI, Anthropic, z.ai Anthropic-compatible, and OpenAI-compatible entries.',
+        'Each catalog entry includes id, label, vendor, provider, model, and only the optional secretKey/baseUrl fields needed for that provider.',
+        'The catalog includes keyless Workers AI models and keyed models referencing ANTHROPIC_API_KEY, OPENAI_API_KEY, or ZAI_API_KEY as appropriate.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contracts.every((contract) => contract.status === 'verified'), true);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /structured src\/models\.ts evidence/);
+});
+
 test('acceptance contracts verify minimal Hono Worker entrypoint structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-minimal-entrypoint-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
