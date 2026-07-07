@@ -1226,6 +1226,7 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.deepEqual(integration?.owned_surfaces, ['src/router.js']);
   assert.deepEqual(integration?.depends_on, ['T02', 'E20-auth-session', 'T05', 'T06']);
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /Every declared API endpoint is reachable through the router/);
+  assert.match(integration?.acceptance_criteria.join('\n') ?? '', /protection matrix/);
   assert.ok(normalized.tasks.find((task) => task.id === 'E20-auth-session'));
 });
 

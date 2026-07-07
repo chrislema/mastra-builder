@@ -1854,6 +1854,7 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
       `${routerSurface} is the single API route registration boundary after feature route modules exist.`,
       `${routerSurface} makes profile, run, latest, regenerate, health, and static asset fallback routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`,
       'Every declared API endpoint is reachable through the router after this task completes.',
+      'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
     ],
     owned_surfaces: [routerSurface],
   };
