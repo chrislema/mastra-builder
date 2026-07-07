@@ -1408,7 +1408,9 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
 
   const alreadyHasIntegration = tasks.some((task) =>
     taskOwnsRouterSurface(task) &&
-    task.acceptance_criteria.some((criterion) => /reachable through (?:src\/)?router|all declared endpoints/i.test(criterion)),
+    task.acceptance_criteria.some((criterion) =>
+      /reachable through (?:the )?(?:src\/)?router|all declared (?:api )?endpoints?/i.test(criterion),
+    ),
   );
   if (alreadyHasIntegration) return { tasks, changed: false };
 
@@ -6443,6 +6445,144 @@ function workerConfigEnvironmentContractEvidence({
   };
 }
 
+function gitignoreRuntimeArtifactContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\.gitignore\b/i.test(criterion)) return undefined;
+  if (!/\b(dependencies|wrangler|env files?|build|runtime artifacts?)\b/i.test(criterion)) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('.gitignore')) return undefined;
+
+  const gitignorePath = join(resolve(repoPath), '.gitignore');
+  if (!existsSync(gitignorePath)) return undefined;
+
+  const source = readFileSync(gitignorePath, 'utf8');
+  const gaps: string[] = [];
+  const requiredGroups: Array<{ label: string; patterns: RegExp[] }> = [
+    { label: 'dependencies', patterns: [/^node_modules\/?$/m] },
+    { label: 'Wrangler local state', patterns: [/^\.wrangler\/?$/m] },
+    { label: 'env files', patterns: [/^\.env\*?$/m, /^\.dev\.vars\*?$/m] },
+    { label: 'build/runtime artifacts', patterns: [/^dist\/?$/m, /^build\/?$/m, /^\*\.log$/m] },
+  ];
+
+  for (const group of requiredGroups) {
+    if (!group.patterns.every((pattern) => pattern.test(source))) {
+      gaps.push(`.gitignore must exclude ${group.label}.`);
+    }
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured .gitignore evidence verified dependencies, Wrangler state, env files, and build/runtime artifacts'],
+    gaps: [],
+  };
+}
+
+function configScopeHasAdminTokenVar(scope: Record<string, unknown> | undefined) {
+  const vars = recordValue(scope?.vars);
+  return Boolean(vars && Object.prototype.hasOwnProperty.call(vars, 'ADMIN_TOKEN'));
+}
+
+function workerConfigAdminTokenSecretContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bwrangler\.jsonc\b/i.test(criterion) || !/\bADMIN_TOKEN\b/.test(criterion)) return undefined;
+  if (!/\b(secret|commit|embed|var)\b/i.test(criterion)) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('wrangler.jsonc')) return undefined;
+
+  const configPath = join(resolve(repoPath), 'wrangler.jsonc');
+  if (!existsSync(configPath)) return undefined;
+
+  const source = readFileSync(configPath, 'utf8');
+  const config = parseWranglerJsonConfig(source);
+  if (!config) {
+    return {
+      passed: false,
+      evidence: [],
+      gaps: ['wrangler.jsonc is not valid JSONC, so ADMIN_TOKEN secret readiness could not be verified.'],
+    };
+  }
+
+  const gaps: string[] = [];
+  if (configScopeHasAdminTokenVar(config)) {
+    gaps.push('wrangler.jsonc top-level vars must not commit ADMIN_TOKEN.');
+  }
+
+  for (const environmentName of workerDeploymentEnvironments) {
+    const environment = workerJsonEnvironmentRecord(config, environmentName);
+    if (configScopeHasAdminTokenVar(environment)) {
+      gaps.push(`wrangler.jsonc env.${environmentName}.vars must not commit ADMIN_TOKEN.`);
+    }
+  }
+
+  if (!/(wrangler\s+secret\s+put\s+ADMIN_TOKEN|ADMIN_TOKEN[\s\S]{0,120}secret|secret[\s\S]{0,120}ADMIN_TOKEN)/i.test(source)) {
+    gaps.push('wrangler.jsonc should document ADMIN_TOKEN as a Cloudflare secret, not a committed var.');
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured wrangler.jsonc evidence verified ADMIN_TOKEN is documented as a secret and not committed in vars'],
+    gaps: [],
+  };
+}
+
+function workerScaffoldProtectedApiContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bscaffold\b/i.test(criterion) || !/\bprotected endpoints?\b/i.test(criterion)) return undefined;
+  if (!/\bauth\.js\b/i.test(criterion) || !/\bfail closed\b/i.test(criterion)) return undefined;
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  if (!/(api_not_ready|protected API endpoints? are intentionally unavailable|status:\s*50[13]|501)/i.test(source)) {
+    gaps.push(`${indexPath} must keep protected API endpoints unavailable in the scaffold.`);
+  }
+  if (!/ADMIN_TOKEN[\s\S]{0,240}(secret|missing|invalid|fail closed)|fail closed[\s\S]{0,240}ADMIN_TOKEN/i.test(source)) {
+    gaps.push(`${indexPath} must carry forward the later ADMIN_TOKEN fail-closed requirement.`);
+  }
+  if (!/\bauth\.js\b/i.test(source)) {
+    gaps.push(`${indexPath} must point protected API readiness to the later auth.js task.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured scaffold evidence verified protected APIs stay unavailable until auth.js in ${indexPath}`],
+    gaps: [],
+  };
+}
+
 function workerEntrypointExportContractEvidence({
   criterion,
   repoPath,
@@ -6499,8 +6639,17 @@ function acceptanceCriterionEvidence({
   const commandEvidence = acceptanceCriterionCommandEvidence(criterion, performed);
   if (commandEvidence) return { passed: true, evidence: [commandEvidence], gaps: [] };
 
+  const gitignoreEvidence = gitignoreRuntimeArtifactContractEvidence({ criterion, repoPath, task });
+  if (gitignoreEvidence) return gitignoreEvidence;
+
+  const adminTokenEvidence = workerConfigAdminTokenSecretContractEvidence({ criterion, repoPath, task });
+  if (adminTokenEvidence) return adminTokenEvidence;
+
   const structuredFileEvidence = workerConfigEnvironmentContractEvidence({ criterion, repoPath, task });
   if (structuredFileEvidence) return structuredFileEvidence;
+
+  const scaffoldProtectedApiEvidence = workerScaffoldProtectedApiContractEvidence({ criterion, repoPath, task });
+  if (scaffoldProtectedApiEvidence) return scaffoldProtectedApiEvidence;
 
   const workerEntrypointEvidence = workerEntrypointExportContractEvidence({ criterion, repoPath, task });
   if (workerEntrypointEvidence) return workerEntrypointEvidence;

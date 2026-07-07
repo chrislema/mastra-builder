@@ -1222,6 +1222,32 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /Every declared API endpoint is reachable through the router/);
 });
 
+test('task plan normalization does not duplicate an existing route integration contract', () => {
+  const plan = taskPlan([
+    {
+      id: 'T06',
+      depends_on: [],
+      owned_surfaces: ['src/router.js', 'src/auth.js'],
+    },
+    {
+      id: 'T07',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/routes/profiles.js'],
+    },
+    {
+      id: 'E98-route-integration',
+      depends_on: ['T07'],
+      owned_surfaces: ['src/router.js'],
+      acceptance_criteria: ['Every declared API endpoint is reachable through the router after this task completes.'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const integrationTasks = normalized.tasks.filter((task) => task.id.startsWith('E98-route-integration'));
+
+  assert.deepEqual(integrationTasks.map((task) => task.id), ['E98-route-integration']);
+});
+
 test('task plan normalization appends operator documentation task', () => {
   const plan = taskPlan([
     {
@@ -1483,6 +1509,72 @@ test('acceptance contracts use task-boundary file evidence', () => {
 
   assert.equal(contracts[0].status, 'verified');
   assert.match(contracts[0].evidence.join('\n'), /file evidence covered/);
+});
+
+test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-scaffold-contracts-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.dev.vars*', '.env*', 'dist/', 'build/', '*.log', '*.cpuprofile', ''].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    [
+      '{',
+      '  "name": "talking-head-builder",',
+      '  "main": "src/index.js",',
+      '  // ADMIN_TOKEN is intentionally not present in vars.',
+      '  // Configure with wrangler secret put ADMIN_TOKEN --env staging and --env production.',
+      '  "env": {',
+      '    "staging": { "vars": { "APP_ENV": "staging" } },',
+      '    "production": { "vars": { "APP_ENV": "production" } }',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'src/index.js'),
+    [
+      'export default {',
+      '  async fetch(request) {',
+      '    const url = new URL(request.url);',
+      '    if (url.pathname.startsWith("/api/")) {',
+      '      return Response.json({',
+      '        error: "api_not_ready",',
+      '        message: "Protected API endpoints are intentionally unavailable until src/auth.js exists.",',
+      '        adminTokenState: "ADMIN_TOKEN must be configured as a Cloudflare secret.",',
+      '        failClosedRequirement: "auth.js must fail closed when ADMIN_TOKEN is missing."',
+      '      }, { status: 501 });',
+      '    }',
+      '    return Response.json({ status: "ok" });',
+      '  }',
+      '};',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['.gitignore', 'wrangler.jsonc', 'src/index.js'],
+      acceptance_criteria: [
+        '.gitignore excludes dependencies, Wrangler local state, env files, and build/runtime artifacts.',
+        'wrangler.jsonc does not commit or embed an ADMIN_TOKEN value; ADMIN_TOKEN is treated as a required Cloudflare secret for staging and production.',
+        'The scaffold leaves protected endpoints unavailable until src/auth.js exists, and later auth must fail closed when ADMIN_TOKEN is missing.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({ repoPath, task, verification: { performed: [], missing: [] } });
+
+  assert.deepEqual(
+    contracts.map((contract) => contract.status),
+    ['verified', 'verified', 'verified'],
+  );
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /ADMIN_TOKEN is documented as a secret/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /protected APIs stay unavailable/);
 });
 
 test('acceptance contract gate rejects partial workflow implementations', () => {
