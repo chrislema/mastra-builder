@@ -1366,10 +1366,11 @@ test('task plan normalization does not inject workflow or auth contracts into st
     {
       id: 'T04',
       depends_on: ['T02'],
-      owned_surfaces: ['src/index.ts'],
+      owned_surfaces: ['src/routes.ts'],
       acceptance_criteria: [
         'GET /api/models returns configured model rows without secret values.',
         'POST /api/run executes requested model calls in parallel and isolates per-model failures.',
+        'src/routes.ts contains only Benchmark route behavior for /api/health, /api/models, /api/run, and static asset fallback wiring; it does not introduce /runs, /latest, D1 mutations, cookie authentication, workflow bindings, transcript records, or candidate-selection behavior.',
       ],
     },
     {
@@ -1406,6 +1407,43 @@ test('task plan normalization does not inject workflow or auth contracts into st
   assert.doesNotMatch(criteria, /ADMIN_TOKEN|SESSION_SECRET|signed session|auth\/session/);
   assert.doesNotMatch(criteria, /Run lifecycle contract defines|completed_empty\/no-transcript|latest transcript|Transcript regeneration|D1 state/);
   assert.match(byId.T02.acceptance_criteria.join('\n'), /do not define persisted run lifecycle states/);
+});
+
+test('task plan repair preservation does not carry generated route policy into stateless api-run plans', () => {
+  const previous = taskPlan([
+    {
+      id: 'T04',
+      depends_on: ['T03'],
+      owned_surfaces: ['src/routes.ts'],
+      acceptance_criteria: [
+        'POST /api/run executes requested model calls in parallel and isolates per-model failures.',
+        'POST /runs creates a queued manual run record with a default previous-seven-day window when no window is supplied, uses active profile artifact IDs when profile IDs are omitted, returns runId with status queued, and starts WEEKLY_WORKFLOW through the workflow binding/service boundary.',
+        'GET /latest returns the latest completed transcript with title, hook, transcript, captions, sourceUrls, primarySegment, whyThisWasPicked, generatedAt, and run ID; it excludes completed_empty/no-transcript, failed, queued, and running runs and never exposes private profile markdown or fetched source content.',
+        'Profile upload and activation routes use the profile repository transaction for active-profile state changes instead of duplicating active-state authority in route code.',
+        'Cookie-authenticated run creation mutations enforce the session CSRF token or same-origin Origin validation contract from the auth/session boundary.',
+      ],
+    },
+  ]);
+  const revised = taskPlan([
+    {
+      id: 'T04',
+      depends_on: ['T03'],
+      owned_surfaces: ['src/routes.ts'],
+      acceptance_criteria: [
+        'POST /api/run executes requested model calls in parallel and isolates per-model failures.',
+        'src/routes.ts contains only Benchmark route behavior for /api/health, /api/models, /api/run, and static asset fallback wiring; it does not introduce /runs, /latest, D1 mutations, cookie authentication, workflow bindings, transcript records, or candidate-selection behavior.',
+      ],
+    },
+  ]);
+
+  const preserved = preserveTaskPlanAcceptanceContracts(previous, revised);
+  const criteria = preserved.taskPlan.tasks
+    .flatMap((task) => [...task.acceptance_criteria, ...(task.source_acceptance_criteria ?? [])])
+    .join('\n');
+
+  assert.equal(preserved.carried, 0);
+  assert.deepEqual(taskPlanAcceptanceContractRegression(previous, revised), { passed: true, reason: 'ok' });
+  assert.doesNotMatch(criteria, /WEEKLY_WORKFLOW|Profile upload|Cookie-authenticated|GET \/latest|POST \/runs/);
 });
 
 test('task plan normalization keeps profile migration contracts on the owned migration filename', () => {

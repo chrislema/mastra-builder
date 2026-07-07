@@ -1470,25 +1470,46 @@ function taskAcceptanceText(task: Task) {
   return [...task.acceptance_criteria, ...(task.source_acceptance_criteria ?? [])].join('\n');
 }
 
+function positiveTaskAcceptanceText(task: Task) {
+  return taskAcceptanceText(task)
+    .replace(/\b(?:it\s+)?does\s+not\s+introduce\b[^.\n]*/gi, '')
+    .replace(/\bmust\s+not\s+(?:introduce|define|persist|include)\b[^.\n]*/gi, '')
+    .replace(/\bno\s+(?:database|auth|server state|D1|Durable Objects|Queues|Workflows|server-side file uploads)\b[^.\n]*/gi, '');
+}
+
 function genericRouteMentionsProfile(task: Task) {
-  return taskOwnsGenericRouteModule(task) && /\bprofiles?\b/i.test(taskAcceptanceText(task));
+  return taskOwnsGenericRouteModule(task) && /\bprofiles?\b/i.test(positiveTaskAcceptanceText(task));
 }
 
 function genericRouteMentionsRuns(task: Task) {
   return (
     taskOwnsGenericRouteModule(task) &&
-    /\b(?:manual\s+run|manual\/profile\/regeneration endpoints?|manual endpoints?|runs?|run detail|run status|run endpoints?|\/runs)\b/i.test(
-      taskAcceptanceText(task),
+    /(?:\/runs(?:\b|\/|:)|\bmanual\/profile\/regeneration endpoints?\b|\bmanual endpoints?\b|\bmanual\s+runs?\b|\bqueued\s+(?:manual\s+)?run\b|\brun\s+(?:creation|detail|status|lifecycle|record|records|repository|transcript|history)\b|\bruns?\s+(?:route|routes|endpoint|endpoints|handler|handlers|repository|lifecycle|record|records))\b/i.test(
+      positiveTaskAcceptanceText(task),
     )
   );
 }
 
+function genericRouteMentionsManualProfileRegeneration(task: Task) {
+  return taskOwnsGenericRouteModule(task) && /\bmanual\/profile\/regeneration endpoints?\b/i.test(positiveTaskAcceptanceText(task));
+}
+
+function genericRouteMentionsLatest(task: Task) {
+  return (
+    genericRouteMentionsManualProfileRegeneration(task) ||
+    (taskOwnsGenericRouteModule(task) &&
+      /(?:\/latest\b|\blatest\s+(?:route|routes|endpoint|endpoints|transcript|completed))/i.test(
+        positiveTaskAcceptanceText(task),
+      ))
+  );
+}
+
 function genericRouteMentionsRegeneration(task: Task) {
-  return taskOwnsGenericRouteModule(task) && /\bregenerat/i.test(taskAcceptanceText(task));
+  return taskOwnsGenericRouteModule(task) && /\bregenerat/i.test(positiveTaskAcceptanceText(task));
 }
 
 function genericRouteMentionsCandidates(task: Task) {
-  return taskOwnsGenericRouteModule(task) && /\b(?:candidate routes?|candidate endpoints?|\/candidates?)\b/i.test(taskAcceptanceText(task));
+  return taskOwnsGenericRouteModule(task) && /\b(?:candidate routes?|candidate endpoints?|\/candidates?)\b/i.test(positiveTaskAcceptanceText(task));
 }
 
 function taskOwnsSessionRoute(task: Task) {
@@ -1509,6 +1530,7 @@ function taskOwnsProfileRepositorySurface(task: Task) {
 function taskOwnsRunRoute(task: Task) {
   return (
     genericRouteMentionsRuns(task) ||
+    genericRouteMentionsLatest(task) ||
     genericRouteMentionsRegeneration(task) ||
     genericRouteMentionsCandidates(task) ||
     taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|regenerate|candidates?)|routes(?:Runs?|Latest|Regeneration|Regenerate|Candidates?)|(?:run|latest|regeneration|regenerate|candidate)(?:Routes|Handlers))\.[cm]?[jt]s$/i)
@@ -1524,7 +1546,7 @@ function taskOwnsManualRunRoute(task: Task) {
 
 function taskOwnsLatestRoute(task: Task) {
   return (
-    genericRouteMentionsRuns(task) ||
+    genericRouteMentionsLatest(task) ||
     taskOwnsPathMatching(task, /^src\/(?:routes\/.*latest|routesLatest|latest(?:Routes|Handlers))\.[cm]?[jt]s$/i)
   );
 }
@@ -3164,7 +3186,18 @@ function conditionalGeneratedPolicyAcceptanceCriterion(criterion: string) {
     ) ||
     /src\/index\.js changes preserve the existing default fetch handler[\s\S]*WeeklyWorkflow export/i.test(criterion) ||
     /src\/index\.js preserves a stable WeeklyWorkflow export/i.test(criterion) ||
-    /README\.md documents direct Authorization: Bearer <ADMIN_TOKEN>[\s\S]*SESSION_SECRET/i.test(criterion)
+    /README\.md documents direct Authorization: Bearer <ADMIN_TOKEN>[\s\S]*SESSION_SECRET/i.test(criterion) ||
+    /^Profile (?:upload|storage|repository|upload, profile activation)/i.test(criterion) ||
+    /^Cookie-authenticated (?:profile|run|regeneration)/i.test(criterion) ||
+    /^POST \/profiles accepts multipart\/form-data uploads for audience_segments and voice_profile markdown/i.test(criterion) ||
+    /^POST \/profiles\/:id\/activate atomically activates the selected profile/i.test(criterion) ||
+    /^GET \/profiles returns profile metadata and active-state summaries/i.test(criterion) ||
+    /^POST \/runs creates a queued manual run record with a default previous-seven-day window/i.test(criterion) ||
+    /^GET \/runs\/:id returns run status, requested window, profile artifact IDs used/i.test(criterion) ||
+    /^GET \/latest returns the latest completed transcript with title, hook, transcript, captions, sourceUrls/i.test(criterion) ||
+    /^run, latest route handlers delegate/i.test(criterion) ||
+    /^Route integration defines and enforces the protection matrix/i.test(criterion) ||
+    /^The router surface explicitly registers the browser session endpoint/i.test(criterion)
   );
 }
 
