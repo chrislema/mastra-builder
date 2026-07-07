@@ -4,7 +4,15 @@ import { deliveryRequestContextSchema } from './context';
 import { deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
 import { deliveryInputProcessors, deliveryOutputProcessors } from './processors';
-import { deliveryBuildTaskWorkflow, deliveryWorkflow } from './workflow';
+import {
+  deliveryBuildTaskWorkflow,
+  deliveryBuildWorkflow,
+  deliveryDeploymentWorkflow,
+  deliveryPlanningWorkflow,
+  deliveryReleaseGateWorkflow,
+  deliveryReviewWorkflow,
+  deliveryWorkflow,
+} from './workflow';
 import { deliveryModel, judgeModel } from './models';
 
 export const deliveryWorkingMemoryTemplate = `# Delivery Run Working Memory
@@ -456,6 +464,8 @@ Delegation guidance:
 
 Workflow guidance:
 - Use delivery-workflow for full runs instead of manually recreating plan/review/build/test/deploy.
+- Use the registered stage workflows when inspecting or rerunning an individual native stage:
+  delivery-planning, delivery-review, delivery-build, delivery-release-gate, and delivery-deployment.
 - Require repoPath, visionPath, and specPath before starting delivery-workflow.
 - Surface suspend/resume needs plainly when planner questions or production deployment approvals occur.
 - For status, use the native delivery tools; they read Mastra storage first and fall back to .delivery.
@@ -474,7 +484,12 @@ registered workflow tools, delivery tools, and Mastra workflow state.
   },
   workflows: {
     deliveryWorkflow,
+    deliveryPlanningWorkflow,
+    deliveryReviewWorkflow,
+    deliveryBuildWorkflow,
     deliveryBuildTaskWorkflow,
+    deliveryReleaseGateWorkflow,
+    deliveryDeploymentWorkflow,
   },
   workspace: deliveryWorkspace,
   tools: deliveryStateTools,

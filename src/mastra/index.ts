@@ -8,7 +8,15 @@ import { deliveryProcessors } from './delivery-engine/processors';
 import { deliveryApiRoutes } from './delivery-engine/routes';
 import { deliveryScorers } from './delivery-engine/scorers';
 import { deliveryStateTools } from './delivery-engine/tools';
-import { deliveryBuildTaskWorkflow, deliveryWorkflow } from './delivery-engine/workflow';
+import {
+  deliveryBuildTaskWorkflow,
+  deliveryBuildWorkflow,
+  deliveryDeploymentWorkflow,
+  deliveryPlanningWorkflow,
+  deliveryReleaseGateWorkflow,
+  deliveryReviewWorkflow,
+  deliveryWorkflow,
+} from './delivery-engine/workflow';
 import { deliveryWorkspace } from './delivery-engine/workspace';
 
 export {
@@ -20,7 +28,15 @@ export {
 } from './delivery-engine/evals';
 
 export const mastra = new Mastra({
-  workflows: { deliveryWorkflow, deliveryBuildTaskWorkflow },
+  workflows: {
+    deliveryWorkflow,
+    deliveryPlanningWorkflow,
+    deliveryReviewWorkflow,
+    deliveryBuildWorkflow,
+    deliveryBuildTaskWorkflow,
+    deliveryReleaseGateWorkflow,
+    deliveryDeploymentWorkflow,
+  },
   agents: deliveryAgents,
   memory: { deliveryMemory },
   processors: deliveryProcessors,

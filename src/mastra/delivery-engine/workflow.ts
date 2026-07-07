@@ -7916,6 +7916,19 @@ const createPlanGateStep = createStep({
   },
 });
 
+export const deliveryPlanningWorkflow = createWorkflow({
+  id: 'delivery-planning',
+  description: 'Plan a delivery run, repair the task plan, and persist the plan-stage state.',
+  inputSchema: workflowInputSchema,
+  outputSchema: deliveryStageOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
+})
+  .then(initializeRunStep)
+  .then(createPlannerArtifactsStep)
+  .then(createPlanGateStep)
+  .then(syncPlanStateStep)
+  .commit();
+
 const prepareReviewLoopStep = createStep({
   id: 'prepare-review-loop',
   description: 'Prepare architect review retry state for the native workflow loop.',
@@ -8328,6 +8341,19 @@ const finalizeReviewLoopStep = createStep({
     nextSteps: inputData.nextSteps,
   }),
 });
+
+export const deliveryReviewWorkflow = createWorkflow({
+  id: 'delivery-review',
+  description: 'Run the architect review loop and persist the reviewed delivery state.',
+  inputSchema: deliveryStageOutputSchema,
+  outputSchema: deliveryStageOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
+})
+  .then(prepareReviewLoopStep)
+  .dountil(executeReviewAttemptStep, async ({ inputData }) => inputData.terminal)
+  .then(finalizeReviewLoopStep)
+  .then(syncReviewStateStep)
+  .commit();
 
 const prepareBuildTasksStep = createStep({
   id: 'prepare-build-tasks',
@@ -9601,6 +9627,19 @@ const aggregateBuildTaskResultsStep = createStep({
   },
 });
 
+export const deliveryBuildWorkflow = createWorkflow({
+  id: 'delivery-build',
+  description: 'Prepare implementation tasks, run the nested build-task workflow, and persist build-stage state.',
+  inputSchema: deliveryStageOutputSchema,
+  outputSchema: deliveryStageOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
+})
+  .then(prepareBuildTasksStep)
+  .foreach(deliveryBuildTaskWorkflow, { concurrency: 1 })
+  .then(aggregateBuildTaskResultsStep)
+  .then(syncBuildStateStep)
+  .commit();
+
 const prepareReleaseGateLoopStep = createStep({
   id: 'prepare-release-gate-loop',
   description: 'Prepare tester release gate retry state for the native workflow loop.',
@@ -9922,6 +9961,19 @@ const finalizeReleaseGateLoopStep = createStep({
   }),
 });
 
+export const deliveryReleaseGateWorkflow = createWorkflow({
+  id: 'delivery-release-gate',
+  description: 'Collect release evidence, run tester release-gate retries, and persist release readiness state.',
+  inputSchema: deliveryStageOutputSchema,
+  outputSchema: deliveryStageOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
+})
+  .then(prepareReleaseGateLoopStep)
+  .dountil(executeReleaseGateAttemptStep, async ({ inputData }) => inputData.terminal)
+  .then(finalizeReleaseGateLoopStep)
+  .then(syncReleaseGateStateStep)
+  .commit();
+
 const createDeploymentReportStep = createStep({
   id: 'create-deployment-report',
   description: 'Run the native deployment stage from a passing release gate and write the deployment report artifact.',
@@ -10225,6 +10277,19 @@ const createDeploymentJudgmentStep = createStep({
   },
 });
 
+export const deliveryDeploymentWorkflow = createWorkflow({
+  id: 'delivery-deployment',
+  description: 'Run local or approved production deployment, judge the deployment report, and finish the run.',
+  inputSchema: deliveryStageOutputSchema,
+  outputSchema: workflowOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
+})
+  .then(createDeploymentReportStep)
+  .then(syncDeploymentReportStateStep)
+  .then(createDeploymentJudgmentStep)
+  .then(syncFinalDeliveryStateStep)
+  .commit();
+
 export const deliveryWorkflow = createWorkflow({
   id: 'delivery-workflow',
   description:
@@ -10233,24 +10298,9 @@ export const deliveryWorkflow = createWorkflow({
   outputSchema: workflowOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
 })
-  .then(initializeRunStep)
-  .then(createPlannerArtifactsStep)
-  .then(createPlanGateStep)
-  .then(syncPlanStateStep)
-  .then(prepareReviewLoopStep)
-  .dountil(executeReviewAttemptStep, async ({ inputData }) => inputData.terminal)
-  .then(finalizeReviewLoopStep)
-  .then(syncReviewStateStep)
-  .then(prepareBuildTasksStep)
-  .foreach(deliveryBuildTaskWorkflow, { concurrency: 1 })
-  .then(aggregateBuildTaskResultsStep)
-  .then(syncBuildStateStep)
-  .then(prepareReleaseGateLoopStep)
-  .dountil(executeReleaseGateAttemptStep, async ({ inputData }) => inputData.terminal)
-  .then(finalizeReleaseGateLoopStep)
-  .then(syncReleaseGateStateStep)
-  .then(createDeploymentReportStep)
-  .then(syncDeploymentReportStateStep)
-  .then(createDeploymentJudgmentStep)
-  .then(syncFinalDeliveryStateStep)
+  .then(deliveryPlanningWorkflow)
+  .then(deliveryReviewWorkflow)
+  .then(deliveryBuildWorkflow)
+  .then(deliveryReleaseGateWorkflow)
+  .then(deliveryDeploymentWorkflow)
   .commit();

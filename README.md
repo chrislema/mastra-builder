@@ -10,7 +10,9 @@ working memory, and custom API routes.
 
 `src/mastra/index.ts` registers:
 
-- `deliveryWorkflow`
+- `deliveryWorkflow` plus native stage workflows: `deliveryPlanningWorkflow`,
+  `deliveryReviewWorkflow`, `deliveryBuildWorkflow`, `deliveryBuildTaskWorkflow`,
+  `deliveryReleaseGateWorkflow`, and `deliveryDeploymentWorkflow`
 - role agents: planner, architect, engineer, designer, tester, deployment advisor, judge
 - delivery state tools for `.delivery/`, including observability persistence/list tools
 - delivery scorers for handoff readiness, workflow completion, rubric floor, judgment
@@ -160,18 +162,21 @@ repo path into `deliveryWorkflow`.
 
 ## Pipeline Shape
 
-The workflow currently runs:
+The top-level `deliveryWorkflow` is composed from smaller native stage workflows so
+Mastra Studio and observability can inspect each major handoff separately. The current
+pipeline runs:
 
-1. Initialize `.delivery/run.json`.
-2. Planner creates readout and task plan.
-3. Plan gate runs deterministic checks and judges the task plan.
-4. Architect reviews the plan and can bounce to planner within `maxRetries`.
-5. Engineer/designer build loop executes tasks in dependency order.
-6. Tester produces and judges a release gate.
-7. Native deployment stage writes a local validation report or, after approval, runs Wrangler production deploy and writes a deployment report.
-8. Deployment gate runs deterministic checks, judges the deployment report, and finalizes the run.
-9. The run finishes as `complete`, `failed`, or `stuck`.
-10. Final `.delivery` run state is persisted into Mastra observability storage.
+1. `deliveryPlanningWorkflow` initializes `.delivery/run.json`, creates the readout and
+   task plan, runs deterministic plan gates, judges the task plan, and persists plan state.
+2. `deliveryReviewWorkflow` runs architect review and can bounce to planner within
+   `maxRetries`.
+3. `deliveryBuildWorkflow` expands implementation tasks and runs `deliveryBuildTaskWorkflow`
+   for each engineer/designer task in dependency order.
+4. `deliveryReleaseGateWorkflow` collects Wrangler/local evidence, produces the tester
+   release gate, and judges it.
+5. `deliveryDeploymentWorkflow` writes a local validation report or, after approval, runs
+   Wrangler production deploy, judges the deployment report, finalizes the run, and persists
+   terminal state.
 
 Judgment math is always computed in TypeScript. Models only produce raw gate and dimension
 scores.
