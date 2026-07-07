@@ -1529,10 +1529,10 @@ test('task plan normalization injects session auth before late admin auth and ro
   const criteria = (id: string) => byId[id].acceptance_criteria.join('\n');
 
   assert.ok(byId['E20-auth-session']);
-  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T02-part-3']);
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T02']);
   assert.ok(indexOf('E20-auth-session') < indexOf('T07'));
-  assert.deepEqual(byId.T07.depends_on, ['T02-part-3', 'E20-auth-session']);
-  assert.deepEqual(byId['T08-part-2'].depends_on, ['T08', 'T02-part-3', 'E20-auth-session']);
+  assert.deepEqual(byId.T07.depends_on, ['T02-part-3', 'T02', 'E20-auth-session']);
+  assert.deepEqual(byId['T08-part-2'].depends_on, ['T08', 'T02-part-3', 'T02', 'E20-auth-session']);
   assert.ok(indexOf('E98-route-integration') > indexOf('T08-part-2'));
   assert.ok(indexOf('E98-route-integration') < indexOf('T11'));
   assert.ok(indexOf('E98-route-integration') < indexOf('T12'));
@@ -1898,6 +1898,61 @@ test('task plan normalization attaches final entrypoint contracts only to workfl
   assert.match(finalIndexCriteria, /exports the real WeeklyWorkflow implementation/);
   assert.ok(byId['T13-part-2'].depends_on.includes('E98-route-integration'));
   assert.ok(byId['T13-part-2'].depends_on.includes('T13'));
+});
+
+test('task plan normalization infers contracts for generic routes and http auth boundaries', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
+    },
+    {
+      id: 'T03',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/domain.js', 'src/http.js'],
+      acceptance_criteria: [
+        'src/http.js centralizes JSON responses, route parameter parsing, and admin token authorization checks.',
+      ],
+    },
+    {
+      id: 'T03-part-2',
+      depends_on: ['T03'],
+      owned_surfaces: ['src/utils.js', 'src/logger.js'],
+    },
+    {
+      id: 'T11',
+      depends_on: ['T03-part-2'],
+      owned_surfaces: ['src/routes.js', 'src/index.js'],
+      acceptance_criteria: [
+        'Profile upload endpoints accept multipart/form-data with kind, file, and optional setActive fields.',
+        'Manual/profile/regeneration endpoints are protected by the admin token guard; public exposure of raw profile files and raw fetched content is not implemented.',
+      ],
+    },
+    {
+      id: 'T12',
+      owner: 'designer',
+      depends_on: ['T11'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const routeCriteria = byId.T11.acceptance_criteria.join('\n');
+  const integrationCriteria = byId['E98-route-integration'].acceptance_criteria.join('\n');
+
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T03']);
+  assert.deepEqual(byId['E98-route-integration'].depends_on, ['T03', 'E20-auth-session', 'T11']);
+  assert.match(routeCriteria, /POST \/profiles accepts multipart\/form-data/);
+  assert.match(routeCriteria, /POST \/runs creates a queued manual run record/);
+  assert.match(routeCriteria, /GET \/runs\/:id returns run status/);
+  assert.match(routeCriteria, /GET \/latest returns the latest completed transcript/);
+  assert.match(routeCriteria, /POST \/runs\/:id\/regenerate creates a new transcript version/);
+  assert.doesNotMatch(routeCriteria, /Candidate routes for a run/);
+  assert.match(integrationCriteria, /browser session, profile, run, latest, regenerate, health, static asset fallback/);
+  assert.doesNotMatch(integrationCriteria, /candidate/);
+  assert.match(byId.T12.acceptance_criteria.join('\n'), /browser-safe auth\/session flow/);
 });
 
 test('task plan normalization canonicalizes no-bookmark status and workflow export contracts', () => {

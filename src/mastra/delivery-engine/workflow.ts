@@ -1380,12 +1380,44 @@ function taskOwnsRouteModule(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:routes(?:\/.*|[A-Z].*)?|[A-Za-z0-9_-]*(?:Routes|Handlers))\.[cm]?[jt]s$/i);
 }
 
+function taskOwnsGenericRouteModule(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/routes\.[cm]?[jt]s$/i);
+}
+
+function taskAcceptanceText(task: Task) {
+  return [...task.acceptance_criteria, ...(task.source_acceptance_criteria ?? [])].join('\n');
+}
+
+function genericRouteMentionsProfile(task: Task) {
+  return taskOwnsGenericRouteModule(task) && /\bprofiles?\b/i.test(taskAcceptanceText(task));
+}
+
+function genericRouteMentionsRuns(task: Task) {
+  return (
+    taskOwnsGenericRouteModule(task) &&
+    /\b(?:manual\s+run|manual\/profile\/regeneration endpoints?|manual endpoints?|runs?|run detail|run status|run endpoints?|\/runs)\b/i.test(
+      taskAcceptanceText(task),
+    )
+  );
+}
+
+function genericRouteMentionsRegeneration(task: Task) {
+  return taskOwnsGenericRouteModule(task) && /\bregenerat/i.test(taskAcceptanceText(task));
+}
+
+function genericRouteMentionsCandidates(task: Task) {
+  return taskOwnsGenericRouteModule(task) && /\b(?:candidate routes?|candidate endpoints?|\/candidates?)\b/i.test(taskAcceptanceText(task));
+}
+
 function taskOwnsSessionRoute(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:routes\/session|sessionRoutes)\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsProfileRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*profiles?|routesProfiles|profile(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return (
+    genericRouteMentionsProfile(task) ||
+    taskOwnsPathMatching(task, /^src\/(?:routes\/.*profiles?|routesProfiles|profile(?:Routes|Handlers))\.[cm]?[jt]s$/i)
+  );
 }
 
 function taskOwnsProfileRepositorySurface(task: Task) {
@@ -1393,23 +1425,40 @@ function taskOwnsProfileRepositorySurface(task: Task) {
 }
 
 function taskOwnsRunRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|regenerate|candidates?)|routes(?:Runs?|Latest|Regeneration|Regenerate|Candidates?)|(?:run|latest|regeneration|regenerate|candidate)(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return (
+    genericRouteMentionsRuns(task) ||
+    genericRouteMentionsRegeneration(task) ||
+    genericRouteMentionsCandidates(task) ||
+    taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:runs?|latest|regeneration|regenerate|candidates?)|routes(?:Runs?|Latest|Regeneration|Regenerate|Candidates?)|(?:run|latest|regeneration|regenerate|candidate)(?:Routes|Handlers))\.[cm]?[jt]s$/i)
+  );
 }
 
 function taskOwnsManualRunRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*runs?|routesRuns?|run(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return (
+    genericRouteMentionsRuns(task) ||
+    taskOwnsPathMatching(task, /^src\/(?:routes\/.*runs?|routesRuns?|run(?:Routes|Handlers))\.[cm]?[jt]s$/i)
+  );
 }
 
 function taskOwnsLatestRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*latest|routesLatest|latest(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return (
+    genericRouteMentionsRuns(task) ||
+    taskOwnsPathMatching(task, /^src\/(?:routes\/.*latest|routesLatest|latest(?:Routes|Handlers))\.[cm]?[jt]s$/i)
+  );
 }
 
 function taskOwnsRegenerationRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:regeneration|regenerate)|routes(?:Regeneration|Regenerate)|regeneration(?:Routes|Handlers)|regenerate(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return (
+    genericRouteMentionsRegeneration(task) ||
+    taskOwnsPathMatching(task, /^src\/(?:routes\/.*(?:regeneration|regenerate)|routes(?:Regeneration|Regenerate)|regeneration(?:Routes|Handlers)|regenerate(?:Routes|Handlers))\.[cm]?[jt]s$/i)
+  );
 }
 
 function taskOwnsCandidateRoute(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:routes\/.*candidates?|routesCandidates?|candidate(?:Routes|Handlers))\.[cm]?[jt]s$/i);
+  return (
+    genericRouteMentionsCandidates(task) ||
+    taskOwnsPathMatching(task, /^src\/(?:routes\/.*candidates?|routesCandidates?|candidate(?:Routes|Handlers))\.[cm]?[jt]s$/i)
+  );
 }
 
 function taskOwnsRunRepositorySurface(task: Task) {
@@ -1450,6 +1499,22 @@ function taskOwnsProfileSummarySurface(task: Task) {
 
 function taskOwnsAuthSurface(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:(?:http\/)?auth|adminAuth|sessionAuth)\.[cm]?[jt]s$/);
+}
+
+function taskOwnsOperatorAuthBoundary(task: Task) {
+  if (taskOwnsAuthSurface(task)) return true;
+  if (!taskOwnsRouterSurface(task)) return false;
+  return /\b(?:admin[-_\s]?token|Authorization:\s*Bearer|authorization checks?|credential checks?|secret check)\b/i.test(
+    taskAcceptanceText(task),
+  );
+}
+
+function taskAuthBoundarySurface(task: Task) {
+  return (
+    taskOwnedBoundaryPaths(task).find((path) => /^src\/(?:(?:http\/)?auth|adminAuth|sessionAuth)\.[cm]?[jt]s$/i.test(path)) ??
+    taskOwnedBoundaryPaths(task).find((path) => /^src\/(?:(?:http\/)?router|http|routes)\.[cm]?[jt]s$/i.test(path)) ??
+    'src/auth.js'
+  );
 }
 
 function taskOwnsPublicAppSurface(task: Task) {
@@ -1821,6 +1886,14 @@ function taskRouteEndpointSourceCriteria(task: Task) {
 function taskRouteEndpointDefaultCriteria(task: Task) {
   const criteria: string[] = [];
 
+  if (taskOwnsProfileRoute(task)) {
+    criteria.push(
+      'POST /profiles accepts multipart/form-data uploads for audience_segments and voice_profile markdown, validates kind/content/size, persists the original markdown through the profile service boundary, and can set the uploaded profile active.',
+      'POST /profiles/:id/activate atomically activates the selected profile for its kind, deactivates the previous active profile for that kind, and returns the active profile metadata without exposing raw markdown.',
+      'GET /profiles returns profile metadata and active-state summaries for authenticated operators without exposing raw profile markdown or R2 object contents.',
+    );
+  }
+
   if (taskOwnsManualRunRoute(task)) {
     criteria.push(
       'POST /runs creates a queued manual run record with a default previous-seven-day window when no window is supplied, uses active profile artifact IDs when profile IDs are omitted, returns runId with status queued, and starts WEEKLY_WORKFLOW through the workflow binding/service boundary.',
@@ -2100,6 +2173,13 @@ function preEntrypointBoundaryDependencyId(tasks: Task[], task: Task) {
   const finalTaskId = finalGeneratedSliceTaskId(tasks, task.id);
   const finalTask = tasks.find((candidate) => candidate.id === finalTaskId);
   if (!finalTask || finalTask.id === task.id) return task.id;
+  if (
+    (taskOwnsRouterSurface(task) || taskOwnsOperatorAuthBoundary(task)) &&
+    !taskOwnsRouterSurface(finalTask) &&
+    !taskOwnsOperatorAuthBoundary(finalTask)
+  ) {
+    return task.id;
+  }
   if (taskOwnsRouteModule(finalTask) || taskOwnsPublicAppSurface(finalTask) || taskOwnsIndexSurface(finalTask)) {
     return task.id;
   }
@@ -2118,7 +2198,7 @@ function routerBoundaryProviderTasks(tasks: Task[]) {
 
 function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
   const hasPublicApp = tasks.some(taskOwnsPublicAppSurface);
-  const authTasks = tasks.filter(taskOwnsAuthSurface);
+  const authTasks = tasks.filter(taskOwnsOperatorAuthBoundary);
   const routerTasks = routerBoundaryProviderTasks(tasks);
   const sessionTasks = tasks.filter(taskOwnsSessionRoute);
   if (!hasPublicApp || !authTasks.length) return { tasks, changed: false };
@@ -2447,7 +2527,7 @@ function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
 export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): TaskPlan {
   let changed = false;
   const indexOwnerCount = taskPlan.tasks.filter(taskOwnsIndexSurface).length;
-  const hasAuthSurface = taskPlan.tasks.some(taskOwnsAuthSurface);
+  const hasAuthBoundary = taskPlan.tasks.some(taskOwnsOperatorAuthBoundary);
   const hasProfileState = taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
   const hasAiValidationSurface = taskPlan.tasks.some(taskOwnsAiValidationSurface);
 
@@ -2532,12 +2612,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     const criteria: string[] = [];
 
-    if (taskOwnsAuthSurface(task)) {
-      const authSurface = taskOwnedBoundaryPaths(task).find((path) => /^src\/(?:(?:http\/)?auth|adminAuth|sessionAuth)\.[cm]?[jt]s$/i.test(path)) ?? 'src/auth.js';
+    if (taskOwnsOperatorAuthBoundary(task)) {
+      const authSurface = taskAuthBoundarySurface(task);
       criteria.push(
         `${authSurface} defines the protected operator credential contract as Authorization: Bearer <ADMIN_TOKEN> for API/operator calls, rejects missing or invalid credentials with structured 401/403 responses, fails closed when ADMIN_TOKEN is missing, and never reads committed or static secrets.`,
       );
-      if (/\/adminAuth\.[cm]?[jt]s$/i.test(authSurface)) {
+      if (!taskOwnsAuthSurface(task) || /\/adminAuth\.[cm]?[jt]s$/i.test(authSurface)) {
         criteria.push(
           `${authSurface} is an internal credential-validation helper for operator APIs and the browser session exchange boundary; it does not make public/app.js persist, repeat, or directly send the raw ADMIN_TOKEN to feature mutation endpoints.`,
         );
@@ -2550,7 +2630,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       }
     }
 
-    if (hasAuthSurface && taskOwnsPublicAppSurface(task)) {
+    if (hasAuthBoundary && taskOwnsPublicAppSurface(task)) {
       criteria.push(
         'public/app.js uses the browser-safe auth/session flow for protected profile, run, activation, and regeneration calls; may accept the operator credential only transiently for the session login/exchange endpoint; discards it after the exchange; sends protected mutation requests with credentials included and the session CSRF token/header when required; handles unauthenticated responses; and never hardcodes, stores, persists, repeats, or sends the raw ADMIN_TOKEN directly to feature mutation endpoints.',
       );
