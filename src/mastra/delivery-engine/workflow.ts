@@ -1573,10 +1573,17 @@ function workflowEmptyBookmarkCompletedCriterion(criterion: string) {
   return /\bempty (?:bookmark )?list\b[\s\S]{0,120}\bcompleted run with no transcript\b/i.test(criterion);
 }
 
+function emptyBookmarkCompletesWithoutTranscriptCriterion(criterion: string) {
+  return /\bempty (?:bookmark )?list\b[\s\S]{0,120}\bcompletes? (?:the )?run\b[\s\S]{0,120}\bwithout a transcript\b/i.test(
+    criterion,
+  );
+}
+
 function withoutLifecycleDriftCriteria(task: Task) {
   const isDriftCriterion = (criterion: string) =>
     runLifecycleWithoutEmptyTerminalCriterion(criterion) ||
     workflowEmptyBookmarkCompletedCriterion(criterion) ||
+    emptyBookmarkCompletesWithoutTranscriptCriterion(criterion) ||
     (taskOwnsWorkflowSurface(task) &&
       workflowCreatesRunningRunCriterion(criterion));
   const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !isDriftCriterion(criterion));

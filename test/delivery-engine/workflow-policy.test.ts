@@ -1454,7 +1454,10 @@ test('task plan normalization removes empty-run lifecycle drift outside workflow
       id: 'T06',
       depends_on: ['T05'],
       owned_surfaces: ['src/prompts.js', 'src/pipeline.js'],
-      acceptance_criteria: ['src/pipeline.js treats an empty bookmark list as a completed run with no transcript.'],
+      acceptance_criteria: [
+        'src/pipeline.js treats an empty bookmark list as a completed run with no transcript.',
+        'An empty bookmark list completes the run without a transcript rather than failing.',
+      ],
     },
   ]);
 
@@ -1462,6 +1465,7 @@ test('task plan normalization removes empty-run lifecycle drift outside workflow
   const criteria = normalized.tasks[0].acceptance_criteria.join('\n');
 
   assert.doesNotMatch(criteria, /completed run with no transcript/);
+  assert.doesNotMatch(criteria, /completes the run without a transcript/);
 });
 
 test('task plan normalization moves AI output validation contracts to explicit validation surfaces', () => {
