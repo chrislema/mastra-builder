@@ -1529,10 +1529,16 @@ test('task plan normalization injects session auth before late admin auth and ro
   const criteria = (id: string) => byId[id].acceptance_criteria.join('\n');
 
   assert.ok(byId['E20-auth-session']);
-  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T02']);
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T02-part-3']);
   assert.ok(indexOf('E20-auth-session') < indexOf('T07'));
-  assert.deepEqual(byId.T07.depends_on, ['T02-part-3', 'T02', 'E20-auth-session']);
-  assert.deepEqual(byId['T08-part-2'].depends_on, ['T08', 'T02-part-3', 'T02', 'E20-auth-session']);
+  assert.deepEqual(byId.T07.depends_on, ['T02-part-3', 'E20-auth-session']);
+  assert.deepEqual(byId['T08-part-2'].depends_on, ['T08', 'T02-part-3', 'E20-auth-session']);
+  assert.deepEqual(byId['E98-route-integration'].depends_on, [
+    'T02-part-3',
+    'E20-auth-session',
+    'T07',
+    'T08-part-2',
+  ]);
   assert.ok(indexOf('E98-route-integration') > indexOf('T08-part-2'));
   assert.ok(indexOf('E98-route-integration') < indexOf('T11'));
   assert.ok(indexOf('E98-route-integration') < indexOf('T12'));
@@ -1942,8 +1948,8 @@ test('task plan normalization infers contracts for generic routes and http auth 
   const routeCriteria = byId.T11.acceptance_criteria.join('\n');
   const integrationCriteria = byId['E98-route-integration'].acceptance_criteria.join('\n');
 
-  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T03']);
-  assert.deepEqual(byId['E98-route-integration'].depends_on, ['T03', 'E20-auth-session', 'T11']);
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T01', 'T03-part-2']);
+  assert.deepEqual(byId['E98-route-integration'].depends_on, ['T03-part-2', 'E20-auth-session', 'T11']);
   assert.match(routeCriteria, /POST \/profiles accepts multipart\/form-data/);
   assert.match(routeCriteria, /POST \/runs creates a queued manual run record/);
   assert.match(routeCriteria, /GET \/runs\/:id returns run status/);

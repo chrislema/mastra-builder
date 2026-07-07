@@ -2173,17 +2173,28 @@ function preEntrypointBoundaryDependencyId(tasks: Task[], task: Task) {
   const finalTaskId = finalGeneratedSliceTaskId(tasks, task.id);
   const finalTask = tasks.find((candidate) => candidate.id === finalTaskId);
   if (!finalTask || finalTask.id === task.id) return task.id;
-  if (
-    (taskOwnsRouterSurface(task) || taskOwnsOperatorAuthBoundary(task)) &&
-    !taskOwnsRouterSurface(finalTask) &&
-    !taskOwnsOperatorAuthBoundary(finalTask)
-  ) {
-    return task.id;
-  }
   if (taskOwnsRouteModule(finalTask) || taskOwnsPublicAppSurface(finalTask) || taskOwnsIndexSurface(finalTask)) {
     return task.id;
   }
   return finalTask.id;
+}
+
+function routeIntegrationDependencyId(tasks: Task[], task: Task) {
+  const finalTaskId = finalGeneratedSliceTaskId(tasks, task.id);
+  const finalTask = tasks.find((candidate) => candidate.id === finalTaskId);
+  if (!finalTask || finalTask.id === task.id) return task.id;
+  if (taskOwnsRouteModule(finalTask)) return finalTask.id;
+  if (taskOwnsPublicAppSurface(finalTask) || taskOwnsIndexSurface(finalTask)) return preEntrypointBoundaryDependencyId(tasks, task);
+  return finalTask.id;
+}
+
+function canUsePreEntrypointGeneratedDependency(tasks: Task[], dependency: string, finalDependency: string) {
+  const dependencyTask = tasks.find((candidate) => candidate.id === dependency);
+  const finalTask = tasks.find((candidate) => candidate.id === finalDependency);
+  if (!dependencyTask || !finalTask) return false;
+  if (taskOwnsRouteModule(finalTask)) return false;
+  if (!taskOwnsPublicAppSurface(finalTask) && !taskOwnsIndexSurface(finalTask)) return false;
+  return preEntrypointBoundaryDependencyId(tasks, dependencyTask) === dependency;
 }
 
 function routerBoundaryProviderTasks(tasks: Task[]) {
@@ -2468,6 +2479,42 @@ function appendDependencies(task: Task, dependencies: string[]) {
     depends_on.every((dependency, index) => dependency === task.depends_on[index])
     ? task
     : { ...task, depends_on };
+}
+
+function withPreEntrypointGeneratedSliceDependencies(taskPlan: TaskPlan, tasks: Task[]) {
+  const plan = { ...taskPlan, tasks };
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    const taskFamilyId = generatedSliceFamilyId(task.id);
+    const depends_on = Array.from(
+      new Set(
+        task.depends_on.map((dependency) => {
+          const dependencyTask = tasks.find((candidate) => candidate.id === dependency);
+          if (!dependencyTask) return dependency;
+          const replacement = taskHasRouteIntegrationContract(task)
+            ? routeIntegrationDependencyId(tasks, dependencyTask)
+            : preEntrypointBoundaryDependencyId(tasks, dependencyTask);
+          if (replacement === dependency) return dependency;
+          if (generatedSliceFamilyId(dependency) === taskFamilyId) return dependency;
+          if (!taskCanSafelyDependOn(plan, task.id, replacement)) return dependency;
+
+          changed = true;
+          return replacement;
+        }),
+      ),
+    );
+
+    if (
+      depends_on.length === task.depends_on.length &&
+      depends_on.every((dependency, index) => dependency === task.depends_on[index])
+    ) {
+      return task;
+    }
+
+    return { ...task, depends_on };
+  });
+
+  return { tasks: nextTasks, changed };
 }
 
 function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
@@ -2779,6 +2826,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     tasks = withDependencies.tasks;
   }
 
+  const withPreEntrypointDependencies = withPreEntrypointGeneratedSliceDependencies(taskPlan, tasks);
+  if (withPreEntrypointDependencies.changed) {
+    changed = true;
+    tasks = withPreEntrypointDependencies.tasks;
+  }
+
   return changed ? { ...taskPlan, tasks } : taskPlan;
 }
 
@@ -2872,6 +2925,7 @@ export function normalizeTaskPlanGeneratedSliceDependencies(taskPlan: TaskPlan):
           if (!finalDependency || finalDependency === dependency) return dependency;
           if (generatedSliceFamilyId(dependency) === taskFamilyId) return dependency;
           if (!taskCanSafelyDependOn(taskPlan, task.id, finalDependency)) return dependency;
+          if (canUsePreEntrypointGeneratedDependency(taskPlan.tasks, dependency, finalDependency)) return dependency;
 
           changed = true;
           return finalDependency;
@@ -2993,6 +3047,7 @@ export function generatedSliceDependencyHygiene(taskPlan: TaskPlan) {
       if (!finalDependency || finalDependency === dependency) continue;
       if (generatedSliceFamilyId(dependency) === taskFamilyId) continue;
       if (!taskCanSafelyDependOn(taskPlan, task.id, finalDependency)) continue;
+      if (canUsePreEntrypointGeneratedDependency(taskPlan.tasks, dependency, finalDependency)) continue;
 
       return {
         passed: false,
