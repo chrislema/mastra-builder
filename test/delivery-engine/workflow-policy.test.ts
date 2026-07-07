@@ -1225,9 +1225,35 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.ok(integration);
   assert.deepEqual(integration?.owned_surfaces, ['src/router.js']);
   assert.deepEqual(integration?.depends_on, ['T02', 'E20-auth-session', 'T05', 'T06']);
+  assert.match(integration?.acceptance_criteria.join('\n') ?? '', /browser session/);
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /Every declared API endpoint is reachable through the router/);
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /protection matrix/);
   assert.ok(normalized.tasks.find((task) => task.id === 'E20-auth-session'));
+});
+
+test('task plan normalization keeps profile migration contracts on the owned migration filename', () => {
+  const plan = taskPlan([
+    {
+      id: 'T03',
+      depends_on: [],
+      owned_surfaces: ['migrations/0001_initial_schema.sql'],
+      acceptance_criteria: [
+        'migrations/0001_schema.sql enforces at most one active profile_artifacts row per kind with a D1/SQLite partial unique index where is_active = 1 and constrains valid profile kinds.',
+      ],
+    },
+    {
+      id: 'T05',
+      depends_on: ['T03'],
+      owned_surfaces: ['src/routes/profiles.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const migrationTask = normalized.tasks.find((task) => task.id === 'T03');
+  const criteria = migrationTask?.acceptance_criteria.join('\n') ?? '';
+
+  assert.match(criteria, /migrations\/0001_initial_schema\.sql enforces at most one active profile_artifacts row/);
+  assert.doesNotMatch(criteria, /migrations\/0001_schema\.sql enforces at most one active profile_artifacts row/);
 });
 
 test('task plan normalization recognizes flat Worker http and route module names', () => {
@@ -1471,7 +1497,10 @@ test('task plan normalization attaches Worker lifecycle contracts to workflow an
       id: 'T11',
       depends_on: ['T10'],
       owned_surfaces: ['src/workflow.js', 'src/scheduler.js'],
-      acceptance_criteria: ['Workflow fetches bookmarks and treats an empty list as a completed run with no transcript.'],
+      acceptance_criteria: [
+        'weeklyWorkflow.js implements workflow steps including "create run" before fetching bookmarks.',
+        'Workflow fetches bookmarks and treats an empty list as a completed run with no transcript.',
+      ],
     },
   ]);
 
@@ -1480,8 +1509,29 @@ test('task plan normalization attaches Worker lifecycle contracts to workflow an
 
   assert.match(criteria, /manual run routes create queued run records only/);
   assert.match(criteria, /transitions queued runs to running and then completed or failed/);
+  assert.doesNotMatch(criteria, /create run/);
   assert.doesNotMatch(criteria, /completed run with no transcript/);
   assert.match(criteria, /completed_empty terminal run/);
+});
+
+test('task plan normalization promotes route source endpoint contracts into task-local acceptance criteria', () => {
+  const plan = taskPlan([
+    {
+      id: 'T11-part-2',
+      depends_on: ['T11'],
+      owned_surfaces: ['src/routes/regenerate.js', 'src/routes/candidates.js'],
+    },
+  ]);
+  (plan.tasks[0] as any).source_acceptance_criteria = [
+    'POST /runs/:id/regenerate stores a new transcript version without losing prior transcript versions and delegates state mutation to service/repository boundaries.',
+    'GET /runs/:id/candidates returns candidate briefs and scores through the auth/session protected route.',
+  ];
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const criteria = normalized.tasks[0].acceptance_criteria.join('\n');
+
+  assert.match(criteria, /POST \/runs\/:id\/regenerate stores a new transcript version/);
+  assert.match(criteria, /GET \/runs\/:id\/candidates returns candidate briefs/);
 });
 
 test('task plan normalization canonicalizes no-bookmark status and workflow export contracts', () => {

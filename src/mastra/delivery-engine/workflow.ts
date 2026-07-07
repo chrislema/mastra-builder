@@ -1234,6 +1234,10 @@ function taskOwnsD1MigrationFile(task: Task) {
   return taskOwnedBoundaryPaths(task).some((path) => path.startsWith('migrations/') && path.endsWith('.sql'));
 }
 
+function taskD1MigrationSurface(task: Task) {
+  return taskOwnedBoundaryPaths(task).find((path) => path.startsWith('migrations/') && path.endsWith('.sql'));
+}
+
 function criterionMentionsAny(criterion: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(criterion));
 }
@@ -1573,6 +1577,18 @@ function workflowCreatesRunningRunCriterion(criterion: string) {
   );
 }
 
+function workflowCreateRunStepCriterion(criterion: string) {
+  if (/\b(?:manual run routes?|scheduled triggers?)\b[\s\S]{0,80}\bcreate queued run records? only\b/i.test(criterion)) {
+    return false;
+  }
+
+  return (
+    /\b(?:WeeklyWorkflow|weeklyWorkflow\.js|Workflow|workflow steps?)\b[\s\S]{0,120}\b(?:steps?\s+including\s+)?["']?create run["']?/i.test(
+      criterion,
+    ) || /\b["']?create run["']?\b[\s\S]{0,120}\b(?:Workflow|workflow|weeklyWorkflow\.js)\b/i.test(criterion)
+  );
+}
+
 function workflowEmptyBookmarkCompletedCriterion(criterion: string) {
   return /\bempty (?:bookmark )?list\b[\s\S]{0,120}\bcompleted run with no transcript\b/i.test(criterion);
 }
@@ -1589,7 +1605,7 @@ function withoutLifecycleDriftCriteria(task: Task) {
     workflowEmptyBookmarkCompletedCriterion(criterion) ||
     emptyBookmarkCompletesWithoutTranscriptCriterion(criterion) ||
     (taskOwnsWorkflowSurface(task) &&
-      workflowCreatesRunningRunCriterion(criterion));
+      (workflowCreatesRunningRunCriterion(criterion) || workflowCreateRunStepCriterion(criterion)));
   const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !isDriftCriterion(criterion));
   const source_acceptance_criteria = task.source_acceptance_criteria?.filter((criterion) => !isDriftCriterion(criterion));
 
@@ -1654,6 +1670,46 @@ function withCanonicalCompletedEmptyStatus(task: Task) {
     acceptance_criteria,
     ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
   };
+}
+
+function canonicalizeProfileMigrationCriterionSurface(task: Task) {
+  const migrationSurface = taskD1MigrationSurface(task);
+  if (!migrationSurface) return task;
+
+  const canonicalize = (criterion: string) =>
+    criterion.replace(
+      /\bmigrations\/[A-Za-z0-9_.-]+\.sql(?= enforces at most one active profile_artifacts row)/g,
+      migrationSurface,
+    );
+  const acceptance_criteria = task.acceptance_criteria.map(canonicalize);
+  const source_acceptance_criteria = task.source_acceptance_criteria?.map(canonicalize);
+
+  if (
+    acceptance_criteria.every((criterion, index) => criterion === task.acceptance_criteria[index]) &&
+    (source_acceptance_criteria ?? []).every((criterion, index) => criterion === task.source_acceptance_criteria?.[index])
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function routeEndpointContractCriterion(criterion: string) {
+  return (
+    /\b(?:GET|POST|PUT|PATCH|DELETE)\s+\/[A-Za-z0-9_./:{}*-]+/i.test(criterion) ||
+    /\b(?:endpoint|route)\b[\s\S]{0,80}\b(?:auth|session|protect|persist|store|return|delegate|transcript|candidate|regenerat)/i.test(
+      criterion,
+    )
+  );
+}
+
+function taskRouteEndpointSourceCriteria(task: Task) {
+  if (!taskOwnsRouteModule(task) || !task.source_acceptance_criteria?.length) return [];
+  return task.source_acceptance_criteria.filter(routeEndpointContractCriterion);
 }
 
 function insertTaskAfterDependencies(tasks: Task[], task: Task) {
@@ -1852,7 +1908,7 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
     depends_on,
     acceptance_criteria: [
       `${routerSurface} is the single API route registration boundary after feature route modules exist.`,
-      `${routerSurface} makes profile, run, latest, regenerate, health, and static asset fallback routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`,
+      `${routerSurface} makes browser session, profile, run, latest, regenerate, candidate, health, and static asset fallback routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`,
       'Every declared API endpoint is reachable through the router after this task completes.',
       'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
     ],
@@ -2036,6 +2092,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       task = workflowExportSanitized;
     }
 
+    const migrationCanonicalized = canonicalizeProfileMigrationCriterionSurface(task);
+    if (migrationCanonicalized !== task) {
+      changed = true;
+      task = migrationCanonicalized;
+    }
+
     if (hasAiValidationSurface && !taskOwnsAiValidationSurface(task)) {
       const sanitized = withoutAiOutputValidationCriteria(task);
       if (sanitized !== task) {
@@ -2070,8 +2132,9 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     }
 
     if (taskOwnsD1MigrationFile(task) && hasProfileState) {
+      const migrationSurface = taskD1MigrationSurface(task) ?? 'migrations/0001_schema.sql';
       criteria.push(
-        'migrations/0001_schema.sql enforces at most one active profile_artifacts row per kind with a D1/SQLite partial unique index where is_active = 1 and constrains valid profile kinds.',
+        `${migrationSurface} enforces at most one active profile_artifacts row per kind with a D1/SQLite partial unique index where is_active = 1 and constrains valid profile kinds.`,
       );
     }
 
@@ -2132,9 +2195,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (taskOwnsRouterSurface(task)) {
       criteria.push(
         'The router surface remains the single API route registration boundary; feature routes must be registered through the router rather than dispatched directly from src/index.js.',
+        'The router surface explicitly registers the browser session endpoint before UI work depends on it, so public/app.js can authenticate through the session route without handling raw ADMIN_TOKEN on feature mutations.',
         'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
       );
     }
+
+    criteria.push(...taskRouteEndpointSourceCriteria(task));
 
     if (taskIsRootScaffold(task) && taskOwnsWorkerConfigFile(task) && taskOwnsIndexSurface(task)) {
       criteria.push(
