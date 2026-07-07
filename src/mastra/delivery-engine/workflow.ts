@@ -81,6 +81,8 @@ const taskSchema = z.object({
   depends_on: z.array(z.string()),
   acceptance_criteria: z.array(z.string()),
   owned_surfaces: z.array(z.string()),
+  source_task_id: z.string().optional(),
+  source_acceptance_criteria: z.array(z.string()).optional(),
 });
 
 const readoutSchema = z.object({
@@ -149,11 +151,20 @@ function parseReviewReportResponse(response: unknown, label: string) {
   }
 }
 
+const acceptanceContractSchema = z.object({
+  id: z.string(),
+  criterion: z.string(),
+  status: z.enum(['verified', 'unverified']),
+  evidence: z.array(z.string()).default([]),
+  gaps: z.array(z.string()).default([]),
+});
+
 const implementationNoteSchema = z.object({
   artifact_type: z.literal('implementation-note'),
   task: z.string(),
   changes: z.array(z.string()).min(1),
   files_touched: z.array(z.string()).default([]),
+  acceptance_contracts: z.array(acceptanceContractSchema).optional(),
   assumptions: z.array(z.string()).default([]),
   verification: z.object({
     performed: z.array(z.string()).default([]),
@@ -799,6 +810,28 @@ function normalizedOwnedSurfaces(task: Task) {
   return task.owned_surfaces.map((surface) => normalizeDeliveryPathReference(surface)).filter(Boolean);
 }
 
+function taskSourceTaskId(task: Task) {
+  return task.source_task_id?.trim() || task.id;
+}
+
+function taskAcceptanceContractCriteria(task: Task) {
+  return Array.from(new Set([...(task.source_acceptance_criteria ?? []), ...task.acceptance_criteria].filter(Boolean)));
+}
+
+function acceptanceContractId(task: Task, index: number) {
+  return `${taskSourceTaskId(task)}-AC${String(index + 1).padStart(2, '0')}`;
+}
+
+function acceptanceContractReferences(criterion: string) {
+  return Array.from(
+    new Set(
+      criterion.match(
+        /(?:^|\s)((?:src|public|migrations|workers|assets)\/[A-Za-z0-9_./-]+|wrangler\.(?:jsonc?|toml)|package\.json|tsconfig\.json|README\.md|\.gitignore|\.env\*?|\.dev\.vars\*?)/g,
+      ) ?? [],
+    ),
+  ).map((match) => match.trim());
+}
+
 function ownsExactSurface(task: Task, path: string) {
   return normalizedOwnedSurfaces(task).includes(path);
 }
@@ -1115,6 +1148,8 @@ function splitLargeImplementationTask(task: Task) {
   if (!taskIsLargeImplementationTask(task)) return [task];
 
   const chunks = chunkItems(task.owned_surfaces, maxImplementationOwnedSurfacesPerTask);
+  const sourceTaskId = taskSourceTaskId(task);
+  const sourceAcceptanceCriteria = taskAcceptanceContractCriteria(task);
   return chunks.map((surfaces, index) => {
     const sliceNumber = index + 1;
     const previousSliceId = index === 1 ? task.id : `${task.id}-part-${index}`;
@@ -1125,6 +1160,8 @@ function splitLargeImplementationTask(task: Task) {
       depends_on: index === 0 ? task.depends_on : [previousSliceId],
       acceptance_criteria: implementationSliceAcceptanceCriteria(task, surfaces, sliceNumber, chunks.length),
       owned_surfaces: surfaces,
+      source_task_id: sourceTaskId,
+      source_acceptance_criteria: sourceAcceptanceCriteria,
     };
   });
 }
@@ -1231,12 +1268,16 @@ function splitWorkerConfigAndD1SchemaTask(task: Task) {
   }
 
   const schemaTaskId = `${task.id}-d1-schema`;
+  const sourceTaskId = taskSourceTaskId(task);
+  const sourceAcceptanceCriteria = taskAcceptanceContractCriteria(task);
   return [
     {
       ...task,
       deliverable: `${task.deliverable} (Worker configuration slice)`,
       acceptance_criteria: splitConfigSchemaAcceptanceCriteria(task, 'config'),
       owned_surfaces: [...configSurfaces, ...otherSurfaces],
+      source_task_id: sourceTaskId,
+      source_acceptance_criteria: sourceAcceptanceCriteria,
     },
     {
       ...task,
@@ -1245,6 +1286,8 @@ function splitWorkerConfigAndD1SchemaTask(task: Task) {
       depends_on: [task.id],
       acceptance_criteria: splitConfigSchemaAcceptanceCriteria(task, 'schema'),
       owned_surfaces: schemaSurfaces,
+      source_task_id: sourceTaskId,
+      source_acceptance_criteria: sourceAcceptanceCriteria,
     },
   ];
 }
@@ -1402,6 +1445,38 @@ export function normalizeTaskPlanGeneratedSliceDependencies(taskPlan: TaskPlan):
   });
 
   return changed ? { ...taskPlan, tasks } : taskPlan;
+}
+
+function allTaskAcceptanceContractCriteria(taskPlan: TaskPlan) {
+  return taskPlan.tasks.flatMap((task) =>
+    taskAcceptanceContractCriteria(task).map((criterion, index) => ({
+      taskId: task.id,
+      contractId: acceptanceContractId(task, index),
+      criterion,
+    })),
+  );
+}
+
+function revisedPlanCarriesCriterion(taskPlan: TaskPlan, criterion: string) {
+  return taskPlan.tasks.some((task) => taskAcceptanceContractCriteria(task).includes(criterion));
+}
+
+export function taskPlanAcceptanceContractRegression(previousTaskPlan: TaskPlan, revisedTaskPlan: TaskPlan) {
+  const missing = allTaskAcceptanceContractCriteria(previousTaskPlan).filter(
+    (contract) => !revisedPlanCarriesCriterion(revisedTaskPlan, contract.criterion),
+  );
+
+  if (!missing.length) return { passed: true, reason: 'ok' };
+
+  const examples = missing
+    .slice(0, 5)
+    .map((contract) => `${contract.taskId}/${contract.contractId}: ${contract.criterion}`)
+    .join(' | ');
+  const suffix = missing.length > 5 ? `; ${missing.length - 5} more contract(s) omitted` : '';
+  return {
+    passed: false,
+    reason: `Task plan revision dropped acceptance contract(s) from the prior plan. Preserve each criterion verbatim in acceptance_criteria or source_acceptance_criteria when splitting/refining tasks: ${examples}${suffix}`,
+  };
 }
 
 export function generatedSliceDependencyHygiene(taskPlan: TaskPlan) {
@@ -5896,17 +5971,189 @@ async function collectReleaseGateEvidence({
   };
 }
 
-function acceptanceCriterionCovered(criterion: string, performed: string[]) {
+const acceptanceCriterionStopWords = new Set([
+  'the',
+  'and',
+  'for',
+  'with',
+  'that',
+  'this',
+  'from',
+  'into',
+  'using',
+  'uses',
+  'use',
+  'when',
+  'then',
+  'than',
+  'only',
+  'each',
+  'every',
+  'after',
+  'before',
+  'through',
+  'without',
+  'within',
+  'must',
+  'should',
+  'can',
+  'will',
+  'does',
+  'not',
+  'are',
+  'is',
+  'be',
+  'by',
+  'or',
+  'as',
+  'to',
+  'in',
+  'on',
+  'of',
+  'a',
+  'an',
+]);
+
+function normalizeAcceptanceEvidenceText(value: string) {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/[^a-z0-9/_:.-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function acceptanceCriterionTokens(criterion: string) {
+  return Array.from(
+    new Set(
+      normalizeAcceptanceEvidenceText(criterion)
+        .split(/\s+/)
+        .map((token) => token.replace(/^["'`]+|["'`,.;:]+$/g, ''))
+        .filter((token) => token.length >= 3)
+        .filter((token) => !acceptanceCriterionStopWords.has(token))
+        .filter((token) => !/^\d+$/.test(token)),
+    ),
+  );
+}
+
+function acceptanceEvidenceFiles(repoPath?: string, task?: Task) {
+  if (!repoPath || !task) return [];
+  return repoFileContents(repoPath, taskBoundarySurfaces(repoPath, task));
+}
+
+function acceptanceCriterionCommandEvidence(criterion: string, performed: string[]) {
   const text = criterion.toLowerCase();
   const evidence = performed.join('\n').toLowerCase();
 
-  if (/\b(typecheck|tsc|typescript)\b/.test(text)) return /\b(typecheck|tsc)\b/.test(evidence);
-  if (/\btest(s|ing)?\b/.test(text)) return /\btest\b/.test(evidence);
-  if (/\bbuild\b/.test(text)) return /\bbuild\b/.test(evidence);
-  if (/\bwrangler dev\b/.test(text)) return /\bwrangler dev\b/.test(evidence);
-  if (/\bhealth\b|\/health\b|http 200|status 200/.test(text)) return /\bhealth\b|\/health\b|http 200|status 200/.test(evidence);
+  if (/\b(typecheck|tsc|typescript)\b/.test(text) && /\b(typecheck|tsc)\b/.test(evidence)) {
+    return 'verification command covered TypeScript/typecheck criterion';
+  }
+  if (/\btest(s|ing)?\b/.test(text) && /\btest\b/.test(evidence)) {
+    return 'verification command covered test criterion';
+  }
+  if (/\bbuild\b/.test(text) && /\bbuild\b/.test(evidence)) {
+    return 'verification command covered build criterion';
+  }
+  if (/\bwrangler dev\b/.test(text) && /\bwrangler dev\b/.test(evidence)) {
+    return 'verification command covered wrangler dev criterion';
+  }
+  if (/\bhealth\b|\/health\b|http 200|status 200/.test(text) && /\bhealth\b|\/health\b|http 200|status 200/.test(evidence)) {
+    return 'verification command covered HTTP health/status criterion';
+  }
 
-  return false;
+  return undefined;
+}
+
+function acceptanceCriterionFileEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  const files = acceptanceEvidenceFiles(repoPath, task);
+  if (!files.length) return undefined;
+
+  const references = acceptanceContractReferences(criterion);
+  const referencedFiles = references.length
+    ? files.filter((file) => references.some((reference) => file.path === reference || file.path.endsWith(reference)))
+    : files;
+  if (references.length && !referencedFiles.length) return undefined;
+
+  const corpus = normalizeAcceptanceEvidenceText(
+    referencedFiles.map((file) => `${file.path}\n${file.content}`).join('\n'),
+  );
+  const tokens = acceptanceCriterionTokens(criterion);
+  if (!tokens.length) return undefined;
+
+  const matched = tokens.filter((token) => corpus.includes(token));
+  const required = tokens.length <= 6 ? Math.max(2, tokens.length - 1) : Math.ceil(tokens.length * 0.58);
+  if (matched.length < required) return undefined;
+
+  return `file evidence covered ${matched.length}/${tokens.length} acceptance tokens in ${referencedFiles
+    .map((file) => file.path)
+    .slice(0, 4)
+    .join(', ')}`;
+}
+
+function acceptanceCriterionEvidence({
+  criterion,
+  performed,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  performed: string[];
+  repoPath?: string;
+  task?: Task;
+}) {
+  const commandEvidence = acceptanceCriterionCommandEvidence(criterion, performed);
+  if (commandEvidence) return { passed: true, evidence: [commandEvidence], gaps: [] };
+
+  const fileEvidence = acceptanceCriterionFileEvidence({ criterion, repoPath, task });
+  if (fileEvidence) return { passed: true, evidence: [fileEvidence], gaps: [] };
+
+  return {
+    passed: false,
+    evidence: [],
+    gaps: [`Acceptance criterion not verified by automated checks or task-boundary file evidence: ${criterion}`],
+  };
+}
+
+function acceptanceCriterionCovered(
+  criterion: string,
+  performed: string[],
+  options: { repoPath?: string; task?: Task } = {},
+) {
+  return acceptanceCriterionEvidence({ criterion, performed, ...options }).passed;
+}
+
+export function acceptanceContractsForTask({
+  repoPath,
+  task,
+  verification,
+}: {
+  repoPath?: string;
+  task: Task;
+  verification: { performed: string[]; missing: string[] };
+}) {
+  return taskAcceptanceContractCriteria(task).map((criterion, index) => {
+    const result = acceptanceCriterionEvidence({
+      criterion,
+      performed: verification.performed,
+      repoPath,
+      task,
+    });
+    return {
+      id: acceptanceContractId(task, index),
+      criterion,
+      status: result.passed ? ('verified' as const) : ('unverified' as const),
+      evidence: result.evidence,
+      gaps: result.gaps,
+    };
+  });
 }
 
 export function verificationWithAcceptanceGaps({
@@ -5925,7 +6172,7 @@ export function verificationWithAcceptanceGaps({
     }
   }
   for (const criterion of task.acceptance_criteria) {
-    if (!acceptanceCriterionCovered(criterion, verification.performed)) {
+    if (!acceptanceCriterionCovered(criterion, verification.performed, { repoPath, task })) {
       missing.add(`Acceptance criterion not verified by automated checks: ${criterion}`);
     }
   }
@@ -6118,6 +6365,7 @@ function synthesizeImplementationNote({
   const filesTouched = implementationFilesTouched({ repoPath, stage, task, events });
   const summary = responseText(buildResponse);
   const honestVerification = verificationWithAcceptanceGaps({ repoPath, task, verification });
+  const acceptanceContracts = acceptanceContractsForTask({ repoPath, task, verification: honestVerification });
 
   return {
     artifact_type: 'implementation-note',
@@ -6127,13 +6375,25 @@ function synthesizeImplementationNote({
       ...(summary ? [`Engineer response: ${compactDiagnostic(summary, 500)}`] : []),
     ],
     files_touched: filesTouched,
+    acceptance_contracts: acceptanceContracts,
     assumptions: taskPlan.open_decisions,
     verification: honestVerification,
     risks: taskPlan.risks,
   };
 }
 
-function implementationDeterministicResults({
+function acceptanceContractGaps(note: ImplementationNote) {
+  const contractGaps = (note.acceptance_contracts ?? [])
+    .filter((contract) => contract.status !== 'verified')
+    .map((contract) => `${contract.id}: ${contract.criterion}${contract.gaps.length ? ` (${contract.gaps.join('; ')})` : ''}`);
+  if (contractGaps.length) return contractGaps;
+
+  return note.verification.missing
+    .filter((item) => /^Acceptance criterion not verified by automated checks:/i.test(item))
+    .map((item) => item.replace(/^Acceptance criterion not verified by automated checks:\s*/i, ''));
+}
+
+export function implementationDeterministicResults({
   repoPath,
   stage,
   role,
@@ -6160,6 +6420,7 @@ function implementationDeterministicResults({
   const workerPackageGaps = workerPackageScaffoldGaps(repoPath, task);
   const lifecycleStatusGaps = lifecycleStatusSchemaGaps(repoPath, task);
   const profileKindGaps = profileKindContractGaps(repoPath, task);
+  const acceptanceGaps = acceptanceContractGaps(note);
   const noteOwnership = runDeterministicCheck({
     name: 'file_ownership',
     role,
@@ -6236,6 +6497,12 @@ function implementationDeterministicResults({
       passed: profileKindGaps.length === 0,
       reason: profileKindGaps.length ? profileKindGaps.join('; ') : 'ok',
     },
+    {
+      id: 'acceptance_contracts_satisfied',
+      check: 'acceptance_criteria_contracts',
+      passed: acceptanceGaps.length === 0,
+      reason: acceptanceGaps.length ? acceptanceGaps.slice(0, 8).join('; ') : 'ok',
+    },
     { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
     {
       id: 'verification_passed',
@@ -6268,6 +6535,8 @@ export function implementationDeterministicRemediation(results: DeterministicGat
         'state_explicitness',
         'profile_kind_contract_aligned',
         'profile_kind_contract',
+        'acceptance_contracts_satisfied',
+        'acceptance_criteria_contracts',
         'module_loads',
         'ran_code_before_complete',
         'verification_passed',
@@ -7967,6 +8236,22 @@ const createPlanGateStep = createStep({
         judgment: taskPlanJudgment,
         revisionNumber: attempt + 1,
       });
+      const regression = taskPlanAcceptanceContractRegression(taskPlan, revision.taskPlan);
+      checks.push(...checkSummaries([{ id: 'acceptance_contracts_preserved', check: 'task_plan_acceptance_contract_regression', ...regression }], `plan-gate-revision-${attempt + 1}`));
+      if (!regression.passed) {
+        return {
+          ...planContext,
+          taskPlan: revision.taskPlan,
+          status: 'stuck' as const,
+          runId: inputData.runId,
+          summary: 'Planner revision dropped acceptance criteria from the prior task plan.',
+          artifacts: [...artifacts, revision.path],
+          checks,
+          judgments,
+          questions: [],
+          nextSteps: [regression.reason],
+        };
+      }
       taskPlan = revision.taskPlan;
       subjectName = revision.path;
       artifacts.push(revision.path);
@@ -8326,8 +8611,17 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
       taskPlan: revisedTaskPlan,
       sourcePolicy: inputData.sourcePolicy,
     });
-    checks.push(...checkSummaries(revisedDeterministicResults, `revision-${revisionNumber}`));
-    const failedRevisedChecks = revisedDeterministicResults.filter((check) => !check.passed);
+    const contractRegression = taskPlanAcceptanceContractRegression(taskPlan, revisedTaskPlan);
+    const revisedResultsWithContracts = [
+      ...revisedDeterministicResults,
+      {
+        id: 'acceptance_contracts_preserved',
+        check: 'task_plan_acceptance_contract_regression',
+        ...contractRegression,
+      },
+    ];
+    checks.push(...checkSummaries(revisedResultsWithContracts, `revision-${revisionNumber}`));
+    const failedRevisedChecks = revisedResultsWithContracts.filter((check) => !check.passed);
     if (failedRevisedChecks.length) {
       return {
         ...stageContext(),
@@ -8352,7 +8646,7 @@ ${revisionRemediation.map((item) => `- ${item}`).join('\n')}`,
       rubricName: 'task-plan',
       subjectName: revisionPath,
       subject: revisedTaskPlan,
-      deterministicResults: revisedDeterministicResults,
+      deterministicResults: revisedResultsWithContracts,
       slug: `task-plan-revision-${revisionNumber}`,
     });
     artifacts.push(revisedPlanJudge.judgeOutputPath, revisedPlanJudge.judgmentPath);
@@ -8822,6 +9116,11 @@ const executeBuildTaskAttemptStep = createStep({
     const taskPacket = {
       scope: taskPlan.scope,
       task,
+      acceptance_contracts: taskAcceptanceContractCriteria(task).map((criterion, index) => ({
+        id: acceptanceContractId(task, index),
+        criterion,
+        status: 'required',
+      })),
       technology_decisions: taskPlan.technology_decisions,
       open_decisions: taskPlan.open_decisions,
       risks: taskPlan.risks,
@@ -8855,6 +9154,8 @@ ${JSON.stringify(taskPacket, null, 2)}
 
 Execution rules:
 - Make the smallest coherent code change for this task.
+- Treat task_packet.acceptance_contracts as mandatory contracts. Do not return until every listed AC has concrete code evidence in the task's boundary surfaces, or until you surface a real blocker.
+- Do not replace a product acceptance contract with a weaker "slice completed" claim. If the contract names behavior, implement the behavior or leave the task incomplete.
 - Touch only the boundary surfaces in the task packet unless a dependency blocks the task.
 - If preflight_created_surfaces is non-empty, replace those stubs with the real implementation for this task.
 - If an owned surface is still missing, create it.

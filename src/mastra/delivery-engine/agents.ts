@@ -36,6 +36,17 @@ export const deliveryWorkingMemorySchema = z.object({
     runId: z.string().optional(),
     stage: z.string().optional(),
     activeTask: z.string().optional(),
+    acceptanceContracts: z
+      .array(
+        z.object({
+          taskId: z.string(),
+          contractId: z.string(),
+          criterion: z.string(),
+          status: z.enum(['required', 'verified', 'unverified', 'blocked']).default('required'),
+          evidence: z.array(z.string()).default([]),
+        }),
+      )
+      .default([]),
     openQuestions: z.array(z.string()).default([]),
     assumptions: z.array(z.string()).default([]),
     risks: z.array(z.string()).default([]),
@@ -93,7 +104,7 @@ a workflow artifact should exist.
 When operating on a target repo, use requestContext.repoPath as the workspace root.
 Use thread-scoped Mastra working memory only for live coordination facts inside the current
 conversation or delegated run: active task, handoff summary, open blockers, expected evidence,
-and Cloudflare resource assumptions. Persist durable decisions, artifacts, scores, and status
+acceptance contract IDs/evidence, and Cloudflare resource assumptions. Persist durable decisions, artifacts, scores, and status
 through the delivery tools and workflows.
 The judge role receives run memory as read-only context and must not use memory as evidence.
 `;

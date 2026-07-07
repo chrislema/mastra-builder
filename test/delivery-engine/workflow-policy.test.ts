@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  acceptanceContractsForTask,
   buildTimeoutRemediation,
   buildVerificationCommandPlan,
   canSalvageTimedOutBuildAttempt,
@@ -12,6 +13,7 @@ import {
   deploymentReportSuccessNextSteps,
   directDependencySurfacePaths,
   implementationActionableJudgmentRemediation,
+  implementationDeterministicResults,
   implementationDeterministicRemediation,
   implementationEnginePolicyMismatch,
   implementationFilesTouched,
@@ -79,6 +81,7 @@ import {
   sourceDocumentsRequiredProfileKinds,
   staleDownstreamVerificationSurfacePaths,
   taskOwnedSurfaceRoleHygiene,
+  taskPlanAcceptanceContractRegression,
   taskBoundarySurfaces,
   typeScriptDiagnosticsFromRemediation,
   typeScriptDiagnosticsFromText,
@@ -956,6 +959,77 @@ test('task plan normalization splits oversized storage-only tasks and rewires do
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
+test('generated implementation slices preserve source acceptance contracts', () => {
+  const plan = taskPlan([
+    {
+      id: 'T11',
+      depends_on: [],
+      owned_surfaces: [
+        'src/workflows/weeklyWorkflow.js',
+        'src/scheduled.js',
+        'src/workflows/steps/fetchBookmarks.js',
+      ],
+      acceptance_criteria: [
+        'WeeklyWorkflow executes discrete steps for loading profiles, fetching bookmarks, generating transcript, and storing result.',
+      ],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanLargeStorageTasks(plan);
+
+  assert.deepEqual(
+    normalized.tasks.map((task) => task.id),
+    ['T11', 'T11-part-2'],
+  );
+  for (const task of normalized.tasks) {
+    assert.equal(task.source_task_id, 'T11');
+    assert.deepEqual(task.source_acceptance_criteria, [
+      'WeeklyWorkflow executes discrete steps for loading profiles, fetching bookmarks, generating transcript, and storing result.',
+    ]);
+  }
+});
+
+test('task plan revisions must not drop prior acceptance contracts', () => {
+  const previous = taskPlan([
+    {
+      id: 'T11',
+      depends_on: [],
+      owned_surfaces: ['src/workflows/weeklyWorkflow.js', 'src/scheduled.js'],
+      acceptance_criteria: [
+        'WeeklyWorkflow creates or receives a run and executes discrete steps for loading profiles, fetching bookmarks, normalizing links, fetching content, extracting text, creating candidate briefs, scoring candidates, generating transcript, and storing result.',
+        'Unrecoverable run-level failures mark the run failed with error_message.',
+      ],
+    },
+  ]);
+  const revised = taskPlan([
+    {
+      id: 'T11',
+      depends_on: [],
+      owned_surfaces: ['src/workflows/weeklyWorkflow.js', 'src/scheduled.js'],
+      acceptance_criteria: [
+        'Implement delivery slice 1/2: src/workflows/weeklyWorkflow.js, src/scheduled.js.',
+        'src/scheduled.js starts the weekly run path using env.WEEKLY_WORKFLOW rather than running the full pipeline inside the scheduled handler.',
+      ],
+    },
+    {
+      id: 'T11-part-2',
+      depends_on: ['T11'],
+      owned_surfaces: ['src/index.js'],
+      acceptance_criteria: ['src/index.js exports WeeklyWorkflow for Wrangler.'],
+    },
+  ]);
+
+  const result = taskPlanAcceptanceContractRegression(previous, revised);
+
+  assert.equal(result.passed, false);
+  assert.match(result.reason, /dropped acceptance contract/);
+  assert.match(result.reason, /loading profiles, fetching bookmarks/);
+
+  (revised.tasks[0] as any).source_task_id = 'T11';
+  (revised.tasks[0] as any).source_acceptance_criteria = previous.tasks[0].acceptance_criteria;
+  assert.deepEqual(taskPlanAcceptanceContractRegression(previous, revised), { passed: true, reason: 'ok' });
+});
+
 test('task plan normalization splits Worker config and D1 schema tasks', () => {
   const plan = taskPlan([
     {
@@ -1222,6 +1296,110 @@ test('implementation notes list acceptance criteria that workflow verification d
     'Acceptance criterion not verified by automated checks: wrangler dev starts the Worker locally without errors.',
     'Acceptance criterion not verified by automated checks: Worker entry point returns HTTP 200 on GET /health.',
   ]);
+});
+
+test('acceptance contracts use task-boundary file evidence', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-acceptance-contract-evidence-'));
+  mkdirSync(join(repoPath, 'src/routes'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/routes/latest.js'),
+    [
+      'export async function routeLatest(request, env) {',
+      '  return Response.json({ title: "Title", hook: "Hook", transcript: "Body", captions: [], sourceUrls: [], primarySegment: "founder", whyThisWasPicked: "score" });',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/routes/latest.js'],
+      acceptance_criteria: [
+        'GET /latest returns the latest completed transcript fields: title, hook, transcript, captions, sourceUrls, primarySegment, and whyThisWasPicked.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['./node_modules/.bin/wrangler deploy --dry-run --env production passed'], missing: [] },
+  });
+
+  assert.equal(contracts[0].status, 'verified');
+  assert.match(contracts[0].evidence.join('\n'), /file evidence covered/);
+});
+
+test('acceptance contract gate rejects partial workflow implementations', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workflow-contract-gap-'));
+  mkdirSync(join(repoPath, 'src/workflows'), { recursive: true });
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/workflows/weeklyWorkflow.js'),
+    [
+      'export class WeeklyWorkflow {',
+      '  constructor(ctx, env) { this.env = env; }',
+      '  async run(event, step) {',
+      '    await this.env.DB.prepare("update runs set status = ? where id = ?").bind("running", event.payload.runId).run();',
+      '    return { status: "running", runId: event.payload.runId };',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'src/scheduled.js'),
+    'export async function scheduled(controller, env) { return env.WEEKLY_WORKFLOW.create({ params: {} }); }\n',
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T11',
+      depends_on: [],
+      owned_surfaces: ['src/workflows/weeklyWorkflow.js', 'src/scheduled.js'],
+      acceptance_criteria: [
+        'WeeklyWorkflow creates or receives a run and executes discrete steps for loading profiles, fetching bookmarks, normalizing links, fetching content, extracting text, creating candidate briefs, scoring candidates, generating transcript, and storing result.',
+      ],
+    },
+  ]).tasks;
+  const verification = { performed: ['./node_modules/.bin/wrangler deploy --dry-run --env production passed'], missing: [] };
+  const contracts = acceptanceContractsForTask({ repoPath, task, verification });
+  const note = {
+    artifact_type: 'implementation-note' as const,
+    task: 'T11',
+    changes: ['Implemented T11 partially.'],
+    files_touched: ['src/workflows/weeklyWorkflow.js', 'src/scheduled.js'],
+    acceptance_contracts: contracts,
+    assumptions: [],
+    verification,
+    risks: [],
+  };
+
+  const results = implementationDeterministicResults({
+    repoPath,
+    stage: 'build:T11',
+    role: 'engineer',
+    task,
+    note,
+    events: [
+      { type: 'stage_start', stage: 'build:T11', role: 'engineer' },
+      {
+        type: 'tool_use',
+        stage: 'build:T11',
+        role: 'engineer',
+        tool: 'mastra_workspace_write_file',
+        ok: true,
+        paths: ['src/workflows/weeklyWorkflow.js', 'src/scheduled.js'],
+      },
+      { type: 'run_code', stage: 'build:T11', command: './node_modules/.bin/wrangler deploy --dry-run --env production', ok: true },
+      { type: 'stage_end', stage: 'build:T11', reason: 'complete_stage' },
+    ],
+    verification,
+  });
+
+  const acceptanceGate = results.find((result) => result.id === 'acceptance_contracts_satisfied');
+  assert.equal(acceptanceGate?.passed, false);
+  assert.match(acceptanceGate?.reason ?? '', /WeeklyWorkflow creates or receives a run/);
+  assert.match(implementationDeterministicRemediation(results).join('\n'), /acceptance_contracts_satisfied/);
 });
 
 test('implementation touched files prefer successful write events over context surfaces', () => {

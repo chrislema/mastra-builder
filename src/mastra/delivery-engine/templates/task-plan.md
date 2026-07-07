@@ -11,6 +11,7 @@
 - Deliverable:
 - Depends on:
 - Acceptance criteria:
+- Source acceptance criteria, when this task is a slice or revision:
 - Owned files or surfaces:
 
 Use concrete Worker project paths only. New Worker projects should prefer `wrangler.jsonc`

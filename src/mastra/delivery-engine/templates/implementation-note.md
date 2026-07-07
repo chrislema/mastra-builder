@@ -12,6 +12,10 @@
 
 - Files edited or added
 
+## Acceptance Contracts
+
+- AC ID, criterion, evidence, and any gap that remains
+
 ## Assumptions
 
 - Assumptions made during implementation
