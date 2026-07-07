@@ -11,7 +11,7 @@ import {
   startDeliveryWorkflowRun,
   startDeliveryWorkflowRunAsync,
 } from '../../src/mastra/delivery-engine/runner.ts';
-import { initializeDeliveryRun, readDeliveryRun } from '../../src/mastra/delivery-engine/state.ts';
+import { initializeDeliveryRun, readDeliveryEvents, readDeliveryRun } from '../../src/mastra/delivery-engine/state.ts';
 
 const withOpenAiKey = async <T>(value: string | undefined, fn: () => Promise<T>) => {
   const previous = process.env.OPENAI_API_KEY;
@@ -205,7 +205,11 @@ test('delivery workflow runner closes initialized delivery state after a failed 
   const deliveryRun = readDeliveryRun(repoPath);
   assert.equal(deliveryRun.status, 'failed');
   assert.equal(deliveryRun.stage, 'done');
+  assert.equal(deliveryRun.summary, 'boom');
+  assert.deepEqual(deliveryRun.failure, { name: 'Error', message: 'boom' });
   assert.equal(typeof deliveryRun.finished_at, 'string');
+  const events = readDeliveryEvents(repoPath);
+  assert.equal(events.some((event) => event.type === 'run_failure' && event.reason === 'boom'), true);
 });
 
 test('delivery workflow runner writes a report when workflow start throws', async () => {
@@ -239,7 +243,15 @@ test('delivery workflow runner writes a report when workflow start throws', asyn
   const report = readJson(join(repoPath, '.delivery', 'runs', 'thrown-run.json'));
   assert.equal(report.status, 'threw');
   assert.equal(report.error.message, 'structured output missing');
-  assert.equal(readDeliveryRun(repoPath).status, 'failed');
+  const deliveryRun = readDeliveryRun(repoPath);
+  assert.equal(deliveryRun.status, 'failed');
+  assert.equal(deliveryRun.summary, 'structured output missing');
+  assert.deepEqual(deliveryRun.failure, { name: 'Error', message: 'structured output missing' });
+  const events = readDeliveryEvents(repoPath);
+  assert.equal(
+    events.some((event) => event.type === 'run_failure' && event.reason === 'structured output missing'),
+    true,
+  );
 });
 
 test('delivery workflow runner fails preflight before creating a run without model credentials', async () => {

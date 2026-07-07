@@ -13,6 +13,8 @@ export type DeliveryRun = {
   run_id: string;
   started_at: string;
   finished_at?: string;
+  summary?: string;
+  failure?: { name: string; message: string };
   vision: string;
   spec: string;
   status: DeliveryRunStatus;
@@ -269,13 +271,28 @@ export function recordDeliveryJudgment({
   return { ok: true };
 }
 
-export function finishDeliveryRun({ repoPath, status }: { repoPath: string; status: DeliveryRunStatus }) {
+export function finishDeliveryRun({
+  repoPath,
+  status,
+  summary,
+  failure,
+}: {
+  repoPath: string;
+  status: DeliveryRunStatus;
+  summary?: string;
+  failure?: { name: string; message: string };
+}) {
   const run = readDeliveryRun(repoPath);
   run.status = status;
   run.finished_at = new Date().toISOString();
   run.stage = 'done';
+  if (summary) run.summary = summary;
+  if (failure) run.failure = failure;
   writeDeliveryRun(repoPath, run);
   rmSync(boundaryPath(repoPath), { force: true });
+  if (failure || summary) {
+    appendDeliveryEvent(repoPath, { type: 'run_failure', status, reason: failure?.message ?? summary, failure });
+  }
   appendDeliveryEvent(repoPath, { type: 'run_finish', status });
   return { ok: true, status };
 }

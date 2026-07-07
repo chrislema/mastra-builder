@@ -80,6 +80,42 @@ function serializeError(error: unknown) {
   };
 }
 
+function compactRunFailure(error: unknown): { name: string; message: string } {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+    };
+  }
+
+  if (error && typeof error === 'object') {
+    const maybe = error as { name?: unknown; message?: unknown };
+    return {
+      name: typeof maybe.name === 'string' ? maybe.name : 'Error',
+      message: typeof maybe.message === 'string' ? maybe.message : String(error),
+    };
+  }
+
+  return {
+    name: 'Error',
+    message: String(error),
+  };
+}
+
+function workflowFailureFromResult(result: unknown) {
+  const resultRecord = result as { error?: unknown; steps?: Record<string, { error?: unknown }> } | undefined;
+  if (!resultRecord || typeof resultRecord !== 'object') return undefined;
+
+  const direct = resultRecord.error;
+  if (direct) return compactRunFailure(direct);
+
+  for (const step of Object.values(resultRecord.steps ?? {})) {
+    if (step?.error) return compactRunFailure(step.error);
+  }
+
+  return undefined;
+}
+
 function writeDeliveryWorkflowRunReport({
   repoPath,
   runId,
@@ -196,7 +232,7 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
   try {
     const result = await run.start(startOptions);
     if ((result as { status?: unknown }).status === 'failed') {
-      await closeFailedDeliveryRun({ host, repoPath });
+      await closeFailedDeliveryRun({ host, repoPath, failure: workflowFailureFromResult(result) });
     }
     const reportPath = tryWriteDeliveryWorkflowRunReport({ repoPath, runId: run.runId, resourceId, result }, host);
 
@@ -208,7 +244,7 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
       result,
     };
   } catch (error) {
-    await closeFailedDeliveryRun({ host, repoPath });
+    await closeFailedDeliveryRun({ host, repoPath, failure: compactRunFailure(error) });
     const reportPath = tryWriteDeliveryWorkflowRunReport({ repoPath, runId: run.runId, resourceId, error }, host);
     if (error instanceof Error && reportPath) {
       (error as Error & { deliveryReportPath?: string }).deliveryReportPath = reportPath;
@@ -217,9 +253,23 @@ export async function startDeliveryWorkflowRun(host: DeliveryWorkflowHost, input
   }
 }
 
-async function closeFailedDeliveryRun({ host, repoPath }: { host: MastraLike; repoPath: string }) {
+async function closeFailedDeliveryRun({
+  host,
+  repoPath,
+  failure,
+}: {
+  host: MastraLike;
+  repoPath: string;
+  failure?: { name: string; message: string };
+}) {
   try {
-    await finishDeliveryRunState({ repoPath, status: 'failed', mastra: host });
+    await finishDeliveryRunState({
+      repoPath,
+      status: 'failed',
+      summary: failure?.message,
+      failure,
+      mastra: host,
+    });
   } catch (error) {
     host.getLogger?.().warn('Failed to mark delivery run failed after workflow failure', {
       repoPath,

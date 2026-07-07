@@ -316,10 +316,14 @@ export async function appendDeliveryEventState({
 export async function finishDeliveryRunState({
   repoPath,
   status,
+  summary,
+  failure,
   mastra,
 }: {
   repoPath: string;
   status: DeliveryRunStatus;
+  summary?: string;
+  failure?: { name: string; message: string };
   mastra?: MastraLike;
 }) {
   const repo = resolve(repoPath);
@@ -327,6 +331,16 @@ export async function finishDeliveryRunState({
   snapshot.run.status = status;
   snapshot.run.finished_at = new Date().toISOString();
   snapshot.run.stage = 'done';
+  if (summary) snapshot.run.summary = summary;
+  if (failure) snapshot.run.failure = failure;
+  if (summary || failure) {
+    snapshot.events = withEvent(snapshot.events, {
+      type: 'run_failure',
+      status,
+      reason: failure?.message ?? summary,
+      failure,
+    });
+  }
   snapshot.events = withEvent(snapshot.events, { type: 'run_finish', status });
   await persistDeliverySnapshot({ repoPath: repo, mastra, run: snapshot.run, events: snapshot.events });
   removeDeliveryBoundaryProjection(repo);
