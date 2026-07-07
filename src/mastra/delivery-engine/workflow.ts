@@ -1409,7 +1409,7 @@ function taskOwnsContractSurface(task: Task) {
 }
 
 function taskOwnsAiValidationSurface(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:aiJson|jsonOutput|validation|contracts|schemas?)\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:aiJson|jsonOutput|aiValidation|aiSchemas?|schemas?)\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsAiPipelineSurface(task: Task) {
@@ -1417,7 +1417,7 @@ function taskOwnsAiPipelineSurface(task: Task) {
 }
 
 function taskOwnsAuthSurface(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:(?:http\/)?auth)\.[cm]?[jt]s$/);
+  return taskOwnsPathMatching(task, /^src\/(?:(?:http\/)?auth|adminAuth|sessionAuth)\.[cm]?[jt]s$/);
 }
 
 function taskOwnsPublicAppSurface(task: Task) {
@@ -1555,6 +1555,65 @@ function withoutAiOutputValidationCriteria(task: Task) {
   };
 }
 
+function runLifecycleWithoutEmptyTerminalCriterion(criterion: string) {
+  return (
+    /\bRun lifecycle contract defines\b/i.test(criterion) &&
+    /\bqueued\s*->\s*running\s*->\s*completed\|failed\b/i.test(criterion) &&
+    !/\bcompleted_empty\b/i.test(criterion)
+  );
+}
+
+function workflowCreatesRunningRunCriterion(criterion: string) {
+  return /\b(?:WeeklyWorkflow|Workflow)\b[\s\S]{0,80}\bcreates or loads the run\b[\s\S]{0,80}\bmarks it running\b/i.test(
+    criterion,
+  );
+}
+
+function workflowEmptyBookmarkCompletedCriterion(criterion: string) {
+  return /\bWorkflow\b[\s\S]{0,80}\bempty bookmark list\b[\s\S]{0,80}\bcompleted run with no transcript\b/i.test(criterion);
+}
+
+function withoutLifecycleDriftCriteria(task: Task) {
+  const isDriftCriterion = (criterion: string) =>
+    runLifecycleWithoutEmptyTerminalCriterion(criterion) ||
+    (taskOwnsWorkflowSurface(task) &&
+      (workflowCreatesRunningRunCriterion(criterion) || workflowEmptyBookmarkCompletedCriterion(criterion)));
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !isDriftCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter((criterion) => !isDriftCriterion(criterion));
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
+function insertTaskAfterDependencies(tasks: Task[], task: Task) {
+  const dependencyIndexes = task.depends_on
+    .map((dependency) => tasks.findIndex((candidate) => candidate.id === dependency))
+    .filter((index) => index >= 0);
+  const insertAfter = dependencyIndexes.length ? Math.max(...dependencyIndexes) : -1;
+  return [...tasks.slice(0, insertAfter + 1), task, ...tasks.slice(insertAfter + 1)];
+}
+
+function moveTaskAfterDependencies(tasks: Task[], taskId: string) {
+  const index = tasks.findIndex((task) => task.id === taskId);
+  if (index < 0) return { tasks, changed: false };
+
+  const task = tasks[index];
+  const remaining = tasks.filter((_, candidateIndex) => candidateIndex !== index);
+  const next = insertTaskAfterDependencies(remaining, task);
+  const changed = next.some((task, candidateIndex) => task.id !== tasks[candidateIndex]?.id);
+  return { tasks: next, changed };
+}
+
 function taskHasRouteIntegrationContract(task: Task) {
   return (
     taskOwnsRouterSurface(task) &&
@@ -1610,6 +1669,14 @@ function finalGeneratedSliceTaskId(tasks: Task[], taskId: string) {
   return [...family].sort((left, right) => generatedSliceRank(right.id) - generatedSliceRank(left.id))[0]?.id ?? taskId;
 }
 
+function sessionBoundaryDependencyId(tasks: Task[], task: Task) {
+  const finalTaskId = finalGeneratedSliceTaskId(tasks, task.id);
+  const finalTask = tasks.find((candidate) => candidate.id === finalTaskId);
+  if (!finalTask || finalTask.id === task.id) return task.id;
+  if (taskOwnsRouteModule(finalTask) || taskOwnsPublicAppSurface(finalTask)) return task.id;
+  return finalTask.id;
+}
+
 function routerBoundaryProviderTasks(tasks: Task[]) {
   return tasks.filter(
     (task) => taskOwnsRouterSurface(task) && !taskHasRouteIntegrationContract(task) && !taskOwnsStaticAssetWiringSurface(task),
@@ -1623,11 +1690,19 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
   const sessionTasks = tasks.filter(taskOwnsSessionRoute);
   if (!hasPublicApp || !authTasks.length) return { tasks, changed: false };
 
+  const routeTasks = tasks.filter(taskOwnsRouteModule);
+  const safeAuthTasks = authTasks.filter(
+    (authTask) => !routeTasks.some((routeTask) => taskListDependsOn(tasks, authTask.id, routeTask.id)),
+  );
+  const sessionDependencyTasks = safeAuthTasks.length ? [...safeAuthTasks, ...routerTasks] : routerTasks;
+  const sessionDependencyIds = Array.from(
+    new Set(sessionDependencyTasks.map((task) => sessionBoundaryDependencyId(tasks, task))),
+  );
+
   if (sessionTasks.length) {
     let changed = false;
-    const expectedDependencies = Array.from(new Set([...authTasks, ...routerTasks].map((task) => task.id)));
-    return {
-      tasks: tasks.map((task) => {
+    const expectedDependencies = sessionDependencyIds;
+    let nextTasks = tasks.map((task) => {
         if (!taskOwnsSessionRoute(task)) return task;
         const depends_on = expectedDependencies.filter((dependency) => dependency !== task.id);
         if (depends_on.length === task.depends_on.length && depends_on.every((dependency, index) => dependency === task.depends_on[index])) {
@@ -1635,28 +1710,34 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
         }
         changed = true;
         return { ...task, depends_on };
-      }),
+      });
+    for (const task of sessionTasks) {
+      const moved = moveTaskAfterDependencies(nextTasks, task.id);
+      if (moved.changed) changed = true;
+      nextTasks = moved.tasks;
+    }
+    return {
+      tasks: nextTasks,
       changed,
     };
   }
 
   const surface = routeModuleStyle(tasks) === 'nested' ? 'src/routes/session.js' : 'src/sessionRoutes.js';
-  return {
-    tasks: [
-      ...tasks,
-      {
-        id: uniqueTaskId({ ...taskPlan, tasks }, 'E20-auth-session'),
-        owner: 'engineer' as const,
-        deliverable: 'Implement the browser-safe auth/session route boundary before protected feature routes and UI work.',
-        depends_on: Array.from(new Set([...authTasks, ...routerTasks].map((task) => task.id))),
-        acceptance_criteria: [
-          `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
-          `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
-          `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, returns structured 401/403 responses for invalid credentials, and establishes the CSRF token or same-origin Origin validation contract used by cookie-authenticated browser mutations.`,
-        ],
-        owned_surfaces: [surface],
-      },
+  const sessionTask = {
+    id: uniqueTaskId({ ...taskPlan, tasks }, 'E20-auth-session'),
+    owner: 'engineer' as const,
+    deliverable: 'Implement the browser-safe auth/session route boundary before protected feature routes and UI work.',
+    depends_on: sessionDependencyIds,
+    acceptance_criteria: [
+      `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
+      `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
+      `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, returns structured 401/403 responses for invalid credentials, and establishes the CSRF token or same-origin Origin validation contract used by cookie-authenticated browser mutations.`,
     ],
+    owned_surfaces: [surface],
+  };
+
+  return {
+    tasks: insertTaskAfterDependencies(tasks, sessionTask),
     changed: true,
   };
 }
@@ -1684,6 +1765,11 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
       changed = true;
       return { ...task, depends_on };
     });
+    for (const task of tasks.filter(taskHasRouteIntegrationContract)) {
+      const moved = moveTaskAfterDependencies(tasks, task.id);
+      if (moved.changed) changed = true;
+      tasks = moved.tasks;
+    }
     return { tasks, changed };
   }
 
@@ -1694,22 +1780,21 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
     new Set([...routerTasks, ...routeTasks].map((task) => finalGeneratedSliceTaskId(tasks, task.id))),
   );
 
-  return {
-    tasks: [
-      ...tasks,
-      {
-        id: uniqueTaskId({ ...taskPlan, tasks }, 'E98-route-integration'),
-        owner: 'engineer' as const,
-        deliverable: 'Wire generated API route modules through the Worker router after all route modules exist.',
-        depends_on,
-        acceptance_criteria: [
-          `${routerSurface} is the single API route registration boundary after feature route modules exist.`,
-          `${routerSurface} makes profile, run, latest, regenerate, health, and static asset fallback routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`,
-          'Every declared API endpoint is reachable through the router after this task completes.',
-        ],
-        owned_surfaces: [routerSurface],
-      },
+  const integrationTask = {
+    id: uniqueTaskId({ ...taskPlan, tasks }, 'E98-route-integration'),
+    owner: 'engineer' as const,
+    deliverable: 'Wire generated API route modules through the Worker router after all route modules exist.',
+    depends_on,
+    acceptance_criteria: [
+      `${routerSurface} is the single API route registration boundary after feature route modules exist.`,
+      `${routerSurface} makes profile, run, latest, regenerate, health, and static asset fallback routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`,
+      'Every declared API endpoint is reachable through the router after this task completes.',
     ],
+    owned_surfaces: [routerSurface],
+  };
+
+  return {
+    tasks: insertTaskAfterDependencies(tasks, integrationTask),
     changed: true,
   };
 }
@@ -1834,7 +1919,13 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       }
     }
 
-    if (hasAiValidationSurface && !taskOwnsAiValidationSurface(task) && taskOwnsAiPipelineSurface(task)) {
+    const lifecycleSanitized = withoutLifecycleDriftCriteria(task);
+    if (lifecycleSanitized !== task) {
+      changed = true;
+      task = lifecycleSanitized;
+    }
+
+    if (hasAiValidationSurface && !taskOwnsAiValidationSurface(task)) {
       const sanitized = withoutAiOutputValidationCriteria(task);
       if (sanitized !== task) {
         changed = true;
@@ -1845,11 +1936,20 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     const criteria: string[] = [];
 
     if (taskOwnsAuthSurface(task)) {
+      const authSurface = taskOwnedBoundaryPaths(task).find((path) => /^src\/(?:(?:http\/)?auth|adminAuth|sessionAuth)\.[cm]?[jt]s$/i.test(path)) ?? 'src/auth.js';
       criteria.push(
-        'src/auth.js defines the protected operator credential contract as Authorization: Bearer <ADMIN_TOKEN> for API/operator calls, rejects missing or invalid credentials with structured 401/403 responses, fails closed when ADMIN_TOKEN is missing, and never reads committed or static secrets.',
-        'src/auth.js provides a browser-safe auth/session boundary for the public UI: a dedicated session endpoint may exchange the operator credential for a short-lived HttpOnly SameSite cookie, and protected browser mutations must validate that session instead of requiring public/app.js to handle the raw ADMIN_TOKEN repeatedly.',
-        'src/auth.js defines the browser mutation request-forgery guard for cookie-authenticated requests, using SameSite=Strict plus explicit Origin validation or CSRF token issuance and validation.',
+        `${authSurface} defines the protected operator credential contract as Authorization: Bearer <ADMIN_TOKEN> for API/operator calls, rejects missing or invalid credentials with structured 401/403 responses, fails closed when ADMIN_TOKEN is missing, and never reads committed or static secrets.`,
       );
+      if (/\/adminAuth\.[cm]?[jt]s$/i.test(authSurface)) {
+        criteria.push(
+          `${authSurface} is an internal credential-validation helper for operator APIs and the browser session exchange boundary; it does not make public/app.js persist, repeat, or directly send the raw ADMIN_TOKEN to feature mutation endpoints.`,
+        );
+      } else {
+        criteria.push(
+          `${authSurface} provides a browser-safe auth/session boundary for the public UI: a dedicated session endpoint may exchange the operator credential for a short-lived HttpOnly SameSite cookie, and protected browser mutations must validate that session instead of requiring public/app.js to handle the raw ADMIN_TOKEN repeatedly.`,
+          `${authSurface} defines the browser mutation request-forgery guard for cookie-authenticated requests, using SameSite=Strict plus explicit Origin validation or CSRF token issuance and validation.`,
+        );
+      }
     }
 
     if (hasAuthSurface && taskOwnsPublicAppSurface(task)) {
@@ -1880,7 +1980,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     if (taskOwnsContractSurface(task)) {
       criteria.push(
-        'Run lifecycle contract defines the allowed state transitions queued -> running -> completed|failed, with route/scheduled code responsible for creating queued runs and workflow code responsible for running and terminal transitions.',
+        'Run lifecycle contract defines the allowed state transitions queued -> running -> completed|completed_empty|failed, with route/scheduled code responsible for creating queued runs, workflow code responsible for running and terminal transitions, and latest transcript queries excluding completed_empty/no-transcript runs deterministically.',
       );
     }
 
@@ -1893,6 +1993,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (taskOwnsWorkflowSurface(task) && !taskIsRootScaffold(task)) {
       criteria.push(
         'Scheduled triggers and manual run routes create queued run records only; workflow execution is the boundary that transitions queued runs to running and then completed or failed.',
+        'Workflow treats an empty bookmark list as a completed_empty terminal run with no transcript_id, records a no-bookmarks/no-transcript reason, and keeps latest transcript lookup focused on completed runs with transcripts.',
         'Workflow execution receives or resumes a queued run, transitions it to running and then completed or failed, and does not create duplicate run records for the same workflow invocation.',
       );
     }
@@ -1917,6 +2018,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     if (taskOwnsRouterSurface(task)) {
       criteria.push(
         'The router surface remains the single API route registration boundary; feature routes must be registered through the router rather than dispatched directly from src/index.js.',
+      );
+    }
+
+    if (taskIsRootScaffold(task) && taskOwnsWorkerConfigFile(task) && taskOwnsIndexSurface(task)) {
+      criteria.push(
+        'src/index.js exports a minimal WorkflowEntrypoint class whose class name matches wrangler.jsonc workflows.class_name when the Worker config defines a Workflow binding, so Wrangler dry-run validation succeeds before later workflow code delegates to src/weeklyWorkflow.js.',
       );
     }
 

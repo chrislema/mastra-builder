@@ -1224,7 +1224,7 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.match(criteria('T09'), /ADMIN_TOKEN is a Cloudflare secret/);
   assert.ok(integration);
   assert.deepEqual(integration?.owned_surfaces, ['src/router.js']);
-  assert.deepEqual(integration?.depends_on, ['T02', 'T05', 'T06', 'E20-auth-session']);
+  assert.deepEqual(integration?.depends_on, ['T02', 'E20-auth-session', 'T05', 'T06']);
   assert.match(integration?.acceptance_criteria.join('\n') ?? '', /Every declared API endpoint is reachable through the router/);
   assert.ok(normalized.tasks.find((task) => task.id === 'E20-auth-session'));
 });
@@ -1304,7 +1304,7 @@ test('task plan normalization recognizes flat Worker http and route module names
   assert.doesNotMatch(criteria('T10'), /admin-token handling compatible/);
   assert.ok(integration);
   assert.deepEqual(integration?.owned_surfaces, ['src/http.js']);
-  assert.deepEqual(integration?.depends_on, ['T04', 'T06', 'T08', 'E20-auth-session']);
+  assert.deepEqual(integration?.depends_on, ['T04', 'E20-auth-session', 'T06', 'T08']);
   assert.deepEqual(byId.T10.depends_on, ['T08', 'E20-auth-session', 'E98-route-integration']);
 });
 
@@ -1347,12 +1347,95 @@ test('task plan normalization keeps existing auth session before generated route
   assert.deepEqual(byId.T13.depends_on, ['T12-part-3', 'E20-auth-session', 'E98-route-integration']);
 });
 
+test('task plan normalization injects session auth before late admin auth and route consumers', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
+    },
+    {
+      id: 'T02',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/contracts.js', 'src/http.js'],
+    },
+    {
+      id: 'T02-part-2',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/validation.js', 'src/ids.js'],
+    },
+    {
+      id: 'T02-part-3',
+      depends_on: ['T02-part-2'],
+      owned_surfaces: ['src/time.js'],
+    },
+    {
+      id: 'T07',
+      depends_on: ['T02-part-3'],
+      owned_surfaces: ['src/profileRoutes.js'],
+    },
+    {
+      id: 'T08',
+      depends_on: ['T07'],
+      owned_surfaces: ['src/adminAuth.js', 'src/runService.js'],
+    },
+    {
+      id: 'T08-part-2',
+      depends_on: ['T08', 'T02-part-3'],
+      owned_surfaces: ['src/runRoutes.js', 'src/index.js'],
+    },
+    {
+      id: 'T11',
+      depends_on: ['T08-part-2'],
+      owned_surfaces: ['src/weeklyWorkflow.js', 'src/index.js'],
+      acceptance_criteria: [
+        'WeeklyWorkflow creates or loads the run and marks it running with window_start and window_end.',
+        'Workflow treats an empty bookmark list as a completed run with no transcript.',
+      ],
+    },
+    {
+      id: 'T12',
+      depends_on: ['T08-part-2'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+      owner: 'designer',
+    },
+    {
+      id: 'T13',
+      depends_on: ['T11', 'T12'],
+      owned_surfaces: ['README.md'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const indexOf = (id: string) => normalized.tasks.findIndex((task) => task.id === id);
+  const criteria = (id: string) => byId[id].acceptance_criteria.join('\n');
+
+  assert.ok(byId['E20-auth-session']);
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T02-part-3']);
+  assert.ok(indexOf('E20-auth-session') < indexOf('T07'));
+  assert.deepEqual(byId.T07.depends_on, ['T02-part-3', 'E20-auth-session']);
+  assert.deepEqual(byId['T08-part-2'].depends_on, ['T08', 'T02-part-3', 'E20-auth-session']);
+  assert.ok(indexOf('E98-route-integration') > indexOf('T08-part-2'));
+  assert.ok(indexOf('E98-route-integration') < indexOf('T11'));
+  assert.ok(indexOf('E98-route-integration') < indexOf('T12'));
+  assert.deepEqual(byId.T12.depends_on, ['T08-part-2', 'E20-auth-session', 'E98-route-integration']);
+  assert.match(criteria('T01'), /minimal WorkflowEntrypoint class/);
+  assert.match(criteria('T02'), /completed\|completed_empty\|failed/);
+  assert.doesNotMatch(criteria('T08'), /provides a browser-safe auth\/session boundary/);
+  assert.match(criteria('T08'), /internal credential-validation helper/);
+  assert.doesNotMatch(criteria('T11'), /creates or loads the run and marks it running/);
+  assert.doesNotMatch(criteria('T11'), /completed run with no transcript/);
+  assert.match(criteria('T11'), /completed_empty terminal run/);
+});
+
 test('task plan normalization attaches Worker lifecycle contracts to workflow and scheduler files', () => {
   const plan = taskPlan([
     {
       id: 'T11',
       depends_on: ['T10'],
       owned_surfaces: ['src/workflow.js', 'src/scheduler.js'],
+      acceptance_criteria: ['Workflow treats an empty bookmark list as a completed run with no transcript.'],
     },
   ]);
 
@@ -1361,13 +1444,23 @@ test('task plan normalization attaches Worker lifecycle contracts to workflow an
 
   assert.match(criteria, /manual run routes create queued run records only/);
   assert.match(criteria, /transitions queued runs to running and then completed or failed/);
+  assert.doesNotMatch(criteria, /completed run with no transcript/);
+  assert.match(criteria, /completed_empty terminal run/);
 });
 
 test('task plan normalization moves AI output validation contracts to explicit validation surfaces', () => {
   const plan = taskPlan([
     {
+      id: 'T02',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/contracts.js', 'src/validation.js'],
+      acceptance_criteria: [
+        'AI output validation treats model JSON as untrusted input: scores are bounded integers, required rationales and transcript fields are non-empty, sourceUrls are preserved from selected sources, primarySegment is supplied, and word counts are computed by code before persistence.',
+      ],
+    },
+    {
       id: 'T06',
-      depends_on: ['T05'],
+      depends_on: ['T02'],
       owned_surfaces: ['src/aiClient.js', 'src/prompts.js'],
       acceptance_criteria: [
         'AI output validation treats model JSON as untrusted input: scores are bounded integers, required rationales and transcript fields are non-empty, sourceUrls are preserved from selected sources, primarySegment is supplied, and word counts are computed by code before persistence.',
@@ -1388,6 +1481,7 @@ test('task plan normalization moves AI output validation contracts to explicit v
   const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
   const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
 
+  assert.doesNotMatch(byId.T02.acceptance_criteria.join('\n'), /AI output validation treats model JSON/);
   assert.doesNotMatch(byId.T06.acceptance_criteria.join('\n'), /AI output validation treats model JSON/);
   assert.match(byId['T06-part-2'].acceptance_criteria.join('\n'), /AI output validation treats model JSON/);
   assert.doesNotMatch(byId.T09.acceptance_criteria.join('\n'), /AI output validation treats model JSON/);
@@ -1455,7 +1549,7 @@ test('task plan normalization collapses duplicate route integration tasks and re
   const consumer = normalized.tasks.find((task) => task.id === 'T13');
 
   assert.deepEqual(integrationTasks.map((task) => task.id), ['E98-route-integration']);
-  assert.deepEqual(integrationTasks[0].depends_on, ['T06', 'T07', 'E20-auth-session']);
+  assert.deepEqual(integrationTasks[0].depends_on, ['T06', 'E20-auth-session', 'T07']);
   assert.deepEqual(consumer?.depends_on, ['E98-route-integration', 'E20-auth-session']);
   assert.match(integrationTasks[0].acceptance_criteria.join('\n'), /profile and run routes reachable/);
 });
