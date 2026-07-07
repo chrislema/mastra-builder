@@ -34,9 +34,44 @@ export type DeliveryWorkflowScorerOutput = {
   nextSteps?: string[];
 };
 
+export type CloudflareArchitectureScorerOutput = {
+  topology?: string;
+  pagesExceptionEvidence?: string;
+  components?: string[];
+  bindings?: string[];
+  taskOrder?: string[];
+  deployment?: string[];
+  rationale?: string;
+  risks?: string[];
+};
+
+type CloudflareArchitectureGroundTruth = {
+  caseId?: string;
+  expectedTopology?: string;
+  requiredPagesExceptionEvidence?: boolean;
+  requiredComponents?: string[];
+  forbiddenComponents?: string[];
+  requiredBindings?: string[];
+  forbiddenBindings?: string[];
+  requiredTaskOrder?: string[];
+  requiredDeploymentSignals?: string[];
+  forbiddenDeploymentSignals?: string[];
+  rationale?: string;
+};
+
 function asDeliveryOutput(output: unknown): DeliveryWorkflowScorerOutput {
   if (!output || typeof output !== 'object') return {};
   return output as DeliveryWorkflowScorerOutput;
+}
+
+function asCloudflareArchitectureOutput(output: unknown): CloudflareArchitectureScorerOutput {
+  if (!output || typeof output !== 'object') return {};
+  return output as CloudflareArchitectureScorerOutput;
+}
+
+function asCloudflareGroundTruth(groundTruth: unknown): CloudflareArchitectureGroundTruth {
+  if (!groundTruth || typeof groundTruth !== 'object') return {};
+  return groundTruth as CloudflareArchitectureGroundTruth;
 }
 
 function deliveryJudgments(output: unknown) {
@@ -49,6 +84,100 @@ function deliveryChecks(output: unknown) {
 
 const rounded = (score: number) => Math.round(score * 1000) / 1000;
 const scoreEveryRun = { type: 'ratio', rate: 1 } satisfies ScoringSamplingConfig;
+
+function stringList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => (typeof item === 'string' ? [item] : []));
+  }
+
+  return typeof value === 'string' ? [value] : [];
+}
+
+function normalizeSignal(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/workers ai/g, 'workers-ai')
+    .replace(/durable objects/g, 'durable-objects')
+    .replace(/service bindings/g, 'service-bindings')
+    .replace(/pages functions/g, 'pages-functions')
+    .replace(/github actions/g, 'github-actions')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function hasSignal(actual: string[], expected: string) {
+  const normalizedExpected = normalizeSignal(expected);
+  return actual.some((candidate) => {
+    const normalizedCandidate = normalizeSignal(candidate);
+    return (
+      normalizedCandidate === normalizedExpected ||
+      normalizedCandidate.includes(normalizedExpected) ||
+      normalizedExpected.includes(normalizedCandidate)
+    );
+  });
+}
+
+function scoreSignalContract({
+  actual,
+  required = [],
+  forbidden = [],
+}: {
+  actual: string[];
+  required?: string[];
+  forbidden?: string[];
+}) {
+  const missing = required.filter((signal) => !hasSignal(actual, signal));
+  const forbiddenPresent = forbidden.filter((signal) => hasSignal(actual, signal));
+  const total = required.length + forbidden.length;
+  const score = total ? rounded(Math.max(0, total - missing.length - forbiddenPresent.length) / total) : 1;
+
+  return { score, missing, forbiddenPresent };
+}
+
+function cloudflareArchitectureSignals(output: CloudflareArchitectureScorerOutput) {
+  return [output.topology, ...stringList(output.components)].filter((signal): signal is string => Boolean(signal));
+}
+
+function cloudflareSignalReason({
+  passReason,
+  failPrefix,
+  missing,
+  forbiddenPresent,
+}: {
+  passReason: string;
+  failPrefix: string;
+  missing: string[];
+  forbiddenPresent: string[];
+}) {
+  if (!missing.length && !forbiddenPresent.length) return passReason;
+  const parts = [];
+  if (missing.length) parts.push(`missing: ${missing.join(', ')}`);
+  if (forbiddenPresent.length) parts.push(`forbidden present: ${forbiddenPresent.join(', ')}`);
+  return `${failPrefix} ${parts.join('; ')}.`;
+}
+
+function orderedMatches(actual: string[], required: string[]) {
+  let cursor = 0;
+  let matched = 0;
+  const missingOrOutOfOrder: string[] = [];
+
+  for (const expected of required) {
+    const nextIndex = actual.findIndex((candidate, index) => index >= cursor && hasSignal([candidate], expected));
+    if (nextIndex === -1) {
+      missingOrOutOfOrder.push(expected);
+      continue;
+    }
+
+    matched += 1;
+    cursor = nextIndex + 1;
+  }
+
+  return {
+    matched,
+    missingOrOutOfOrder,
+    score: required.length ? rounded(matched / required.length) : 1,
+  };
+}
 
 function createHandoffReadinessScorer({
   id,
@@ -190,6 +319,163 @@ export const deliveryDeterministicChecksScorer = createScorer<unknown, DeliveryW
     return `${score} check pass rate. Failed checks: ${failed.map((check) => `${check.check}: ${check.reason}`).join('; ')}.`;
   });
 
+export const cloudflareWorkerFirstTopologyScorer = createScorer<unknown, CloudflareArchitectureScorerOutput>({
+  id: 'cloudflare-worker-first-topology',
+  name: 'Cloudflare Worker First Topology',
+  description: 'Scores whether the architecture defaults to Workers or uses Pages only by explicit exception.',
+})
+  .generateScore(({ run }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    const expectedTopology = groundTruth.expectedTopology ?? 'single-worker';
+    const required = expectedTopology ? [expectedTopology] : [];
+    const forbidden = expectedTopology.includes('pages') ? ['mixed'] : ['pages', 'pages-functions', 'mixed'];
+    const { score } = scoreSignalContract({
+      actual: cloudflareArchitectureSignals(output),
+      required,
+      forbidden,
+    });
+
+    if (expectedTopology.includes('pages') && groundTruth.requiredPagesExceptionEvidence !== false) {
+      return output.pagesExceptionEvidence?.trim() ? score : 0;
+    }
+
+    return score;
+  })
+  .generateReason(({ run, score }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    const expectedTopology = groundTruth.expectedTopology ?? 'single-worker';
+    const forbidden = expectedTopology.includes('pages') ? ['mixed'] : ['pages', 'pages-functions', 'mixed'];
+    const contract = scoreSignalContract({
+      actual: cloudflareArchitectureSignals(output),
+      required: expectedTopology ? [expectedTopology] : [],
+      forbidden,
+    });
+
+    if (expectedTopology.includes('pages') && groundTruth.requiredPagesExceptionEvidence !== false && !output.pagesExceptionEvidence?.trim()) {
+      return 'Pages topology is only acceptable with explicit vision/spec evidence, and none was provided.';
+    }
+
+    return cloudflareSignalReason({
+      passReason: `Topology matches the expected Cloudflare deployment model (${expectedTopology}).`,
+      failPrefix: `Topology scored ${score}; expected ${expectedTopology}.`,
+      missing: contract.missing,
+      forbiddenPresent: contract.forbiddenPresent,
+    });
+  });
+
+export const cloudflareStorageFitScorer = createScorer<unknown, CloudflareArchitectureScorerOutput>({
+  id: 'cloudflare-storage-fit',
+  name: 'Cloudflare Storage And Service Fit',
+  description: 'Scores whether selected Cloudflare services fit the required data, AI, queueing, and coordination needs.',
+})
+  .generateScore(({ run }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    return scoreSignalContract({
+      actual: stringList(output.components),
+      required: groundTruth.requiredComponents ?? [],
+      forbidden: groundTruth.forbiddenComponents ?? [],
+    }).score;
+  })
+  .generateReason(({ run, score }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    const contract = scoreSignalContract({
+      actual: stringList(output.components),
+      required: groundTruth.requiredComponents ?? [],
+      forbidden: groundTruth.forbiddenComponents ?? [],
+    });
+
+    return cloudflareSignalReason({
+      passReason: 'Cloudflare services fit the fixture contract.',
+      failPrefix: `Cloudflare service fit scored ${score}.`,
+      missing: contract.missing,
+      forbiddenPresent: contract.forbiddenPresent,
+    });
+  });
+
+export const cloudflareBindingsHygieneScorer = createScorer<unknown, CloudflareArchitectureScorerOutput>({
+  id: 'cloudflare-bindings-hygiene',
+  name: 'Cloudflare Bindings Hygiene',
+  description: 'Scores whether required Wrangler bindings and environment-facing names are planned explicitly.',
+})
+  .generateScore(({ run }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    return scoreSignalContract({
+      actual: stringList(output.bindings),
+      required: groundTruth.requiredBindings ?? [],
+      forbidden: groundTruth.forbiddenBindings ?? [],
+    }).score;
+  })
+  .generateReason(({ run, score }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    const contract = scoreSignalContract({
+      actual: stringList(output.bindings),
+      required: groundTruth.requiredBindings ?? [],
+      forbidden: groundTruth.forbiddenBindings ?? [],
+    });
+
+    return cloudflareSignalReason({
+      passReason: 'Required Cloudflare bindings are present.',
+      failPrefix: `Cloudflare binding hygiene scored ${score}.`,
+      missing: contract.missing,
+      forbiddenPresent: contract.forbiddenPresent,
+    });
+  });
+
+export const cloudflareTaskSequencingScorer = createScorer<unknown, CloudflareArchitectureScorerOutput>({
+  id: 'cloudflare-task-sequencing',
+  name: 'Cloudflare Task Sequencing',
+  description: 'Scores whether Worker scaffolding, migrations, bindings, implementation, and gates are ordered safely.',
+})
+  .generateScore(({ run }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    return orderedMatches(stringList(output.taskOrder), groundTruth.requiredTaskOrder ?? []).score;
+  })
+  .generateReason(({ run, score }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    const result = orderedMatches(stringList(output.taskOrder), groundTruth.requiredTaskOrder ?? []);
+    if (!result.missingOrOutOfOrder.length) return 'Cloudflare task sequence preserves the expected implementation order.';
+    return `Cloudflare task sequence scored ${score}; missing or out of order: ${result.missingOrOutOfOrder.join(', ')}.`;
+  });
+
+export const cloudflareDeploymentHygieneScorer = createScorer<unknown, CloudflareArchitectureScorerOutput>({
+  id: 'cloudflare-deployment-hygiene',
+  name: 'Cloudflare Deployment Hygiene',
+  description: 'Scores whether deployment plans use local Wrangler validation and direct Wrangler production deploys.',
+})
+  .generateScore(({ run }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    return scoreSignalContract({
+      actual: stringList(output.deployment),
+      required: groundTruth.requiredDeploymentSignals ?? [],
+      forbidden: groundTruth.forbiddenDeploymentSignals ?? ['github-actions-deploy'],
+    }).score;
+  })
+  .generateReason(({ run, score }) => {
+    const output = asCloudflareArchitectureOutput(run.output);
+    const groundTruth = asCloudflareGroundTruth(run.groundTruth);
+    const contract = scoreSignalContract({
+      actual: stringList(output.deployment),
+      required: groundTruth.requiredDeploymentSignals ?? [],
+      forbidden: groundTruth.forbiddenDeploymentSignals ?? ['github-actions-deploy'],
+    });
+
+    return cloudflareSignalReason({
+      passReason: 'Deployment plan uses the expected Wrangler validation and deploy path.',
+      failPrefix: `Cloudflare deployment hygiene scored ${score}.`,
+      missing: contract.missing,
+      forbiddenPresent: contract.forbiddenPresent,
+    });
+  });
+
 export const deliveryScorers = {
   deliveryPlanToArchitectHandoffScorer,
   deliveryArchitectToBuildHandoffScorer,
@@ -199,6 +485,11 @@ export const deliveryScorers = {
   deliveryRubricFloorScorer,
   deliveryJudgmentPassRateScorer,
   deliveryDeterministicChecksScorer,
+  cloudflareWorkerFirstTopologyScorer,
+  cloudflareStorageFitScorer,
+  cloudflareBindingsHygieneScorer,
+  cloudflareTaskSequencingScorer,
+  cloudflareDeploymentHygieneScorer,
 };
 
 const deliveryQualityStepScorers = {

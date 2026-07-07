@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  cloudflareBindingsHygieneScorer,
+  cloudflareDeploymentHygieneScorer,
+  cloudflareStorageFitScorer,
+  cloudflareTaskSequencingScorer,
+  cloudflareWorkerFirstTopologyScorer,
   deliveryArchitectToBuildHandoffScorer,
   deliveryBuildToTesterHandoffScorer,
   deliveryDeterministicChecksScorer,
@@ -127,4 +132,120 @@ test('deliveryDeterministicChecksScorer scores deterministic check pass fraction
   });
   assert.equal(score.score, 0.5);
   assert.match(score.reason ?? '', /tier_order/);
+});
+
+test('cloudflareWorkerFirstTopologyScorer enforces Worker-first and explicit Pages exceptions', async () => {
+  const worker = await cloudflareWorkerFirstTopologyScorer.run({
+    input: {},
+    output: {
+      topology: 'single-worker',
+      components: ['workers', 'd1'],
+    },
+    groundTruth: {
+      expectedTopology: 'single-worker',
+    },
+  });
+  assert.equal(worker.score, 1);
+
+  const mixed = await cloudflareWorkerFirstTopologyScorer.run({
+    input: {},
+    output: {
+      topology: 'mixed',
+      components: ['pages-functions', 'workers'],
+    },
+    groundTruth: {
+      expectedTopology: 'single-worker',
+    },
+  });
+  assert.equal(mixed.score, 0);
+  assert.match(mixed.reason ?? '', /forbidden/);
+
+  const pagesWithoutEvidence = await cloudflareWorkerFirstTopologyScorer.run({
+    input: {},
+    output: {
+      topology: 'pages-functions',
+      components: ['pages-functions'],
+    },
+    groundTruth: {
+      expectedTopology: 'pages-functions',
+      requiredPagesExceptionEvidence: true,
+    },
+  });
+  assert.equal(pagesWithoutEvidence.score, 0);
+  assert.match(pagesWithoutEvidence.reason ?? '', /explicit/);
+});
+
+test('cloudflareStorageFitScorer scores native service selection', async () => {
+  const fit = await cloudflareStorageFitScorer.run({
+    input: {},
+    output: {
+      topology: 'single-worker',
+      components: ['workers', 'r2', 'd1'],
+    },
+    groundTruth: {
+      requiredComponents: ['workers', 'r2', 'd1'],
+      forbiddenComponents: ['kv-as-file-store'],
+    },
+  });
+  assert.equal(fit.score, 1);
+
+  const mismatch = await cloudflareStorageFitScorer.run({
+    input: {},
+    output: {
+      topology: 'single-worker',
+      components: ['workers', 'kv-as-source-of-truth'],
+    },
+    groundTruth: {
+      requiredComponents: ['workers', 'd1'],
+      forbiddenComponents: ['kv-as-source-of-truth'],
+    },
+  });
+  assert.equal(mismatch.score, 0.333);
+  assert.match(mismatch.reason ?? '', /d1/);
+});
+
+test('cloudflareBindingsHygieneScorer catches missing required bindings', async () => {
+  const score = await cloudflareBindingsHygieneScorer.run({
+    input: {},
+    output: {
+      topology: 'single-worker',
+      bindings: ['DB'],
+    },
+    groundTruth: {
+      requiredBindings: ['AI', 'DB'],
+    },
+  });
+  assert.equal(score.score, 0.5);
+  assert.match(score.reason ?? '', /AI/);
+});
+
+test('cloudflareTaskSequencingScorer scores ordered Cloudflare implementation plans', async () => {
+  const score = await cloudflareTaskSequencingScorer.run({
+    input: {},
+    output: {
+      topology: 'single-worker',
+      taskOrder: ['root-scaffold', 'worker-routes', 'd1-migration'],
+    },
+    groundTruth: {
+      requiredTaskOrder: ['root-scaffold', 'd1-migration', 'storage-adapter', 'worker-routes', 'release-gate'],
+    },
+  });
+  assert.equal(score.score, 0.4);
+  assert.match(score.reason ?? '', /storage-adapter/);
+});
+
+test('cloudflareDeploymentHygieneScorer prefers direct Wrangler deployment over GitHub Actions deploys', async () => {
+  const score = await cloudflareDeploymentHygieneScorer.run({
+    input: {},
+    output: {
+      topology: 'single-worker',
+      deployment: ['github-actions-deploy'],
+    },
+    groundTruth: {
+      requiredDeploymentSignals: ['wrangler-dev-staging', 'wrangler-deploy-production'],
+      forbiddenDeploymentSignals: ['github-actions-deploy'],
+    },
+  });
+  assert.equal(score.score, 0);
+  assert.match(score.reason ?? '', /github-actions-deploy/);
 });

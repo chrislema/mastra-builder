@@ -26,6 +26,14 @@ import {
 import { deliveryWorkspace } from './delivery-engine/workspace';
 
 export {
+  cloudflareArchitectureDatasetItems,
+  cloudflareArchitectureDatasetName,
+  cloudflareArchitectureScorerIds,
+  ensureCloudflareArchitectureDataset,
+  runCloudflareArchitectureExperiment,
+} from './delivery-engine/cloudflare-evals';
+
+export {
   deliveryRegressionDatasetItems,
   deliveryRegressionDatasetName,
   deliveryRegressionScorerIds,

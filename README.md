@@ -214,6 +214,11 @@ The current scorer set covers:
 - lowest rubric judgment score
 - rubric judgment pass rate
 - deterministic check pass rate
+- Cloudflare Worker-first topology
+- Cloudflare storage/service fit
+- Cloudflare binding hygiene
+- Cloudflare task sequencing
+- Cloudflare deployment hygiene
 
 ## Native Eval Suite
 
@@ -222,6 +227,12 @@ The delivery eval suite uses a Mastra Dataset named `delivery-scorecard-regressi
 history. Each fixture carries explicit expected scores for every registered delivery scorer,
 with positive and negative coverage for each scorer.
 
+The Cloudflare architecture eval suite uses a second Mastra Dataset named
+`cloudflare-architecture-regression`. It evaluates content decisions instead of workflow
+shape: Worker-first topology, explicit Pages exceptions, D1/KV/R2/Durable Objects/Queues/
+Workers AI/Vectorize fit, Wrangler binding hygiene, safe implementation sequencing, and
+direct Wrangler deployment instead of GitHub Actions deployment.
+
 `npm run eval:delivery:gate` writes a Mastra-style gate report with:
 
 - hard gate results for experiment completion, item failures, persistence failures, score
@@ -229,6 +240,10 @@ with positive and negative coverage for each scorer.
 - threshold results for success rate, score alignment rate, and scorer coverage rate
 - a `passed`, `scored`, or `failed` verdict that mirrors Mastra gates-and-threshold semantics
 - trend deltas when `DELIVERY_EVAL_BASELINE` points to a previous report
+
+`npm run eval:cloudflare:gate` does the same for the Cloudflare architecture dataset and
+can write a report to `CLOUDFLARE_EVAL_REPORT`. `npm run ci:delivery` runs both native
+eval gates after typecheck and tests.
 
 ## Native HITL
 
