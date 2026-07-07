@@ -296,6 +296,7 @@ Cloudflare architecture defaults:
 - For new Worker config, prefer wrangler.jsonc unless the repo already uses wrangler.toml or the task explicitly owns TOML.
 - New Worker config must define Wrangler env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments. Production deploys use wrangler deploy --env production after human approval.
 - Use Cloudflare Worker runtime APIs and bindings: D1, KV, R2, Queues, Durable Objects, Workflows, service bindings, and scheduled handlers when appropriate.
+- Cloudflare Workflow classes that extend WorkflowEntrypoint must import WorkflowEntrypoint from "cloudflare:workers".
 - If the task or existing repo uses Workers AI, configure it as a real Wrangler AI binding named "AI"; when TypeScript Env declarations exist, make Env.AI required at the Worker boundary.
 - Keep the deployment model consistent: do not split a cohesive feature set between standalone Workers and Pages Functions.
 - Worker API surfaces and proxy handlers stay thin: extract request, route/forward, log usage, return responses with enriched context on errors.
