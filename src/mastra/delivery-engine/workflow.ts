@@ -54,28 +54,13 @@ import {
 import { safePersistDeliveryStateWithMastra } from './observability';
 import { deliveryStructuredOutputOptions } from './models';
 import { parseDeliveryStructuredOutput } from './structured-output';
+import {
+  deliveryWorkflowInputSchema,
+  deliveryWorkflowNormalizedInputSchema,
+  normalizeDeliveryWorkflowInput,
+} from './run-input';
 
 const execFileAsync = promisify(execFile);
-
-const deliveryDeployModeSchema = z.preprocess((value) => {
-  if (typeof value !== 'string') return value;
-  const normalized = value.trim().toLowerCase();
-  if (['local', 'mock', 'preview'].includes(normalized)) return 'local';
-  if (['production', 'prod', 'real'].includes(normalized)) return 'production';
-  return value;
-}, z.enum(['local', 'production']).default('local'));
-
-const workflowInputSchema = z.object({
-  repoPath: z.string().describe('Absolute path to the target repo.'),
-  visionPath: z.string().describe('Path to vision.md inside repoPath; relative paths are resolved under repoPath.'),
-  specPath: z
-    .string()
-    .optional()
-    .describe('Optional path to spec.md inside repoPath; relative paths are resolved under repoPath.'),
-  maxRetries: z.number().int().min(0).default(2),
-  deployMode: deliveryDeployModeSchema.describe('local/production target. mock/real remain supported aliases.'),
-  reviewMode: z.enum(['fast', 'thorough']).default('thorough'),
-});
 
 const taskSchema = z.object({
   id: z.string(),
@@ -315,7 +300,7 @@ function parsePlannerRevisionResponse(response: unknown, label: string) {
   }
 }
 
-const initializedSchema = workflowInputSchema.extend({
+const initializedSchema = deliveryWorkflowNormalizedInputSchema.extend({
   runId: z.string(),
 });
 
@@ -9821,21 +9806,22 @@ const syncFinalDeliveryStateStep = createStep({
 const initializeRunStep = createStep({
   id: 'initialize-delivery-run',
   description: 'Create delivery run state, export .delivery files, and persist the initial snapshot.',
-  inputSchema: workflowInputSchema,
+  inputSchema: deliveryWorkflowInputSchema,
   outputSchema: initializedSchema,
   stateSchema: deliveryWorkflowStateSchema,
   execute: async ({ inputData, state, setState, mastra }) => {
-    const run = await initializeDeliveryRunState({ ...inputData, mastra });
-    const repoPath = resolve(inputData.repoPath);
+    const workflowInput = normalizeDeliveryWorkflowInput(inputData);
+    const run = await initializeDeliveryRunState({ ...workflowInput, mastra });
+    const repoPath = resolve(workflowInput.repoPath);
     await syncDeliveryWorkflowState({
       state,
       setState,
       output: {
         repoPath,
         runId: run.run_id,
-        maxRetries: inputData.maxRetries,
-        deployMode: inputData.deployMode,
-        reviewMode: inputData.reviewMode,
+        maxRetries: workflowInput.maxRetries,
+        deployMode: workflowInput.deployMode,
+        reviewMode: workflowInput.reviewMode,
         artifacts: [],
         checks: [],
         judgments: [],
@@ -9846,12 +9832,12 @@ const initializeRunStep = createStep({
     await safePersistDeliveryStateWithMastra({ repoPath, mastra });
 
     return {
-      ...inputData,
+      ...workflowInput,
       repoPath,
       visionPath: run.vision,
       specPath: run.spec,
       runId: run.run_id,
-      reviewMode: inputData.reviewMode,
+      reviewMode: workflowInput.reviewMode,
     };
   },
 });
@@ -10430,7 +10416,7 @@ const createPlanGateStep = createStep({
 export const deliveryPlanningWorkflow = createWorkflow({
   id: 'delivery-planning',
   description: 'Plan a delivery run, repair the task plan, and persist the plan-stage state.',
-  inputSchema: workflowInputSchema,
+  inputSchema: deliveryWorkflowInputSchema,
   outputSchema: deliveryStageOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
 })
@@ -12834,7 +12820,7 @@ export const deliveryWorkflow = createWorkflow({
   id: 'delivery-workflow',
   description:
     'Native Delivery Engine workflow: initialize run state, plan, review, build, release-gate, deploy, and finish.',
-  inputSchema: workflowInputSchema,
+  inputSchema: deliveryWorkflowInputSchema,
   outputSchema: workflowOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
 })

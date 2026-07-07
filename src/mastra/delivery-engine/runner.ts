@@ -7,40 +7,40 @@ import { finishDeliveryRunState } from './state-service';
 import type { MastraLike } from './observability';
 import { assertDeliveryModelEnvironment } from './models';
 import { deliveryWorkflow } from './workflow';
+import {
+  deliveryWorkflowInputBaseSchema,
+  normalizeDeliveryWorkflowInput,
+  optionalNonEmptyStringSchema,
+  type NormalizedDeliveryWorkflowInput,
+} from './run-input';
 
 export { createDeliveryRequestContext as createDeliveryWorkflowRequestContext } from './context';
 
-const deliveryDeployModeSchema = z.preprocess((value) => {
-  if (typeof value !== 'string') return value;
-  const normalized = value.trim().toLowerCase();
-  if (['local', 'mock', 'preview'].includes(normalized)) return 'local';
-  if (['production', 'prod', 'real'].includes(normalized)) return 'production';
-  return value;
-}, z.enum(['local', 'production']).default('local'));
-
-const nonEmptyStringSchema = z.preprocess(
-  (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
-  z.string().min(1).optional(),
-);
-
-export const deliveryWorkflowRunInputSchema = z.object({
-  repoPath: z.string().min(1).describe('Absolute path to the target repository workspace.'),
-  visionPath: z
-    .preprocess(
-      (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
-      z.string().min(1).default('vision.md'),
-    )
-    .describe('Path to vision.md inside repoPath.'),
-  specPath: nonEmptyStringSchema.describe('Optional path to spec.md inside repoPath.'),
-  visionContent: nonEmptyStringSchema.describe('Optional vision markdown to write before starting the workflow.'),
-  specContent: nonEmptyStringSchema.describe('Optional spec markdown to write before starting the workflow.'),
-  maxRetries: z.coerce.number().int().min(0).default(2),
-  deployMode: deliveryDeployModeSchema.describe('local/production target. mock/real remain supported aliases.'),
-  reviewMode: z.enum(['fast', 'thorough']).default('thorough'),
-  resourceId: z.string().min(1).optional().describe('Optional resource id for filtering persisted workflow runs.'),
-  runId: z.string().min(1).optional().describe('Optional workflow run id for repeatable external orchestration.'),
-  includeState: z.boolean().default(true).describe('Include native workflow state in the returned workflow result.'),
-});
+export const deliveryWorkflowRunInputSchema = deliveryWorkflowInputBaseSchema
+  .extend({
+    visionContent: optionalNonEmptyStringSchema.describe('Optional vision markdown to write before starting the workflow.'),
+    specContent: optionalNonEmptyStringSchema.describe('Optional spec markdown to write before starting the workflow.'),
+    noSpec: z.boolean().default(false).describe('Run from vision only, even when spec.md exists.'),
+    resourceId: z.string().min(1).optional().describe('Optional resource id for filtering persisted workflow runs.'),
+    runId: z.string().min(1).optional().describe('Optional workflow run id for repeatable external orchestration.'),
+    includeState: z.boolean().default(true).describe('Include native workflow state in the returned workflow result.'),
+  })
+  .superRefine((input, ctx) => {
+    if (!input.projectFolder && !input.repoPath) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['projectFolder'],
+        message: 'Project folder is required. Use projectFolder, or repoPath for compatibility.',
+      });
+    }
+    if (input.projectFolder && input.repoPath && resolve(input.projectFolder) !== resolve(input.repoPath)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['repoPath'],
+        message: 'projectFolder and repoPath must refer to the same folder when both are provided.',
+      });
+    }
+  });
 
 export const deliveryWorkflowRunResponseSchema = z.object({
   workflowId: z.literal('delivery-workflow'),
@@ -64,7 +64,8 @@ type DeliveryWorkflowHost = {
   getWorkflow: (id: 'deliveryWorkflow') => typeof deliveryWorkflow;
 } & MastraLike;
 
-type PreparedDeliveryWorkflowRunOptions = Omit<DeliveryWorkflowRunOptions, 'visionContent' | 'specContent'>;
+type PreparedDeliveryWorkflowRunOptions = NormalizedDeliveryWorkflowInput &
+  Pick<DeliveryWorkflowRunOptions, 'resourceId' | 'runId' | 'includeState'>;
 
 export function deliveryWorkflowResourceId(repoPath: string) {
   return deliveryMemoryResourceId(repoPath);
@@ -108,9 +109,10 @@ function writeSourceDocument({
 }
 
 function prepareDeliveryWorkflowRunOptions(parsed: DeliveryWorkflowRunOptions): PreparedDeliveryWorkflowRunOptions {
-  const repoPath = resolve(parsed.repoPath);
-  const visionPath = parsed.visionPath;
-  const specPath = parsed.specPath ?? (hasDocumentContent(parsed.specContent) ? 'spec.md' : undefined);
+  const normalized = normalizeDeliveryWorkflowInput(parsed, { inferSpecPath: !parsed.noSpec });
+  const repoPath = normalized.repoPath;
+  const visionPath = normalized.visionPath;
+  const specPath = normalized.specPath ?? (hasDocumentContent(parsed.specContent) ? 'spec.md' : undefined);
 
   if (hasDocumentContent(parsed.visionContent) || hasDocumentContent(parsed.specContent)) {
     mkdirSync(repoPath, { recursive: true });
@@ -139,9 +141,9 @@ function prepareDeliveryWorkflowRunOptions(parsed: DeliveryWorkflowRunOptions): 
     repoPath,
     visionPath: preparedVisionPath,
     specPath: preparedSpecPath,
-    maxRetries: parsed.maxRetries,
-    deployMode: parsed.deployMode,
-    reviewMode: parsed.reviewMode,
+    maxRetries: normalized.maxRetries,
+    deployMode: normalized.deployMode,
+    reviewMode: normalized.reviewMode,
     resourceId: parsed.resourceId,
     runId: parsed.runId,
     includeState: parsed.includeState,

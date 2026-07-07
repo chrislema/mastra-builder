@@ -34,20 +34,20 @@ function formText(formData: FormData, name: string) {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function repoContainedFile({ repoPath, path, label }: { repoPath: string; path: string; label: string }) {
-  const repo = resolve(repoPath);
+function projectContainedFile({ projectFolder, path, label }: { projectFolder: string; path: string; label: string }) {
+  const repo = resolve(projectFolder);
   const absolute = isAbsolute(path) ? resolve(path) : resolve(repo, path);
   const rel = relative(repo, absolute).replaceAll('\\', '/');
 
   if (!rel || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) {
-    throw new Error(`${label} file must be inside repoPath: ${path}`);
+    throw new Error(`${label} file must be inside the project folder: ${path}`);
   }
 
   return { absolute, path: rel };
 }
 
-function existingRepoFile({ repoPath, path, label }: { repoPath: string; path: string; label: string }) {
-  const file = repoContainedFile({ repoPath, path, label });
+function existingProjectFile({ projectFolder, path, label }: { projectFolder: string; path: string; label: string }) {
+  const file = projectContainedFile({ projectFolder, path, label });
   if (!existsSync(file.absolute)) throw new Error(`${label} file not found: ${file.path}`);
   if (!statSync(file.absolute).isFile()) throw new Error(`${label} path is not a file: ${file.path}`);
   return file.path;
@@ -58,9 +58,9 @@ function launcherPage({
   started,
 }: {
   error?: string;
-  started?: { runId: string; resourceId: string; repoPath: string; visionPath: string; specPath?: string };
+  started?: { runId: string; resourceId: string; projectFolder: string; visionPath: string; specPath?: string };
 } = {}) {
-  const repoPath = started?.repoPath ?? '';
+  const projectFolder = started?.projectFolder ?? '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -185,18 +185,18 @@ function launcherPage({
       error
         ? `<div class="notice error">${escapeHtml(error)}</div>`
         : started
-          ? `<div class="notice started">Started <code>${escapeHtml(started.runId)}</code> for <code>${escapeHtml(started.repoPath)}</code>. Source: <code>${escapeHtml(started.visionPath)}</code>${started.specPath ? ` and <code>${escapeHtml(started.specPath)}</code>` : ''}.</div>`
+          ? `<div class="notice started">Started <code>${escapeHtml(started.runId)}</code> for <code>${escapeHtml(started.projectFolder)}</code>. Source: <code>${escapeHtml(started.visionPath)}</code>${started.specPath ? ` and <code>${escapeHtml(started.specPath)}</code>` : ''}.</div>`
           : ''
     }
     <form method="post" action="/delivery/launcher">
       <label>
         Project folder
-        <input name="repoPath" value="${escapeHtml(repoPath)}" placeholder="/Users/chrislema/personal/new-worker-app" required />
+        <input name="projectFolder" value="${escapeHtml(projectFolder)}" placeholder="/Users/chrislema/personal/new-worker-app" required />
       </label>
       <div class="grid">
         <label>
           Vision path
-          <input name="visionPath" value="vision.md" required />
+          <input name="visionPath" value="vision.md" />
         </label>
         <label>
           Spec path
@@ -272,27 +272,29 @@ export const deliveryApiRoutes = [
     },
     handler: async (c) => {
       const formData = await c.req.raw.formData();
-      const repoPath = formText(formData, 'repoPath');
+      const projectFolder = formText(formData, 'projectFolder') ?? formText(formData, 'repoPath');
       const visionPath = formText(formData, 'visionPath') ?? 'vision.md';
       const specPath = formText(formData, 'specPath');
       const visionContent = formText(formData, 'visionContent');
       const specContent = formText(formData, 'specContent');
 
       try {
-        if (!repoPath) throw new Error('Project folder is required.');
-        const resolvedRepoPath = resolve(repoPath);
+        if (!projectFolder) throw new Error('Project folder is required.');
+        const resolvedProjectFolder = resolve(projectFolder);
         const resolvedVisionPath = visionContent
-          ? repoContainedFile({ repoPath: resolvedRepoPath, path: visionPath, label: 'vision' }).path
-          : existingRepoFile({ repoPath: resolvedRepoPath, path: visionPath, label: 'vision' });
+          ? projectContainedFile({ projectFolder: resolvedProjectFolder, path: visionPath, label: 'vision' }).path
+          : existingProjectFile({ projectFolder: resolvedProjectFolder, path: visionPath, label: 'vision' });
         const resolvedSpecPath =
           specContent || specPath
             ? specContent
-              ? repoContainedFile({ repoPath: resolvedRepoPath, path: specPath ?? 'spec.md', label: 'spec' }).path
-              : existingRepoFile({ repoPath: resolvedRepoPath, path: specPath as string, label: 'spec' })
-            : undefined;
+              ? projectContainedFile({ projectFolder: resolvedProjectFolder, path: specPath ?? 'spec.md', label: 'spec' }).path
+              : existingProjectFile({ projectFolder: resolvedProjectFolder, path: specPath as string, label: 'spec' })
+            : existsSync(resolve(resolvedProjectFolder, 'spec.md'))
+              ? 'spec.md'
+              : undefined;
 
         const response = await startDeliveryWorkflowRunAsync(c.get('mastra') as any, {
-          repoPath: resolvedRepoPath,
+          projectFolder: resolvedProjectFolder,
           visionPath: resolvedVisionPath,
           specPath: resolvedSpecPath,
           visionContent,
@@ -307,7 +309,7 @@ export const deliveryApiRoutes = [
             started: {
               runId: response.runId,
               resourceId: response.resourceId,
-              repoPath: resolvedRepoPath,
+              projectFolder: resolvedProjectFolder,
               visionPath: resolvedVisionPath,
               specPath: resolvedSpecPath,
             },

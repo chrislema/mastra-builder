@@ -12,10 +12,11 @@ import {
 
 function usage() {
   return `Usage:
-  npm run delivery:run -- --repo /absolute/path --vision vision.md --spec spec.md
+  npm run delivery:run -- --projectFolder /absolute/path --vision vision.md --spec spec.md
 
 Options:
-  --repo, --repoPath       Target repository workspace. Required.
+  --projectFolder          Project folder to build in. Required unless --repo/--repoPath is used.
+  --repo, --repoPath       Compatibility alias for --projectFolder.
   --vision, --visionPath   Vision document path. Defaults to vision.md.
   --spec, --specPath       Optional spec document path. Uses spec.md when present.
   --no-spec                Run from vision only, even when spec.md exists.
@@ -100,6 +101,7 @@ const { values } = parseArgs({
   options: {
     repo: { type: 'string' },
     repoPath: { type: 'string' },
+    projectFolder: { type: 'string' },
     vision: { type: 'string' },
     visionPath: { type: 'string' },
     spec: { type: 'string' },
@@ -124,12 +126,12 @@ try {
     process.exit(0);
   }
 
-  const repoPath = values.repoPath ?? values.repo;
-  if (!repoPath) {
+  const projectFolder = values.projectFolder ?? values.repoPath ?? values.repo;
+  if (!projectFolder) {
     console.error(usage());
     process.exit(1);
   }
-  const resolvedRepoPath = resolve(repoPath);
+  const resolvedRepoPath = resolve(projectFolder);
   const specArg = values.specPath ?? values.spec;
   const specPath = values.noSpec ? undefined : specArg ?? (existsSync(join(resolvedRepoPath, 'spec.md')) ? 'spec.md' : undefined);
   const reviewMode = parseReviewMode(values.reviewMode ?? values.review);
@@ -152,9 +154,10 @@ try {
   process.once('SIGTERM', handleStop);
 
   const response = await startDeliveryWorkflowRun(mastra, {
-    repoPath: resolvedRepoPath,
+    projectFolder: resolvedRepoPath,
     visionPath: values.visionPath ?? values.vision,
     specPath,
+    noSpec: values.noSpec,
     deployMode: values.deployMode ?? values.deploy,
     reviewMode,
     maxRetries: values.maxRetries === undefined ? undefined : Number(values.maxRetries),

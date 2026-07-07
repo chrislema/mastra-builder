@@ -89,8 +89,12 @@ choose a different port if another Studio process is already running.
 From the command line:
 
 ```shell
-npm run delivery:run -- --repo /absolute/path/to/target-repo --vision vision.md --spec spec.md
+npm run delivery:run -- --projectFolder /absolute/path/to/project-folder
 ```
+
+`--repo` and `--repoPath` remain supported aliases for older scripts. `visionPath`
+defaults to `vision.md`, `specPath` is optional and auto-detected as `spec.md` when that
+file exists, `maxRetries` defaults to `2`, and `deployMode` defaults to `local`.
 
 The same native runner is exposed as a Mastra custom API route:
 
@@ -98,11 +102,7 @@ The same native runner is exposed as a Mastra custom API route:
 curl -X POST http://localhost:4112/api/delivery/run \
   -H 'Content-Type: application/json' \
   -d '{
-    "repoPath": "/absolute/path/to/target-repo",
-    "visionPath": "vision.md",
-    "specPath": "spec.md",
-    "maxRetries": 2,
-    "deployMode": "local"
+    "projectFolder": "/absolute/path/to/project-folder"
   }'
 ```
 
@@ -117,26 +117,27 @@ builds do not block the request.
 
 ## Workflow Input
 
-`deliveryWorkflow` expects:
+`deliveryWorkflow` can start from a single field:
 
 ```json
 {
-  "repoPath": "/absolute/path/to/target-repo",
-  "visionPath": "vision.md",
-  "specPath": "spec.md",
-  "maxRetries": 2,
-  "deployMode": "local"
+  "projectFolder": "/absolute/path/to/project-folder"
 }
 ```
 
-`visionPath` and `specPath` must point to files inside `repoPath`; relative paths are
-resolved under `repoPath`, and absolute paths inside the repo are normalized to
-repo-relative paths. The workflow writes authoritative state and artifacts under
-`<repoPath>/.delivery/`.
+`projectFolder` can be an existing repo or a new project folder with `vision.md` in it; a
+Git repo is not required before the run starts. `repoPath` is still accepted as a
+compatibility alias, but `projectFolder` is the human-facing name. `visionPath` defaults to
+`vision.md`, and `specPath` is optional. When `specPath` is omitted, `spec.md` is used only
+if it already exists in the project folder. Relative document paths are resolved under the
+project folder, and absolute paths inside the folder are normalized to repo-relative paths.
+The workflow writes authoritative state and artifacts under `<projectFolder>/.delivery/`.
 
-Use `deployMode: "local"` unless a production deployment is explicitly intended. The
-legacy aliases `mock` and `real` are still accepted, but the harness is designed around
-local Wrangler validation first and human approval before production deploy.
+Use `deployMode: "local"` unless a production deployment is explicitly intended. It is the
+default, so Studio/API callers can leave it blank. The legacy aliases `mock` and `real` are
+still accepted, but the harness is designed around local Wrangler validation first and
+human approval before production deploy. `maxRetries` also defaults to `2` when omitted or
+left blank.
 
 Target projects are assumed to be standalone Cloudflare Workers projects with vanilla
 JavaScript Worker modules and vanilla HTML, CSS, and JavaScript frontends. Pages Functions

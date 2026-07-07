@@ -150,6 +150,93 @@ test('delivery workflow runner honors explicit resource and run ids', async () =
   });
 });
 
+test('delivery workflow runner accepts a project folder and infers source docs and defaults', async () => {
+  const projectFolder = mkdtempSync(join(tmpdir(), 'delivery-runner-project-folder-'));
+  writeFileSync(join(projectFolder, 'vision.md'), '# Vision\nBuild a Worker SaaS app.\n');
+  writeFileSync(join(projectFolder, 'spec.md'), '# Spec\nKeep it vanilla.\n');
+  let startOptions: Record<string, any> | undefined;
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => ({
+          runId: 'project-folder-run',
+          start: async (options: Record<string, any>) => {
+            startOptions = options;
+            return { status: 'success' };
+          },
+        }),
+      }) as any,
+  };
+
+  await startDeliveryWorkflowRunWithKey(host, {
+    projectFolder,
+    maxRetries: '' as any,
+    deployMode: '' as any,
+  });
+
+  assert.equal(startOptions?.inputData.repoPath, resolve(projectFolder));
+  assert.equal(startOptions?.inputData.visionPath, 'vision.md');
+  assert.equal(startOptions?.inputData.specPath, 'spec.md');
+  assert.equal(startOptions?.inputData.maxRetries, 2);
+  assert.equal(startOptions?.inputData.deployMode, 'local');
+  assert.equal(startOptions?.inputData.reviewMode, 'thorough');
+  assert.equal(startOptions?.requestContext.get('repoPath'), resolve(projectFolder));
+});
+
+test('delivery workflow runner accepts a vision-only project folder without a git repo', async () => {
+  const projectFolder = mkdtempSync(join(tmpdir(), 'delivery-runner-vision-only-folder-'));
+  writeFileSync(join(projectFolder, 'vision.md'), '# Vision\nBuild a Worker from this one source doc.\n');
+  let startOptions: Record<string, any> | undefined;
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => ({
+          runId: 'vision-only-folder-run',
+          start: async (options: Record<string, any>) => {
+            startOptions = options;
+            return { status: 'success' };
+          },
+        }),
+      }) as any,
+  };
+
+  assert.equal(existsSync(join(projectFolder, '.git')), false);
+
+  await startDeliveryWorkflowRunWithKey(host, {
+    projectFolder,
+  });
+
+  assert.equal(startOptions?.inputData.repoPath, resolve(projectFolder));
+  assert.equal(startOptions?.inputData.visionPath, 'vision.md');
+  assert.equal(startOptions?.inputData.specPath, undefined);
+});
+
+test('delivery workflow runner can ignore spec.md when noSpec is set', async () => {
+  const projectFolder = mkdtempSync(join(tmpdir(), 'delivery-runner-no-spec-'));
+  writeFileSync(join(projectFolder, 'vision.md'), '# Vision\nBuild a Worker.\n');
+  writeFileSync(join(projectFolder, 'spec.md'), '# Spec\nThis should be ignored.\n');
+  let startOptions: Record<string, any> | undefined;
+  const host = {
+    getWorkflow: () =>
+      ({
+        createRun: async () => ({
+          runId: 'no-spec-run',
+          start: async (options: Record<string, any>) => {
+            startOptions = options;
+            return { status: 'success' };
+          },
+        }),
+      }) as any,
+  };
+
+  await startDeliveryWorkflowRunWithKey(host, {
+    projectFolder,
+    noSpec: true,
+  });
+
+  assert.equal(startOptions?.inputData.specPath, undefined);
+});
+
 test('delivery workflow runner accepts local and production deploy aliases', async () => {
   const starts: Record<string, any>[] = [];
   const host = {
