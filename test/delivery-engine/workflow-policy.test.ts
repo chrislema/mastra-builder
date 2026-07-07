@@ -3219,6 +3219,47 @@ test('acceptance contracts verify Worker env binding mirrors with structured wra
   assert.match(brokenContracts[0].gaps.join('\n'), /env\.production is missing AI as a ai binding/);
 });
 
+test('acceptance contracts verify Worker entrypoint exports structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-entrypoint-acceptance-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['src/index.js'],
+      acceptance_criteria: [
+        'src/index.js exports a default Worker fetch handler and a WeeklyWorkflow class stub so the project is structurally runnable before later feature code is added.',
+      ],
+    },
+  ]).tasks;
+
+  writeFileSync(
+    join(repoPath, 'src/index.js'),
+    [
+      'import { WorkflowEntrypoint } from "cloudflare:workers";',
+      'export class WeeklyWorkflow extends WorkflowEntrypoint { async run() { return { ok: true }; } }',
+      'export default { async fetch() { return new Response("ok"); } };',
+    ].join('\n'),
+  );
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: [], missing: [] },
+  });
+
+  assert.equal(contracts[0].status, 'verified');
+  assert.match(contracts[0].evidence.join('\n'), /structured Worker entrypoint evidence/);
+
+  writeFileSync(join(repoPath, 'src/index.js'), 'export default { async fetch() { return new Response("ok"); } };\n');
+  const brokenContracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: [], missing: [] },
+  });
+  assert.equal(brokenContracts[0].status, 'unverified');
+  assert.match(brokenContracts[0].gaps.join('\n'), /WeeklyWorkflow class stub/);
+});
+
 test('Worker config hygiene checks TOML deployment environment mirrors', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-config-toml-envs-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

@@ -6269,6 +6269,48 @@ function workerConfigEnvironmentContractEvidence({
   };
 }
 
+function workerEntrypointExportContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bsrc\/index\.(js|ts)\b/i.test(criterion)) return undefined;
+  if (!/\bdefault\b/i.test(criterion) || !/\bfetch\b/i.test(criterion) || !/\bWeeklyWorkflow\b/i.test(criterion)) {
+    return undefined;
+  }
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  if (!/export\s+default\s+\{[\s\S]*\bfetch\s*\(/m.test(source)) {
+    gaps.push(`${indexPath} must export a default Worker object with a fetch handler.`);
+  }
+  if (!/\bexport\s+class\s+WeeklyWorkflow\b/.test(source)) {
+    gaps.push(`${indexPath} must export a WeeklyWorkflow class stub.`);
+  }
+  if (/\bextends\s+WorkflowEntrypoint\b/.test(source) && !/from\s+['"]cloudflare:workers['"]/.test(source)) {
+    gaps.push(`${indexPath} extends WorkflowEntrypoint but does not import it from cloudflare:workers.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured Worker entrypoint evidence verified default fetch handler and WeeklyWorkflow export in ${indexPath}`],
+    gaps: [],
+  };
+}
+
 function acceptanceCriterionEvidence({
   criterion,
   performed,
@@ -6285,6 +6327,9 @@ function acceptanceCriterionEvidence({
 
   const structuredFileEvidence = workerConfigEnvironmentContractEvidence({ criterion, repoPath, task });
   if (structuredFileEvidence) return structuredFileEvidence;
+
+  const workerEntrypointEvidence = workerEntrypointExportContractEvidence({ criterion, repoPath, task });
+  if (workerEntrypointEvidence) return workerEntrypointEvidence;
 
   const fileEvidence = acceptanceCriterionFileEvidence({ criterion, repoPath, task });
   if (fileEvidence) return { passed: true, evidence: [fileEvidence], gaps: [] };
