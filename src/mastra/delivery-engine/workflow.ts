@@ -4774,6 +4774,14 @@ function releaseGateLinkLifecycleProbes(): ReleaseGateHttpProbePlan[] {
   ];
 }
 
+export function releaseGateRuntimeProbePlanRequiresAdminSecret(plan: ReleaseGateRuntimeProbePlan | undefined) {
+  return Boolean(
+    plan?.probes.some((probe) =>
+      Object.keys(probe.headers ?? {}).some((header) => header.toLowerCase() === 'authorization'),
+    ),
+  );
+}
+
 export function releaseGateRuntimeProbePlan(
   repoPath: string,
   adminToken = releaseGateLocalAdminToken,
@@ -5632,12 +5640,14 @@ async function runReleaseGateRuntimeProbe({
   stage: string;
   persistTo?: string;
 }): Promise<ReleaseGateEvidenceResult | undefined> {
-  const adminSecret = prepareReleaseGateLocalAdminSecret(repoPath);
-  const plan = releaseGateRuntimeProbePlan(repoPath, adminSecret.token);
-  if (!plan) {
-    adminSecret.restore();
-    return undefined;
-  }
+  const initialPlan = releaseGateRuntimeProbePlan(repoPath);
+  if (!initialPlan) return undefined;
+
+  const adminSecret = releaseGateRuntimeProbePlanRequiresAdminSecret(initialPlan)
+    ? prepareReleaseGateLocalAdminSecret(repoPath)
+    : undefined;
+  const plan = adminSecret ? releaseGateRuntimeProbePlan(repoPath, adminSecret.token) : initialPlan;
+  if (!plan) return undefined;
 
   const port = await availableTcpPort();
   const command = releaseGateWorkerDevCommand(repoPath, port, persistTo ?? createReleaseGateRuntimeStatePath(repoPath));
@@ -5653,7 +5663,7 @@ async function runReleaseGateRuntimeProbe({
     detached: process.platform !== 'win32',
     env: {
       ...process.env,
-      ADMIN_TOKEN: adminSecret.token,
+      ...(adminSecret ? { ADMIN_TOKEN: adminSecret.token } : {}),
       CI: process.env.CI ?? '1',
       NO_COLOR: '1',
       WRANGLER_SEND_METRICS: 'false',
@@ -5741,7 +5751,7 @@ async function runReleaseGateRuntimeProbe({
     };
   } finally {
     await stopChildProcess(child);
-    adminSecret.restore();
+    adminSecret?.restore();
   }
 }
 

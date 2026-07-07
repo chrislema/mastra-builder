@@ -59,6 +59,7 @@ import {
   releaseGateLocalAdminSecretPath,
   releaseGateLocalD1DatabaseName,
   releaseGateRuntimeProbePlan,
+  releaseGateRuntimeProbePlanRequiresAdminSecret,
   releaseGateRequiredEvidencePassed,
   releaseGateRequiredStaticEvidenceFailures,
   releaseGateStaticEvidenceResults,
@@ -2036,6 +2037,33 @@ test('release gate local admin secret path targets staging Wrangler environment 
   );
   writeFileSync(join(stagingEnvRepoPath, '.env.staging'), 'API_HOST="staging.localhost:3000"\n');
   assert.equal(releaseGateLocalAdminSecretPath(stagingEnvRepoPath), join(stagingEnvRepoPath, '.env.staging'));
+});
+
+test('release gate admin secrets are required only for authenticated runtime probes', () => {
+  const publicRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-public-probes-'));
+  mkdirSync(join(publicRepoPath, 'workers'), { recursive: true });
+  writeFileSync(join(publicRepoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(join(publicRepoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "workers/app.js"\n');
+  writeFileSync(
+    join(publicRepoPath, 'workers/app.js'),
+    [
+      "if (url.pathname === '/api/health') {}",
+      "if (url.pathname === '/api/links') {}",
+      "if (url.pathname.startsWith('/api/links/')) {}",
+      "if (url.pathname.startsWith('/l/')) {}",
+    ].join('\n'),
+  );
+
+  assert.equal(releaseGateRuntimeProbePlanRequiresAdminSecret(releaseGateRuntimeProbePlan(publicRepoPath)), false);
+
+  const adminRepoPath = mkdtempSync(join(tmpdir(), 'delivery-release-admin-probes-'));
+  writeTalkingHeadSourceDocs(adminRepoPath);
+  mkdirSync(join(adminRepoPath, 'src'), { recursive: true });
+  writeFileSync(join(adminRepoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(join(adminRepoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "src/index.ts"\n');
+  writeFileSync(join(adminRepoPath, 'src/index.ts'), "if (pathname === '/profiles') {}\n");
+
+  assert.equal(releaseGateRuntimeProbePlanRequiresAdminSecret(releaseGateRuntimeProbePlan(adminRepoPath)), true);
 });
 
 test('release gate deterministic checks fail closed on failed required local evidence', () => {
