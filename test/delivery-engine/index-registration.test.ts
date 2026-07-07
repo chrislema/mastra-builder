@@ -5,6 +5,7 @@ import { mastra } from '../../src/mastra/index.ts';
 test('Mastra registers delivery workflow stage surfaces', () => {
   assert.deepEqual(
     [
+      mastra.getWorkflow('deliveryStartWorkflow').id,
       mastra.getWorkflow('deliveryWorkflow').id,
       mastra.getWorkflow('deliveryPlanningWorkflow').id,
       mastra.getWorkflow('deliveryReviewWorkflow').id,
@@ -14,6 +15,7 @@ test('Mastra registers delivery workflow stage surfaces', () => {
       mastra.getWorkflow('deliveryDeploymentWorkflow').id,
     ],
     [
+      'delivery-start',
       'delivery-workflow',
       'delivery-planning',
       'delivery-review',

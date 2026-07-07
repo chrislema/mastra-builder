@@ -14,6 +14,7 @@ import {
   ensureLocalMastraStorageDirectory,
   getDeliveryMastraStorageUrl,
 } from './config';
+import { deliveryStartWorkflow } from './delivery-engine/launcher-workflow';
 import {
   deliveryBuildTaskWorkflow,
   deliveryBuildWorkflow,
@@ -46,6 +47,7 @@ ensureLocalMastraStorageDirectory(deliveryMastraStorageUrl);
 
 export const mastra = new Mastra({
   workflows: {
+    deliveryStartWorkflow,
     deliveryWorkflow,
     deliveryPlanningWorkflow,
     deliveryReviewWorkflow,
