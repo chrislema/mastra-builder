@@ -8143,6 +8143,46 @@ function gitignoreRuntimeArtifactContractEvidence({
   };
 }
 
+function packageScriptContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bpackage\.json\b/i.test(criterion)) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('package.json')) return undefined;
+
+  const scriptMatch = criterion.match(/\bscripts\.([A-Za-z0-9:_-]+)\b[\s\S]{0,80}\bexactly\s+as\s+["']([^"']+)["']/i);
+  if (!scriptMatch) return undefined;
+
+  const [, scriptName, expectedCommand] = scriptMatch;
+  const packageJson = packageRecord(repoPath);
+  const scripts = recordValue(packageJson?.scripts);
+  const actualCommand = scripts?.[scriptName];
+
+  if (actualCommand !== expectedCommand) {
+    return {
+      passed: false,
+      evidence: [],
+      gaps: [
+        `package.json scripts.${scriptName} must be exactly "${expectedCommand}"${
+          typeof actualCommand === 'string' ? `, but found "${actualCommand}".` : ', but it is missing.'
+        }`,
+      ],
+    };
+  }
+
+  return {
+    passed: true,
+    evidence: [`structured package.json evidence verified scripts.${scriptName} exactly "${expectedCommand}"`],
+    gaps: [],
+  };
+}
+
 function tsconfigWorkerContractEvidence({
   criterion,
   repoPath,
@@ -8204,7 +8244,11 @@ function honoWorkerEntrypointContractEvidence({
   if (!repoPath || !task) return undefined;
   if (!/\bsrc\/index\.ts\b/i.test(criterion)) return undefined;
   if (!/\bHono\b/i.test(criterion)) return undefined;
-  if (!/\bWorker module entrypoint\b|\bWorker\b[\s\S]{0,80}\bentrypoint\b|\bloaded by Wrangler\b/i.test(criterion)) {
+  if (
+    !/\bWorker module entrypoint\b|\bWorker\b[\s\S]{0,80}\bentrypoint\b|\bloaded by Wrangler\b|\bWorker module through Hono\b|\bthrough Hono\b|\/api\/health\b/i.test(
+      criterion,
+    )
+  ) {
     return undefined;
   }
   if (!taskBoundarySurfaces(repoPath, task).includes('src/index.ts')) return undefined;
@@ -8223,12 +8267,23 @@ function honoWorkerEntrypointContractEvidence({
   if (!/export\s+default\s+[A-Za-z_$][\w$]*\s*;?/m.test(source) && !/export\s+default\s+\{[\s\S]*\bfetch\b/m.test(source)) {
     gaps.push('src/index.ts must export the Hono app or a Worker object as the default Worker module entrypoint.');
   }
+  if (/\/api\/health\b|\bhealth\b/i.test(criterion)) {
+    if (!/\bapp\.(?:get|all)\(\s*['"]\/api\/health['"]/i.test(source)) {
+      gaps.push('src/index.ts must register GET /api/health on the Hono app.');
+    }
+    if (/\bok\b/i.test(criterion) && !/\bok\s*:\s*true\b/i.test(source)) {
+      gaps.push('src/index.ts health response must include ok: true.');
+    }
+    if (/\bBenchmark\b/i.test(criterion) && !/\bbenchmark\b/i.test(source)) {
+      gaps.push('src/index.ts health response must identify the Benchmark service.');
+    }
+  }
 
   if (gaps.length) return { passed: false, evidence: [], gaps };
 
   return {
     passed: true,
-    evidence: ['structured src/index.ts evidence verified a Hono Worker module entrypoint export'],
+    evidence: ['structured src/index.ts evidence verified a Hono Worker module entrypoint export and health route'],
     gaps: [],
   };
 }
@@ -8436,6 +8491,9 @@ function acceptanceCriterionEvidence({
 
   const gitignoreEvidence = gitignoreRuntimeArtifactContractEvidence({ criterion, repoPath, task });
   if (gitignoreEvidence) return gitignoreEvidence;
+
+  const packageScriptEvidence = packageScriptContractEvidence({ criterion, repoPath, task });
+  if (packageScriptEvidence) return packageScriptEvidence;
 
   const adminTokenEvidence = workerConfigAdminTokenSecretContractEvidence({ criterion, repoPath, task });
   if (adminTokenEvidence) return adminTokenEvidence;

@@ -2795,6 +2795,19 @@ test('acceptance contracts verify TypeScript Hono Worker scaffold structurally',
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-hono-worker-scaffold-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
     join(repoPath, '.gitignore'),
     ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile', 'dist/', 'build/', '*.log', ''].join(
       '\n',
@@ -2833,10 +2846,12 @@ test('acceptance contracts verify TypeScript Hono Worker scaffold structurally',
     {
       id: 'T01',
       depends_on: [],
-      owned_surfaces: ['.gitignore', 'tsconfig.json', 'src/index.ts'],
+      owned_surfaces: ['package.json', '.gitignore', 'tsconfig.json', 'src/index.ts'],
       acceptance_criteria: [
+        'package.json exists and defines scripts.dev exactly as "wrangler dev --env staging".',
+        'package.json exists and defines scripts.deploy exactly as "wrangler deploy --env production".',
         'tsconfig.json exists because the source docs explicitly require TypeScript.',
-        'src/index.ts contains a minimal Hono Worker module entrypoint that can be expanded by later API tasks and can be loaded by Wrangler.',
+        'src/index.ts exports a minimal Worker module through Hono and supports GET /api/health returning an ok Benchmark health payload.',
         '.gitignore excludes dependency, build, Wrangler local state, and environment/secret files without excluding planned source files.',
       ],
     },
@@ -2846,8 +2861,10 @@ test('acceptance contracts verify TypeScript Hono Worker scaffold structurally',
 
   assert.deepEqual(
     contracts.map((contract) => contract.status),
-    ['verified', 'verified', 'verified'],
+    ['verified', 'verified', 'verified', 'verified', 'verified'],
   );
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /scripts\.dev/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /scripts\.deploy/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /tsconfig\.json evidence/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /Hono Worker module entrypoint/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /\.gitignore evidence/);
