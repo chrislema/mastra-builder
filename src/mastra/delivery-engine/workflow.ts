@@ -1401,7 +1401,7 @@ function taskOwnsTranscriptRepositorySurface(task: Task) {
 }
 
 function taskOwnsWorkflowSurface(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:workflows\/weeklyWorkflow|weeklyWorkflow)\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:(?:workflows\/)?weeklyWorkflow|workflow|scheduler)\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsContractSurface(task: Task) {
@@ -1409,7 +1409,7 @@ function taskOwnsContractSurface(task: Task) {
 }
 
 function taskOwnsAiValidationSurface(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/(?:aiJson|validation|contracts)\.[cm]?[jt]s$/i);
+  return taskOwnsPathMatching(task, /^src\/(?:aiJson|jsonOutput|validation|contracts|schemas?)\.[cm]?[jt]s$/i);
 }
 
 function taskOwnsAiPipelineSurface(task: Task) {
@@ -1528,6 +1528,33 @@ function withoutSessionRouteCrossSurfaceCriteria(task: Task) {
   };
 }
 
+const aiOutputValidationContract =
+  'AI output validation treats model JSON as untrusted input: scores are bounded integers, required rationales and transcript fields are non-empty, sourceUrls are preserved from selected sources, primarySegment is supplied, and word counts are computed by code before persistence.';
+
+function aiOutputValidationCriterion(criterion: string) {
+  return /\bAI output validation treats model JSON as untrusted input\b/i.test(criterion);
+}
+
+function withoutAiOutputValidationCriteria(task: Task) {
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !aiOutputValidationCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !aiOutputValidationCriterion(criterion),
+  );
+
+  if (
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+  ) {
+    return task;
+  }
+
+  return {
+    ...task,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
 function taskHasRouteIntegrationContract(task: Task) {
   return (
     taskOwnsRouterSurface(task) &&
@@ -1593,7 +1620,25 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
   const hasPublicApp = tasks.some(taskOwnsPublicAppSurface);
   const authTasks = tasks.filter(taskOwnsAuthSurface);
   const routerTasks = routerBoundaryProviderTasks(tasks);
-  if (!hasPublicApp || !authTasks.length || tasks.some(taskOwnsSessionRoute)) return { tasks, changed: false };
+  const sessionTasks = tasks.filter(taskOwnsSessionRoute);
+  if (!hasPublicApp || !authTasks.length) return { tasks, changed: false };
+
+  if (sessionTasks.length) {
+    let changed = false;
+    const expectedDependencies = Array.from(new Set([...authTasks, ...routerTasks].map((task) => task.id)));
+    return {
+      tasks: tasks.map((task) => {
+        if (!taskOwnsSessionRoute(task)) return task;
+        const depends_on = expectedDependencies.filter((dependency) => dependency !== task.id);
+        if (depends_on.length === task.depends_on.length && depends_on.every((dependency, index) => dependency === task.depends_on[index])) {
+          return task;
+        }
+        changed = true;
+        return { ...task, depends_on };
+      }),
+      changed,
+    };
+  }
 
   const surface = routeModuleStyle(tasks) === 'nested' ? 'src/routes/session.js' : 'src/sessionRoutes.js';
   return {
@@ -1603,7 +1648,7 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
         id: uniqueTaskId({ ...taskPlan, tasks }, 'E20-auth-session'),
         owner: 'engineer' as const,
         deliverable: 'Implement the browser-safe auth/session route boundary before protected feature routes and UI work.',
-        depends_on: Array.from(new Set([...authTasks, ...routerTasks].map((task) => finalGeneratedSliceTaskId(tasks, task.id)))),
+        depends_on: Array.from(new Set([...authTasks, ...routerTasks].map((task) => task.id))),
         acceptance_criteria: [
           `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
           `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
@@ -1764,6 +1809,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
   const indexOwnerCount = taskPlan.tasks.filter(taskOwnsIndexSurface).length;
   const hasAuthSurface = taskPlan.tasks.some(taskOwnsAuthSurface);
   const hasProfileState = taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
+  const hasAiValidationSurface = taskPlan.tasks.some(taskOwnsAiValidationSurface);
 
   let tasks = taskPlan.tasks.map((task) => {
     const rootSanitized = withoutRootScaffoldWorkflowExecutionCriteria(task);
@@ -1782,6 +1828,14 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     if (taskOwnsSessionRoute(task)) {
       const sanitized = withoutSessionRouteCrossSurfaceCriteria(task);
+      if (sanitized !== task) {
+        changed = true;
+        task = sanitized;
+      }
+    }
+
+    if (hasAiValidationSurface && !taskOwnsAiValidationSurface(task) && taskOwnsAiPipelineSurface(task)) {
+      const sanitized = withoutAiOutputValidationCriteria(task);
       if (sanitized !== task) {
         changed = true;
         task = sanitized;
@@ -1838,6 +1892,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     if (taskOwnsWorkflowSurface(task) && !taskIsRootScaffold(task)) {
       criteria.push(
+        'Scheduled triggers and manual run routes create queued run records only; workflow execution is the boundary that transitions queued runs to running and then completed or failed.',
         'Workflow execution receives or resumes a queued run, transitions it to running and then completed or failed, and does not create duplicate run records for the same workflow invocation.',
       );
     }
@@ -1855,10 +1910,8 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       );
     }
 
-    if (taskOwnsAiValidationSurface(task) || taskOwnsAiPipelineSurface(task)) {
-      criteria.push(
-        'AI output validation treats model JSON as untrusted input: scores are bounded integers, required rationales and transcript fields are non-empty, sourceUrls are preserved from selected sources, primarySegment is supplied, and word counts are computed by code before persistence.',
-      );
+    if (taskOwnsAiValidationSurface(task) || (!hasAiValidationSurface && taskOwnsAiPipelineSurface(task))) {
+      criteria.push(aiOutputValidationContract);
     }
 
     if (taskOwnsRouterSurface(task)) {

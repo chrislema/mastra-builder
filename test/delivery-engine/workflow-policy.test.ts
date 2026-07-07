@@ -1308,6 +1308,91 @@ test('task plan normalization recognizes flat Worker http and route module names
   assert.deepEqual(byId.T10.depends_on, ['T08', 'E20-auth-session', 'E98-route-integration']);
 });
 
+test('task plan normalization keeps existing auth session before generated route slices', () => {
+  const plan = taskPlan([
+    {
+      id: 'T12',
+      depends_on: ['T11-part-2'],
+      owned_surfaces: ['src/auth.js', 'src/router.js'],
+    },
+    {
+      id: 'T12-part-2',
+      depends_on: ['T12'],
+      owned_surfaces: ['src/profileRoutes.js', 'src/runRoutes.js'],
+    },
+    {
+      id: 'T12-part-3',
+      depends_on: ['T12-part-2'],
+      owned_surfaces: ['src/latestRoutes.js', 'src/index.js'],
+    },
+    {
+      id: 'E20-auth-session',
+      depends_on: ['T12-part-3'],
+      owned_surfaces: ['src/sessionRoutes.js'],
+    },
+    {
+      id: 'T13',
+      depends_on: ['T12-part-3'],
+      owned_surfaces: ['public/index.html', 'public/app.js'],
+      owner: 'designer',
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+
+  assert.deepEqual(byId['E20-auth-session'].depends_on, ['T12']);
+  assert.deepEqual(byId['T12-part-2'].depends_on, ['T12', 'E20-auth-session']);
+  assert.deepEqual(byId['T12-part-3'].depends_on, ['T12-part-2', 'E20-auth-session']);
+  assert.deepEqual(byId.T13.depends_on, ['T12-part-3', 'E20-auth-session', 'E98-route-integration']);
+});
+
+test('task plan normalization attaches Worker lifecycle contracts to workflow and scheduler files', () => {
+  const plan = taskPlan([
+    {
+      id: 'T11',
+      depends_on: ['T10'],
+      owned_surfaces: ['src/workflow.js', 'src/scheduler.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const criteria = normalized.tasks[0].acceptance_criteria.join('\n');
+
+  assert.match(criteria, /manual run routes create queued run records only/);
+  assert.match(criteria, /transitions queued runs to running and then completed or failed/);
+});
+
+test('task plan normalization moves AI output validation contracts to explicit validation surfaces', () => {
+  const plan = taskPlan([
+    {
+      id: 'T06',
+      depends_on: ['T05'],
+      owned_surfaces: ['src/aiClient.js', 'src/prompts.js'],
+      acceptance_criteria: [
+        'AI output validation treats model JSON as untrusted input: scores are bounded integers, required rationales and transcript fields are non-empty, sourceUrls are preserved from selected sources, primarySegment is supplied, and word counts are computed by code before persistence.',
+      ],
+    },
+    {
+      id: 'T06-part-2',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/jsonOutput.js'],
+    },
+    {
+      id: 'T09',
+      depends_on: ['T06-part-2'],
+      owned_surfaces: ['src/candidateService.js', 'src/scoringService.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+
+  assert.doesNotMatch(byId.T06.acceptance_criteria.join('\n'), /AI output validation treats model JSON/);
+  assert.match(byId['T06-part-2'].acceptance_criteria.join('\n'), /AI output validation treats model JSON/);
+  assert.doesNotMatch(byId.T09.acceptance_criteria.join('\n'), /AI output validation treats model JSON/);
+});
+
 test('task plan normalization does not duplicate an existing route integration contract', () => {
   const plan = taskPlan([
     {
