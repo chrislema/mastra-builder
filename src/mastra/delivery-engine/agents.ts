@@ -2,7 +2,7 @@ import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { z } from 'zod';
 import { deliveryRequestContextSchema } from './context';
-import { deliveryWorkspace } from './workspace';
+import { deliverySkillPath, deliveryWorkspace } from './workspace';
 import { deliveryStateTools } from './tools';
 import { deliveryInputProcessors, deliveryOutputProcessors } from './processors';
 import {
@@ -81,7 +81,7 @@ export const deliveryMemory = new Memory({
   },
 });
 
-const skill = (name: string) => `./src/mastra/delivery-engine/skills/${name}`;
+const skill = deliverySkillPath;
 
 const sharedInstructions = `
 You are part of the Delivery Engine, a Mastra-native software delivery system.

@@ -43,6 +43,16 @@ test('delivery agents use role-specific model slots', () => {
   assert.equal((deliveryAgents.judge as any).model, judgeModel);
 });
 
+test('architect exposes delivery skills for Studio serialization', async () => {
+  const skills = await deliveryAgents.architect.listSkills();
+  const names = skills.map((skill) => skill.name).sort();
+
+  assert.equal(skills.length, 17);
+  assert.ok(names.includes('audit-state-boundaries'));
+  assert.ok(names.includes('select-cloudflare-components'));
+  assert.ok(skills.every((skill) => skill.path.includes('/src/mastra/delivery-engine/skills')));
+});
+
 test('delivery agents share a thread-scoped working memory contract', async () => {
   const memoryConfig = deliveryMemory.getMergedThreadConfig();
 

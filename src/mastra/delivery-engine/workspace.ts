@@ -1,6 +1,7 @@
-import { statSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
-import { Workspace, LocalFilesystem, LocalSandbox, WORKSPACE_TOOLS } from '@mastra/core/workspace';
+import { existsSync, statSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Workspace, LocalFilesystem, LocalSandbox, LocalSkillSource, WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import { fileOwnership, matchesAny, noBcryptWeakHash, stageSlice } from './checks';
 import { deliveryRepoPathFromRequestContext } from './context';
 import { hasDeliveryDirectory, readDeliveryBoundary, readDeliveryEvents, type DeliveryBoundary } from './state';
@@ -14,6 +15,44 @@ function repoPathFromContext(requestContext: unknown) {
 function mastraFromToolContext(context: unknown) {
   return (context as { mastra?: MastraLike } | undefined)?.mastra;
 }
+
+const deliverySkillRootRelativePath = 'src/mastra/delivery-engine/skills';
+
+function hasDeliverySkillRoot(basePath: string) {
+  return existsSync(resolve(basePath, deliverySkillRootRelativePath));
+}
+
+function findDeliveryProjectRoot(startPath?: string) {
+  if (!startPath) return undefined;
+  let current = resolve(startPath);
+
+  while (true) {
+    if (hasDeliverySkillRoot(current)) return current;
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+export function deliveryProjectRootForSkills() {
+  const starts = [
+    process.env.MASTRA_PROJECT_ROOT,
+    process.env.INIT_CWD,
+    process.cwd(),
+    dirname(fileURLToPath(import.meta.url)),
+  ];
+
+  for (const start of starts) {
+    const root = findDeliveryProjectRoot(start);
+    if (root) return root;
+  }
+
+  return process.cwd();
+}
+
+export const deliverySkillRoot = resolve(deliveryProjectRootForSkills(), deliverySkillRootRelativePath);
+export const deliveryWorkspaceSkillPaths = [deliverySkillRoot];
+export const deliverySkillPath = (name: string) => resolve(deliverySkillRoot, name);
 
 function extractPaths(input: unknown): string[] {
   if (!input || typeof input !== 'object') return [];
@@ -351,6 +390,8 @@ export const deliveryWorkspace = new Workspace({
       },
     },
   },
-  skills: ['./src/mastra/delivery-engine/skills'],
+  skills: deliveryWorkspaceSkillPaths,
+  skillSource: new LocalSkillSource({ basePath: deliveryProjectRootForSkills() }),
+  checkSkillFileMtime: true,
   bm25: true,
 });

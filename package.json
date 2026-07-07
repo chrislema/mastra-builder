@@ -11,9 +11,9 @@
     "eval:cloudflare:gate": "node --import tsx scripts/run-cloudflare-eval-gate.ts",
     "typecheck": "tsc --noEmit",
     "ci:delivery": "npm run typecheck && npm test && npm run eval:delivery:gate && npm run eval:cloudflare:gate",
-    "dev": "node --env-file-if-exists=.env node_modules/.bin/mastra dev",
-    "build": "MASTRA_TELEMETRY_DISABLED=1 npm_config_prefer_offline=true npm_config_fetch_retries=0 npm_config_fetch_timeout=10000 node --env-file-if-exists=.env node_modules/.bin/mastra build",
-    "start": "node --env-file-if-exists=.env node_modules/.bin/mastra start"
+    "dev": "MASTRA_PROJECT_ROOT=$PWD SKILLS_BASE_DIR=$PWD node --env-file-if-exists=.env node_modules/.bin/mastra dev",
+    "build": "MASTRA_PROJECT_ROOT=$PWD SKILLS_BASE_DIR=$PWD MASTRA_TELEMETRY_DISABLED=1 npm_config_prefer_offline=true npm_config_fetch_retries=0 npm_config_fetch_timeout=10000 node --env-file-if-exists=.env node_modules/.bin/mastra build",
+    "start": "MASTRA_PROJECT_ROOT=$PWD SKILLS_BASE_DIR=$PWD node --env-file-if-exists=.env node_modules/.bin/mastra start"
   },
   "keywords": [],
   "author": "",
