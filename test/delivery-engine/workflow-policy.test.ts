@@ -1389,8 +1389,8 @@ test('task plan normalization injects session auth before late admin auth and ro
       depends_on: ['T08-part-2'],
       owned_surfaces: ['src/weeklyWorkflow.js', 'src/index.js'],
       acceptance_criteria: [
-        'WeeklyWorkflow creates or loads the run and marks it running with window_start and window_end.',
-        'Workflow treats an empty bookmark list as a completed run with no transcript.',
+        'WeeklyWorkflow creates or loads a run and marks it running with window_start and window_end.',
+        'Workflow fetches bookmarks for the rolling seven-day or requested window and treats an empty list as a completed run with no transcript.',
       ],
     },
     {
@@ -1424,7 +1424,7 @@ test('task plan normalization injects session auth before late admin auth and ro
   assert.match(criteria('T02'), /completed\|completed_empty\|failed/);
   assert.doesNotMatch(criteria('T08'), /provides a browser-safe auth\/session boundary/);
   assert.match(criteria('T08'), /internal credential-validation helper/);
-  assert.doesNotMatch(criteria('T11'), /creates or loads the run and marks it running/);
+  assert.doesNotMatch(criteria('T11'), /creates or loads a run and marks it running/);
   assert.doesNotMatch(criteria('T11'), /completed run with no transcript/);
   assert.match(criteria('T11'), /completed_empty terminal run/);
 });
@@ -1435,7 +1435,7 @@ test('task plan normalization attaches Worker lifecycle contracts to workflow an
       id: 'T11',
       depends_on: ['T10'],
       owned_surfaces: ['src/workflow.js', 'src/scheduler.js'],
-      acceptance_criteria: ['Workflow treats an empty bookmark list as a completed run with no transcript.'],
+      acceptance_criteria: ['Workflow fetches bookmarks and treats an empty list as a completed run with no transcript.'],
     },
   ]);
 

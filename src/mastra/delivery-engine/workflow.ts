@@ -1564,13 +1564,15 @@ function runLifecycleWithoutEmptyTerminalCriterion(criterion: string) {
 }
 
 function workflowCreatesRunningRunCriterion(criterion: string) {
-  return /\b(?:WeeklyWorkflow|Workflow)\b[\s\S]{0,80}\bcreates or loads the run\b[\s\S]{0,80}\bmarks it running\b/i.test(
+  return /\b(?:WeeklyWorkflow|Workflow)\b[\s\S]{0,80}\bcreates or loads (?:a|the) run\b[\s\S]{0,80}\bmarks it running\b/i.test(
     criterion,
   );
 }
 
 function workflowEmptyBookmarkCompletedCriterion(criterion: string) {
-  return /\bWorkflow\b[\s\S]{0,80}\bempty bookmark list\b[\s\S]{0,80}\bcompleted run with no transcript\b/i.test(criterion);
+  return /\bWorkflow\b[\s\S]{0,80}\bempty (?:bookmark )?list\b[\s\S]{0,80}\bcompleted run with no transcript\b/i.test(
+    criterion,
+  );
 }
 
 function withoutLifecycleDriftCriteria(task: Task) {
