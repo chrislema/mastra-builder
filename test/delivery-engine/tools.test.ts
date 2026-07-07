@@ -46,3 +46,20 @@ test('repo-bound delivery tools can resolve repoPath from request context', asyn
   assert.equal(status?.run_id, run.run_id);
   assert.equal(status?.stage, 'readout');
 });
+
+test('repo-bound delivery tools reject repoPath conflicts with request context', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-tool-context-primary-'));
+  const otherRepoPath = mkdtempSync(join(tmpdir(), 'delivery-tool-context-other-'));
+  writeFileSync(join(repoPath, 'vision.md'), '# Vision\n');
+  writeFileSync(join(repoPath, 'spec.md'), '# Spec\n');
+  initializeDeliveryRun({ repoPath, visionPath: 'vision.md', specPath: 'spec.md' });
+
+  await assert.rejects(
+    async () =>
+      deliveryStateTools.getDeliveryRunStatusTool.execute?.(
+        { repoPath: otherRepoPath },
+        { requestContext: createDeliveryRequestContext(repoPath) } as any,
+      ),
+    /repoPath must match requestContext\.repoPath/,
+  );
+});

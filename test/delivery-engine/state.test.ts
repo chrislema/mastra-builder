@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -84,4 +84,27 @@ test('delivery state normalizes document paths inside repo and rejects outside d
     () => initializeDeliveryRun({ repoPath: blockedRepo, visionPath: 'vision.md', specPath: outside }),
     /spec file must be inside repoPath/,
   );
+});
+
+test('delivery artifact writes are confined to .delivery/artifacts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-artifact-containment-'));
+
+  assert.throws(
+    () => writeDeliveryArtifact({ repoPath, artifactPath: '../escape.json', artifact: { ok: false } }),
+    /delivery artifact path must stay inside repoPath/,
+  );
+  assert.throws(
+    () => writeDeliveryArtifact({ repoPath, artifactPath: '.delivery/run.json', artifact: { ok: false } }),
+    /delivery artifact path must be under \.delivery\/artifacts\//,
+  );
+
+  const insidePath = join(repoPath, '.delivery/artifacts/direct.json');
+  const result = writeDeliveryArtifact({
+    repoPath,
+    artifactPath: insidePath,
+    artifact: { ok: true },
+  });
+
+  assert.equal(result.path, '.delivery/artifacts/direct.json');
+  assert.equal(existsSync(insidePath), true);
 });

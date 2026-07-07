@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { roleBoundaries, type DeliveryRole } from './boundaries';
 import type { DeliveryEvent } from './checks';
 import { repoRelativeExistingFile } from './paths';
@@ -35,10 +35,32 @@ const deliveryDir = (repoPath: string) => join(resolve(repoPath), '.delivery');
 const runPath = (repoPath: string) => join(deliveryDir(repoPath), 'run.json');
 const eventsPath = (repoPath: string) => join(deliveryDir(repoPath), 'events.jsonl');
 const boundaryPath = (repoPath: string) => join(deliveryDir(repoPath), 'boundary.json');
+const deliveryArtifactsDir = (repoPath: string) => join(deliveryDir(repoPath), 'artifacts');
 
 const ensureDeliveryDirs = (repoPath: string) => {
-  mkdirSync(join(deliveryDir(repoPath), 'artifacts', 'judgments'), { recursive: true });
+  mkdirSync(join(deliveryArtifactsDir(repoPath), 'judgments'), { recursive: true });
 };
+
+function deliveryArtifactTarget(repoPath: string, artifactPath: string) {
+  const repoRoot = resolve(repoPath);
+  const fullPath = resolve(repoRoot, artifactPath);
+  const normalizedArtifactPath = relative(repoRoot, fullPath).replaceAll('\\', '/');
+
+  if (
+    !normalizedArtifactPath ||
+    normalizedArtifactPath.startsWith('../') ||
+    normalizedArtifactPath === '..' ||
+    isAbsolute(normalizedArtifactPath)
+  ) {
+    throw new Error('delivery artifact path must stay inside repoPath');
+  }
+
+  if (!normalizedArtifactPath.startsWith('.delivery/artifacts/')) {
+    throw new Error('delivery artifact path must be under .delivery/artifacts/');
+  }
+
+  return { fullPath, artifactPath: normalizedArtifactPath };
+}
 
 export function createDeliveryRunId() {
   return `run-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
@@ -267,10 +289,11 @@ export function writeDeliveryArtifact({
   artifactPath: string;
   artifact: unknown;
 }) {
-  const fullPath = join(resolve(repoPath), artifactPath);
+  const target = deliveryArtifactTarget(repoPath, artifactPath);
+  const { fullPath } = target;
   mkdirSync(dirname(fullPath), { recursive: true });
   writeFileSync(fullPath, JSON.stringify(artifact, null, 2));
-  return { ok: true, path: artifactPath };
+  return { ok: true, path: target.artifactPath };
 }
 
 export function getDeliveryRunStatus(repoPath: string) {

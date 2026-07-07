@@ -1,4 +1,5 @@
 import { createTool } from '@mastra/core/tools';
+import { resolve } from 'node:path';
 import { z } from 'zod';
 import { deliveryRoles, type DeliveryRole } from './boundaries';
 import { deliveryRepoPathFromRequestContext, deliveryRequestContextSchema } from './context';
@@ -35,11 +36,36 @@ const repoPathField = z
   .describe('Target repo path. Defaults to requestContext.repoPath when omitted.');
 
 function repoPathFromTool(input: { repoPath?: string }, context?: { requestContext?: unknown }) {
-  return input.repoPath ?? deliveryRepoPathFromRequestContext(context?.requestContext);
+  const contextRepoPath = optionalRepoPathFromRequestContext(context);
+  const inputRepoPath = input.repoPath ? resolve(input.repoPath) : undefined;
+
+  if (contextRepoPath) {
+    if (inputRepoPath && inputRepoPath !== contextRepoPath) {
+      throw new Error('repoPath must match requestContext.repoPath for repo-bound delivery tools');
+    }
+    return contextRepoPath;
+  }
+
+  if (inputRepoPath) return inputRepoPath;
+  return deliveryRepoPathFromRequestContext(context?.requestContext);
 }
 
 function optionalRepoPathFromTool(input: { repoPath?: string }, context?: { requestContext?: unknown }) {
-  if (input.repoPath) return input.repoPath;
+  const contextRepoPath = optionalRepoPathFromRequestContext(context);
+  const inputRepoPath = input.repoPath ? resolve(input.repoPath) : undefined;
+
+  if (contextRepoPath) {
+    if (inputRepoPath && inputRepoPath !== contextRepoPath) {
+      throw new Error('repoPath must match requestContext.repoPath for repo-bound delivery tools');
+    }
+    return contextRepoPath;
+  }
+
+  if (inputRepoPath) return inputRepoPath;
+  return undefined;
+}
+
+function optionalRepoPathFromRequestContext(context?: { requestContext?: unknown }) {
   try {
     return deliveryRepoPathFromRequestContext(context?.requestContext);
   } catch {
