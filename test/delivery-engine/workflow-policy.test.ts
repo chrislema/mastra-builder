@@ -1249,7 +1249,7 @@ test('task plan normalization recognizes flat Worker http and route module names
     {
       id: 'T04',
       depends_on: ['T02'],
-      owned_surfaces: ['src/auth.js', 'src/http.js'],
+      owned_surfaces: ['src/http/auth.js', 'src/http.js'],
     },
     {
       id: 'T05',
@@ -1280,6 +1280,9 @@ test('task plan normalization recognizes flat Worker http and route module names
       id: 'T10',
       depends_on: ['T08'],
       owned_surfaces: ['public/app.js'],
+      acceptance_criteria: [
+        'public/app.js calls protected endpoints with admin-token handling compatible with the Worker API boundary.',
+      ],
       owner: 'designer',
     },
   ]);
@@ -1298,6 +1301,7 @@ test('task plan normalization recognizes flat Worker http and route module names
   assert.match(criteria('T08'), /instead of mutating D1 state directly in route handlers/);
   assert.match(criteria('T09'), /stable WeeklyWorkflow export/);
   assert.match(criteria('T10'), /browser-safe auth\/session flow/);
+  assert.doesNotMatch(criteria('T10'), /admin-token handling compatible/);
   assert.ok(integration);
   assert.deepEqual(integration?.owned_surfaces, ['src/http.js']);
   assert.deepEqual(integration?.depends_on, ['T04', 'T06', 'T08', 'E20-auth-session']);

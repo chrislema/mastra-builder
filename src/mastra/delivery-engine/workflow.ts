@@ -1413,7 +1413,7 @@ function taskOwnsAiPipelineSurface(task: Task) {
 }
 
 function taskOwnsAuthSurface(task: Task) {
-  return taskOwnsPathMatching(task, /^src\/auth\.[cm]?[jt]s$/);
+  return taskOwnsPathMatching(task, /^src\/(?:(?:http\/)?auth)\.[cm]?[jt]s$/);
 }
 
 function taskOwnsPublicAppSurface(task: Task) {
@@ -1436,8 +1436,8 @@ function appendTaskAcceptanceCriteria(task: Task, criteria: string[]) {
 function publicUiRawAdminTokenCriterion(criterion: string) {
   return (
     /\bpublic\/app\.js\b/i.test(criterion) &&
-    /\bADMIN_TOKEN\b/.test(criterion) &&
-    /\b(collects?|sends?|Authorization:\s*Bearer|raw)\b/i.test(criterion) &&
+    /\b(?:ADMIN_TOKEN|admin[-_\s]?token)\b/i.test(criterion) &&
+    /\b(collects?|sends?|Authorization:\s*Bearer|raw|handling)\b/i.test(criterion) &&
     !/\b(browser-safe|session|cookie|HttpOnly)\b/i.test(criterion)
   );
 }
