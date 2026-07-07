@@ -8044,6 +8044,7 @@ Task-plan quality requirements:
 - Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 - Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.
+- Do not delete prior acceptance criteria during a repair. If you split or narrow a task, copy each prior criterion verbatim into source_acceptance_criteria on the slice or revised task that carries the original contract.
 - Every consumes-output relation must be declared by task ID. If a later task uses storage, prompts, routes, services, generated types, bindings, or workflow steps from an earlier slice, add the dependency edge explicitly.
 - Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
 - Do not plan functions/** owned surfaces unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
@@ -8541,6 +8542,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
           `The architect blocked the task plan. Revise the task plan to address the review findings.
 
 Return a full replacement taskPlan object. Preserve concrete deliverables, checkable acceptance criteria, dependencies, and owned surfaces.
+Do not delete prior acceptance criteria during a revision. If you split or narrow a task, copy each prior criterion verbatim into source_acceptance_criteria on the slice or revised task that carries the original contract.
 Do not write implementation code.
 Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
 Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks. Safe defaults belong in the readout on the next full planning pass, so do not add them to taskPlan.open_decisions here.
