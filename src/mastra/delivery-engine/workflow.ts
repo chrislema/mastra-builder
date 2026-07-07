@@ -1401,18 +1401,60 @@ function appendTaskAcceptanceCriteria(task: Task, criteria: string[]) {
   return acceptance_criteria.length === task.acceptance_criteria.length ? task : { ...task, acceptance_criteria };
 }
 
-function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
-  const routeTasks = tasks.filter(taskOwnsRouteModule);
-  const routerTasks = tasks.filter(taskOwnsRouterSurface);
-  if (!routeTasks.length || !routerTasks.length) return { tasks, changed: false };
-
-  const alreadyHasIntegration = tasks.some((task) =>
+function taskHasRouteIntegrationContract(task: Task) {
+  return (
     taskOwnsRouterSurface(task) &&
     task.acceptance_criteria.some((criterion) =>
-      /reachable through (?:the )?(?:src\/)?router|all declared (?:api )?endpoints?/i.test(criterion),
-    ),
+      /reachable through (?:the )?(?:src\/)?router|all declared (?:api )?endpoints?|routes? reachable through the Worker fetch path/i.test(
+        criterion,
+      ),
+    )
   );
-  if (alreadyHasIntegration) return { tasks, changed: false };
+}
+
+function dedupeRouteIntegrationTasks(tasks: Task[]) {
+  const integrationTasks = tasks.filter(taskHasRouteIntegrationContract);
+  if (integrationTasks.length <= 1) return { tasks, changed: false };
+
+  const [primary, ...duplicates] = integrationTasks;
+  const integrationIds = new Set(integrationTasks.map((task) => task.id));
+  const duplicateIds = new Set(duplicates.map((task) => task.id));
+  const primaryTask = {
+    ...primary,
+    depends_on: Array.from(
+      new Set(integrationTasks.flatMap((task) => task.depends_on).filter((dependency) => !integrationIds.has(dependency))),
+    ),
+    acceptance_criteria: Array.from(new Set(integrationTasks.flatMap((task) => task.acceptance_criteria))),
+    owned_surfaces: Array.from(new Set(integrationTasks.flatMap((task) => task.owned_surfaces))),
+  };
+
+  return {
+    tasks: tasks
+      .filter((task) => !duplicateIds.has(task.id))
+      .map((task) => {
+        if (task.id === primary.id) return primaryTask;
+        const depends_on = Array.from(
+          new Set(task.depends_on.map((dependency) => (duplicateIds.has(dependency) ? primary.id : dependency))),
+        );
+        return depends_on.length === task.depends_on.length &&
+          depends_on.every((dependency, index) => dependency === task.depends_on[index])
+          ? task
+          : { ...task, depends_on };
+      }),
+    changed: true,
+  };
+}
+
+function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
+  const deduped = dedupeRouteIntegrationTasks(tasks);
+  tasks = deduped.tasks;
+
+  const routeTasks = tasks.filter(taskOwnsRouteModule);
+  const routerTasks = tasks.filter(taskOwnsRouterSurface);
+  if (!routeTasks.length || !routerTasks.length) return { tasks, changed: deduped.changed };
+
+  const alreadyHasIntegration = tasks.some(taskHasRouteIntegrationContract);
+  if (alreadyHasIntegration) return { tasks, changed: deduped.changed };
 
   const routerSurface = taskOwnedBoundaryPaths(routerTasks[routerTasks.length - 1]).find((path) =>
     /^src\/(?:http\/)?router\.[cm]?[jt]s$/.test(path),

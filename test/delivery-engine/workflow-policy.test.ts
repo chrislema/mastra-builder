@@ -1248,6 +1248,47 @@ test('task plan normalization does not duplicate an existing route integration c
   assert.deepEqual(integrationTasks.map((task) => task.id), ['E98-route-integration']);
 });
 
+test('task plan normalization collapses duplicate route integration tasks and rewrites consumers', () => {
+  const plan = taskPlan([
+    {
+      id: 'T06',
+      depends_on: [],
+      owned_surfaces: ['src/router.js', 'src/auth.js'],
+    },
+    {
+      id: 'T07',
+      depends_on: ['T06'],
+      owned_surfaces: ['src/routes/profiles.js'],
+    },
+    {
+      id: 'E98-route-integration',
+      depends_on: ['T07'],
+      owned_surfaces: ['src/router.js'],
+      acceptance_criteria: ['Every declared API endpoint is reachable through the router after this task completes.'],
+    },
+    {
+      id: 'E98-route-integration-2',
+      depends_on: ['E98-route-integration', 'T07'],
+      owned_surfaces: ['src/router.js'],
+      acceptance_criteria: ['src/router.js makes profile and run routes reachable through the Worker fetch path.'],
+    },
+    {
+      id: 'T13',
+      depends_on: ['E98-route-integration-2'],
+      owned_surfaces: ['public/app.js'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const integrationTasks = normalized.tasks.filter((task) => task.id.startsWith('E98-route-integration'));
+  const consumer = normalized.tasks.find((task) => task.id === 'T13');
+
+  assert.deepEqual(integrationTasks.map((task) => task.id), ['E98-route-integration']);
+  assert.deepEqual(integrationTasks[0].depends_on, ['T07']);
+  assert.deepEqual(consumer?.depends_on, ['E98-route-integration']);
+  assert.match(integrationTasks[0].acceptance_criteria.join('\n'), /profile and run routes reachable/);
+});
+
 test('task plan normalization appends operator documentation task', () => {
   const plan = taskPlan([
     {
