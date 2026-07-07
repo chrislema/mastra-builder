@@ -934,6 +934,21 @@ test('task plan role hygiene rejects engineer-owned public surfaces without a de
   assert.match(result.reason, /public\/index\.html|forbidden glob/);
 });
 
+test('task plan role hygiene allows engineer-owned Worker smoke tests under test', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['vitest.config.ts', 'test/api-smoke.test.ts'],
+      acceptance_criteria: [
+        'vitest.config.ts configures Worker smoke tests.',
+        'test/api-smoke.test.ts covers GET /api/health and POST /api/run validation.',
+      ],
+    },
+  ]);
+
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalizeTaskPlanRoleBoundaries(plan)), { passed: true, reason: 'ok' });
+});
+
 test('task plan normalization splits oversized storage-only tasks and rewires downstream dependencies', () => {
   const plan = taskPlan([
     {

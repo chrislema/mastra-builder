@@ -10577,7 +10577,7 @@ Owned-surface hygiene:
 - Do not use conceptual labels such as "Worker Env types", "wrangler configuration", "Workflow binding registration", "API routes", or "UI assets".
 - If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
 Role-boundary hygiene:
-- Engineer tasks own Worker config/source/migration files such as package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml when existing or source-required, src/**, workers/**, and migrations/**.
+- Engineer tasks own Worker config/source/test/migration files such as package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml when existing or source-required, src/**, workers/**, test/** Worker smoke tests, and migrations/**.
 - Designer tasks own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
 - Do not put public/** files in engineer-owned tasks; create or reuse a designer task for vanilla HTML/CSS/JS UI work.
 - Do not plan functions/** owned surfaces unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.

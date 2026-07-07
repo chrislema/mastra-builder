@@ -26,6 +26,7 @@ export const roleBoundaries = {
       'functions/**',
       'workers/**',
       'src/**',
+      'test/**',
       'lib/**',
       'scripts/**',
       'db/**',
