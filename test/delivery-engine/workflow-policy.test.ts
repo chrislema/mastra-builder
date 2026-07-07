@@ -2618,6 +2618,7 @@ test('acceptance contracts verify vanilla Worker scaffold static assets and work
       acceptance_criteria: [
         'wrangler.jsonc configures Workers Static Assets with assets.directory "./public" and binding "ASSETS".',
         '.gitignore excludes node_modules, Wrangler local state, environment files, and generated secrets.',
+        'src/index.js exports a minimal Worker fetch handler and a WeeklyWorkflow class stub so Wrangler runtime validation has a concrete entrypoint from the first build slice.',
         'No tsconfig.json is created.',
         'src/index.js exports a minimal class named WeeklyWorkflow that extends WorkflowEntrypoint when wrangler.jsonc defines workflows.class_name "WeeklyWorkflow", so Wrangler dry-run validation succeeds before later workflow code fills in the implementation without changing the configured export name.',
       ],
@@ -2628,9 +2629,10 @@ test('acceptance contracts verify vanilla Worker scaffold static assets and work
 
   assert.deepEqual(
     contracts.map((contract) => contract.status),
-    ['verified', 'verified', 'verified', 'verified'],
+    ['verified', 'verified', 'verified', 'verified', 'verified'],
   );
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /Workers Static Assets/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /Worker entrypoint evidence/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /tsconfig\.json is absent/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /WeeklyWorkflow export/);
 });

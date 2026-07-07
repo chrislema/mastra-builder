@@ -8009,7 +8009,13 @@ function workerEntrypointExportContractEvidence({
 }) {
   if (!repoPath || !task) return undefined;
   if (!/\bsrc\/index\.(js|ts)\b/i.test(criterion)) return undefined;
-  if (!/\bdefault\b/i.test(criterion) || !/\bfetch\b/i.test(criterion) || !/\bWeeklyWorkflow\b/i.test(criterion)) {
+  if (
+    !/\b(?:Worker module entrypoint|Worker fetch handler|fetch handler|concrete entrypoint|runtime validation|default)\b/i.test(
+      criterion,
+    ) ||
+    !/\bfetch\b/i.test(criterion) ||
+    !/\bWeeklyWorkflow\b/i.test(criterion)
+  ) {
     return undefined;
   }
 
@@ -8021,7 +8027,13 @@ function workerEntrypointExportContractEvidence({
 
   const source = readFileSync(fullPath, 'utf8');
   const gaps: string[] = [];
-  if (!/export\s+default\s+\{[\s\S]*\bfetch\s*\(/m.test(source) && !/export\s+default\s+[A-Za-z_$][\w$]*\s*;/.test(source)) {
+  const exportsFetch =
+    /export\s+(?:async\s+)?function\s+fetch\s*\(/m.test(source) ||
+    /export\s+default\s+\{[\s\S]*\bfetch\b[\s\S]*\}/m.test(source) ||
+    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{[\s\S]*\bfetch\s*(?:\(|:)[\s\S]*\}[\s\S]*export\s+default\s+\1\s*;/m.test(
+      source,
+    );
+  if (!exportsFetch) {
     gaps.push(`${indexPath} must export a default Worker object with a fetch handler.`);
   }
   if (!/\bexport\s+class\s+WeeklyWorkflow\b/.test(source)) {
