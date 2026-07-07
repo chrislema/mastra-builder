@@ -31,6 +31,7 @@ import {
   lifecycleStatusSchemaGaps,
   localDeploymentReportFromReleaseGateEvidence,
   configSchemaTaskSplitHygiene,
+  missingInstalledPackageNames,
   normalizeTaskPlanLargeStorageTasks,
   normalizeTaskPlanConfigSchemaTasks,
   normalizeTaskPlanGeneratedSliceDependencies,
@@ -2777,6 +2778,68 @@ test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness stru
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /protected APIs stay unavailable/);
 });
 
+test('acceptance contracts verify TypeScript Hono Worker scaffold structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-hono-worker-scaffold-contracts-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile', 'dist/', 'build/', '*.log', ''].join(
+      '\n',
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'tsconfig.json'),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ESNext',
+          moduleResolution: 'Bundler',
+          lib: ['ES2022', 'WebWorker'],
+          types: ['node'],
+          strict: true,
+        },
+        include: ['src/**/*.ts', 'worker-configuration.d.ts'],
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      '',
+      'const app = new Hono<{ Bindings: Env }>();',
+      'app.get("/api/health", (c) => c.json({ ok: true, service: "benchmark" }));',
+      'export default app;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['.gitignore', 'tsconfig.json', 'src/index.ts'],
+      acceptance_criteria: [
+        'tsconfig.json exists because the source docs explicitly require TypeScript.',
+        'src/index.ts contains a minimal Hono Worker module entrypoint that can be expanded by later API tasks and can be loaded by Wrangler.',
+        '.gitignore excludes dependency, build, Wrangler local state, and environment/secret files without excluding planned source files.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({ repoPath, task, verification: { performed: [], missing: [] } });
+
+  assert.deepEqual(
+    contracts.map((contract) => contract.status),
+    ['verified', 'verified', 'verified'],
+  );
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /tsconfig\.json evidence/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /Hono Worker module entrypoint/);
+  assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /\.gitignore evidence/);
+});
+
 test('acceptance contracts verify vanilla Worker scaffold static assets and workflow export structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-t01-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
@@ -4822,10 +4885,10 @@ test('Worker release gate fails closed when Wrangler config is missing', () => {
           module: 'ESNext',
           moduleResolution: 'Bundler',
           lib: ['ES2022', 'WebWorker'],
-          types: ['./worker-configuration.d.ts', 'node'],
+          types: ['node'],
           strict: true,
         },
-        include: ['src/**/*.ts'],
+        include: ['src/**/*.ts', 'worker-configuration.d.ts'],
       },
       null,
       2,
@@ -5237,7 +5300,8 @@ test('Worker config task packet policy carries the exact current compatibility d
   assert.deepEqual(policy.generated_types, {
     command: 'wrangler types',
     output: 'worker-configuration.d.ts',
-    tsconfig_types: ['./worker-configuration.d.ts', 'node'],
+    tsconfig_include: ['worker-configuration.d.ts'],
+    tsconfig_types: ['node'],
   });
 });
 
@@ -5413,10 +5477,10 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
           module: 'ESNext',
           moduleResolution: 'Bundler',
           lib: ['ES2022', 'WebWorker'],
-          types: ['./worker-configuration.d.ts', 'node'],
+          types: ['node'],
           strict: true,
         },
-        include: ['src/**/*.ts'],
+        include: ['src/**/*.ts', 'worker-configuration.d.ts'],
       },
       null,
       2,
@@ -5425,6 +5489,31 @@ test('Worker package scaffold hygiene requires current Wrangler tooling and conf
 
   assert.deepEqual(workerPackageScaffoldGaps(repoPath, tsTask), []);
   assert.deepEqual(workerPackageScaffoldGaps(repoPath), []);
+});
+
+test('installed package freshness detects missing scoped dev dependencies', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-package-installed-'));
+  mkdirSync(join(repoPath, 'node_modules/hono'), { recursive: true });
+  mkdirSync(join(repoPath, 'node_modules/wrangler'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        dependencies: { hono: 'latest' },
+        devDependencies: {
+          '@types/node': 'latest',
+          wrangler: 'latest',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(missingInstalledPackageNames(repoPath), ['@types/node']);
+
+  mkdirSync(join(repoPath, 'node_modules/@types/node'), { recursive: true });
+  assert.deepEqual(missingInstalledPackageNames(repoPath), []);
 });
 
 test('stale downstream verification repair resets only future failed task surfaces', async () => {
