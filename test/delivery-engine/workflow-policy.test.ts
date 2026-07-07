@@ -1031,6 +1031,49 @@ test('task plan revisions must not drop prior acceptance contracts', () => {
   assert.deepEqual(taskPlanAcceptanceContractRegression(previous, revised), { passed: true, reason: 'ok' });
 });
 
+test('task plan revision regression ignores generated slice bookkeeping criteria', () => {
+  const previous = taskPlan([
+    {
+      id: 'T10-part-2',
+      depends_on: ['T10'],
+      owned_surfaces: ['src/routesRuns.js', 'src/scheduler.js'],
+      acceptance_criteria: [
+        'Implement delivery slice 2/2: src/routesRuns.js, src/scheduler.js.',
+        'Replace any preflight stubs for this slice with real implementation code before returning.',
+        'Keep this slice compatible with previously completed delivery slices and npm run typecheck.',
+        'POST /runs creates a manual run and returns runId with status queued.',
+      ],
+    },
+  ]);
+  (previous.tasks[0] as any).source_task_id = 'T10';
+  (previous.tasks[0] as any).source_acceptance_criteria = [
+    'GET /runs/:id returns run status, window, profile IDs used, selectedCandidateId, and transcriptId.',
+  ];
+  const revised = taskPlan([
+    {
+      id: 'T10-part-2',
+      depends_on: ['T10'],
+      owned_surfaces: ['src/routesRuns.js', 'src/scheduler.js'],
+      acceptance_criteria: [
+        'Implement delivery slice 1/2: src/routesRuns.js, src/scheduler.js.',
+        'POST /runs creates a manual run and returns runId with status queued.',
+      ],
+    },
+  ]);
+  (revised.tasks[0] as any).source_task_id = 'T10';
+  (revised.tasks[0] as any).source_acceptance_criteria = [
+    'GET /runs/:id returns run status, window, profile IDs used, selectedCandidateId, and transcriptId.',
+  ];
+
+  assert.deepEqual(taskPlanAcceptanceContractRegression(previous, revised), { passed: true, reason: 'ok' });
+
+  (revised.tasks[0] as any).source_acceptance_criteria = [];
+  const result = taskPlanAcceptanceContractRegression(previous, revised);
+  assert.equal(result.passed, false);
+  assert.match(result.reason, /GET \/runs\/:id returns run status/);
+  assert.doesNotMatch(result.reason, /Implement delivery slice 2\/2/);
+});
+
 test('task plan normalization splits Worker config and D1 schema tasks', () => {
   const plan = taskPlan([
     {

@@ -1457,12 +1457,27 @@ function allTaskAcceptanceContractCriteria(taskPlan: TaskPlan) {
   );
 }
 
+function generatedSliceAcceptanceCriterion(criterion: string) {
+  const normalized = criterion.trim();
+  return (
+    /^Implement delivery slice \d+\/\d+:/i.test(normalized) ||
+    /^Replace any preflight stubs for this slice with real implementation code before returning\.?$/i.test(normalized) ||
+    /^Keep this slice compatible with previously completed delivery slices and npm run typecheck\.?$/i.test(normalized)
+  );
+}
+
+function allProductAcceptanceContractCriteria(taskPlan: TaskPlan) {
+  return allTaskAcceptanceContractCriteria(taskPlan).filter(
+    (contract) => !generatedSliceAcceptanceCriterion(contract.criterion),
+  );
+}
+
 function revisedPlanCarriesCriterion(taskPlan: TaskPlan, criterion: string) {
   return taskPlan.tasks.some((task) => taskAcceptanceContractCriteria(task).includes(criterion));
 }
 
 export function taskPlanAcceptanceContractRegression(previousTaskPlan: TaskPlan, revisedTaskPlan: TaskPlan) {
-  const missing = allTaskAcceptanceContractCriteria(previousTaskPlan).filter(
+  const missing = allProductAcceptanceContractCriteria(previousTaskPlan).filter(
     (contract) => !revisedPlanCarriesCriterion(revisedTaskPlan, contract.criterion),
   );
 
