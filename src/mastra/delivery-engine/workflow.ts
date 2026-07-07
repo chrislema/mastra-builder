@@ -674,6 +674,25 @@ export function sourceDocumentsDeclareBookmarksService(sourceDocuments: Array<{ 
   return /\bBOOKMARKS\b|\benv\.BOOKMARKS\b|\bbookmarks\s+service\b|\bbookmark\s+service\b/i.test(text);
 }
 
+function sourceLineNegatesShortLinks(line: string) {
+  return (
+    /\b(?:no|not|never|avoid|without|forbid|forbidden|ban|banned|do\s+not|don't)\b.{0,100}(?:short[-\s]?links?|url\s+shorteners?|link\s+shorteners?|shortened\s+urls?|\/api\/links|\/l\/)/i.test(
+      line,
+    ) ||
+    /(?:short[-\s]?links?|url\s+shorteners?|link\s+shorteners?|shortened\s+urls?|\/api\/links|\/l\/).{0,100}\b(?:not|unsupported|forbidden|banned)\b/i.test(
+      line,
+    )
+  );
+}
+
+export function sourceDocumentsDeclareShortLinkLifecycle(sourceDocuments: Array<{ path: string; content: string }>) {
+  const positiveText = sourceDocuments
+    .flatMap((document) => document.content.split(/\r?\n/))
+    .filter((line) => !sourceLineNegatesShortLinks(line))
+    .join('\n');
+  return /\b(?:short[-\s]?links?|url\s+shorteners?|link\s+shorteners?|shortened\s+urls?)\b/i.test(positiveText);
+}
+
 function sourcePolicyFromDocuments(sourceDocuments: Array<{ path: string; content: string }>): SourcePolicy {
   return {
     pagesRequired: sourceDocumentsDeclarePages(sourceDocuments),
@@ -689,13 +708,16 @@ function bookmarksAdapterPolicyLine(sourcePolicy: SourcePolicy) {
     : '';
 }
 
-function sourcePolicyFromRepo(repoPath: string): SourcePolicy {
+function sourceDocumentsFromRepo(repoPath: string) {
   const root = resolve(repoPath);
-  const sourceDocuments = ['vision.md', 'spec.md'].flatMap((path) => {
+  return ['vision.md', 'spec.md'].flatMap((path) => {
     const fullPath = join(root, path);
     return existsSync(fullPath) ? [{ path, content: readFileSync(fullPath, 'utf8') }] : [];
   });
-  return sourcePolicyFromDocuments(sourceDocuments);
+}
+
+function sourcePolicyFromRepo(repoPath: string): SourcePolicy {
+  return sourcePolicyFromDocuments(sourceDocumentsFromRepo(repoPath));
 }
 
 function taskPlanPagesFunctionSurfaces(taskPlan: TaskPlan) {
@@ -4788,7 +4810,8 @@ export function releaseGateRuntimeProbePlan(
 ): ReleaseGateRuntimeProbePlan | undefined {
   const command = releaseGateWorkerDevCommand(repoPath);
   if (!command) return undefined;
-  const sourcePolicy = sourcePolicyFromRepo(repoPath);
+  const sourceDocuments = sourceDocumentsFromRepo(repoPath);
+  const sourcePolicy = sourcePolicyFromDocuments(sourceDocuments);
   const adminHeaders = releaseGateAdminHeaders(adminToken);
   const indexAssetProbe = releaseGatePublicAssetProbe(repoPath, 'index.html');
   const defaultRootProbe: ReleaseGateHttpProbePlan = {
@@ -4819,7 +4842,7 @@ export function releaseGateRuntimeProbePlan(
     });
   }
 
-  if (releaseGateHasLinkLifecycleRoutes(repoPath)) {
+  if (sourceDocumentsDeclareShortLinkLifecycle(sourceDocuments) && releaseGateHasLinkLifecycleRoutes(repoPath)) {
     probes.push(...releaseGateLinkLifecycleProbes());
   }
 

@@ -74,6 +74,7 @@ import {
   shouldSuspendForPlannerQuestions,
   sourceDocumentsDeclareBookmarksService,
   sourceDocumentsDeclarePages,
+  sourceDocumentsDeclareShortLinkLifecycle,
   sourceDocumentsDeclareTalkingHeadTranscriptContract,
   sourceDocumentsRequiredProfileKinds,
   staleDownstreamVerificationSurfacePaths,
@@ -398,6 +399,7 @@ test('source docs declare product-specific profile and transcript policies', () 
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(genericDocs), []);
   assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(genericDocs), false);
   assert.equal(sourceDocumentsDeclareBookmarksService(genericDocs), false);
+  assert.equal(sourceDocumentsDeclareShortLinkLifecycle(genericDocs), false);
 
   const talkingHeadDocs = [
     {
@@ -414,6 +416,19 @@ test('source docs declare product-specific profile and transcript policies', () 
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(talkingHeadDocs), ['audience_segments', 'voice_profile']);
   assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(talkingHeadDocs), true);
   assert.equal(sourceDocumentsDeclareBookmarksService(talkingHeadDocs), true);
+
+  const shortLinkDocs = [
+    { path: 'vision.md', content: 'Build a Cloudflare Worker URL shortener for customer short links.' },
+    { path: 'spec.md', content: 'POST /api/links creates a link and GET /l/:id redirects to its destination.' },
+  ];
+  assert.equal(sourceDocumentsDeclareShortLinkLifecycle(shortLinkDocs), true);
+  assert.equal(
+    sourceDocumentsDeclareShortLinkLifecycle([
+      { path: 'vision.md', content: 'Build a basic Worker API. No short links or URL shortener behavior.' },
+      { path: 'spec.md', content: 'A stray /api/links route name in a note is not a product requirement.' },
+    ]),
+    false,
+  );
 });
 
 test('bare Worker project plans require package scaffold before runtime surfaces', () => {
@@ -2186,6 +2201,11 @@ test('release gate runtime probe planner discovers Worker API health routes', ()
 test('release gate runtime probe planner exercises short-link lifecycle routes', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-link-lifecycle-'));
   mkdirSync(join(repoPath, 'workers'), { recursive: true });
+  writeFileSync(join(repoPath, 'vision.md'), '# Vision\nBuild a Cloudflare Worker URL shortener for short links.\n');
+  writeFileSync(
+    join(repoPath, 'spec.md'),
+    '# Spec\nPOST /api/links creates a short link. GET /l/:id redirects and increments clicks.\n',
+  );
   writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
   writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "workers/app.js"\n');
   writeFileSync(
@@ -2229,6 +2249,28 @@ test('release gate runtime probe planner exercises short-link lifecycle routes',
     (probe) => probe.path === '/api/links/{{releaseGateLinkId}}' && probe.jsonContains?.clicks === 1,
   );
   assert.deepEqual(incrementProbe?.jsonFieldsEqualVariables, { id: 'releaseGateLinkId' });
+});
+
+test('release gate runtime probe planner does not infer short-link lifecycle from routes alone', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-runtime-link-routes-only-'));
+  mkdirSync(join(repoPath, 'workers'), { recursive: true });
+  writeFileSync(join(repoPath, 'package.json'), JSON.stringify({ scripts: { dev: 'wrangler dev' } }, null, 2));
+  writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo-worker"\nmain = "workers/app.js"\n');
+  writeFileSync(
+    join(repoPath, 'workers/app.js'),
+    [
+      "if (url.pathname === '/api/health') {}",
+      "if (url.pathname === '/api/links') {}",
+      "if (url.pathname.startsWith('/api/links/')) {}",
+      "if (url.pathname.startsWith('/l/')) {}",
+    ].join('\n'),
+  );
+
+  const probes = releaseGateRuntimeProbePlan(repoPath)?.probes ?? [];
+  assert.deepEqual(
+    probes.map((probe) => `${probe.method} ${probe.path}`),
+    ['GET /', 'GET /api/health'],
+  );
 });
 
 test('release gate runtime probe targets staging when the Worker config defines it', () => {
