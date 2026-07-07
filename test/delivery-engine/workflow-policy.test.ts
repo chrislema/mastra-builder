@@ -2947,6 +2947,79 @@ test('static asset runtime validation deferral rejects early Wrangler runtime cl
   assert.match(contract?.gaps.join('\n') ?? '', /must not claim full Wrangler runtime validation/);
 });
 
+test('acceptance contracts verify package-level npm test runs Vitest structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-package-vitest-script-'));
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          test: 'vitest run --passWithNoTests',
+        },
+        devDependencies: {
+          vitest: 'latest',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json'],
+      acceptance_criteria: [
+        'package.json defines a package-level test script that runs Vitest so the later Worker smoke-test harness can be executed with npm test.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /scripts\.test runs Vitest/);
+});
+
+test('package-level npm test contract rejects non-Vitest scripts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-package-non-vitest-script-'));
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          test: 'echo "no tests yet"',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json'],
+      acceptance_criteria: [
+        'package.json defines a package-level test script that runs Vitest so the later Worker smoke-test harness can be executed with npm test.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'unverified');
+  assert.match(contract?.gaps.join('\n') ?? '', /scripts\.test must run Vitest/);
+});
+
 test('acceptance contracts verify Worker type constants and result envelopes structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-types-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

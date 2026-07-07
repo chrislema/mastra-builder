@@ -8269,12 +8269,34 @@ function packageScriptContractEvidence({
   if (!/\bpackage\.json\b/i.test(criterion)) return undefined;
   if (!taskBoundarySurfaces(repoPath, task).includes('package.json')) return undefined;
 
+  const packageJson = packageRecord(repoPath);
+  const scripts = recordValue(packageJson?.scripts);
+
+  if (/\b(?:package-level\s+test\s+script|scripts\.test|npm\s+test)\b/i.test(criterion) && /\bVitest\b/i.test(criterion)) {
+    const actualCommand = scripts?.test;
+    if (typeof actualCommand !== 'string' || !/\bvitest\b/i.test(actualCommand)) {
+      return {
+        passed: false,
+        evidence: [],
+        gaps: [
+          `package.json scripts.test must run Vitest${
+            typeof actualCommand === 'string' ? `, but found "${actualCommand}".` : ', but it is missing.'
+          }`,
+        ],
+      };
+    }
+
+    return {
+      passed: true,
+      evidence: [`structured package.json evidence verified scripts.test runs Vitest via "${actualCommand}"`],
+      gaps: [],
+    };
+  }
+
   const scriptMatch = criterion.match(/\bscripts\.([A-Za-z0-9:_-]+)\b[\s\S]{0,80}\bexactly\s+as\s+["']([^"']+)["']/i);
   if (!scriptMatch) return undefined;
 
   const [, scriptName, expectedCommand] = scriptMatch;
-  const packageJson = packageRecord(repoPath);
-  const scripts = recordValue(packageJson?.scripts);
   const actualCommand = scripts?.[scriptName];
 
   if (actualCommand !== expectedCommand) {
