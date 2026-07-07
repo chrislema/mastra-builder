@@ -1,6 +1,6 @@
 # Delivery Engine — AI Agent Project Evaluation
 
-*Graded against [`AI_AGENT_PROJECT_RUBRIC.md`](../AI_AGENT_PROJECT_RUBRIC.md) on 2026-07-07, following a full-repository review.*
+*Graded against [`AI_AGENT_PROJECT_RUBRIC.md`](AI_AGENT_PROJECT_RUBRIC.md) on 2026-07-07, following a full-repository review.*
 
 **Provenance note:** the codebase and the rubric were produced independently. The Delivery Engine was built without reference to the two books the rubric distills; the rubric was authored afterward, from the books alone, by a different process. Where they align, that is convergence between independently derived judgment — not a project graded against its own design document.
 
