@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import {
@@ -20,7 +20,6 @@ import { readDeliveryEvents, writeDeliveryArtifact, type DeliveryRunStatus } fro
 import {
   fileOwnership,
   matchesAny,
-  noBcryptWeakHash,
   normalizeDeliveryPathReference,
   planSchemaComplete,
   runDeterministicCheck,
@@ -41,7 +40,6 @@ import {
 import { safePersistDeliveryStateWithMastra } from './observability';
 import { deliveryStructuredOutputOptions } from './models';
 import { parseDeliveryStructuredOutput } from './structured-output';
-import { isBehaviorLikeAcceptanceCriterion } from './acceptance-evidence-policy';
 import {
   deliveryWorkflowInputSchema,
   normalizeDeliveryWorkflowInput,
@@ -56,11 +54,7 @@ import {
   syncReleaseGateStateStep,
   syncReviewStateStep,
 } from './workflow-support/state-sync';
-import {
-  responseText,
-  serializeAgentResponse,
-  writeStageTraceArtifact,
-} from './agent-runtime/trace-artifacts';
+import { serializeAgentResponse, writeStageTraceArtifact } from './agent-runtime/trace-artifacts';
 import { compactDiagnostic } from './agent-runtime/diagnostics';
 import {
   judgeDeliveryArtifact,
@@ -162,6 +156,14 @@ import {
   implementationWeakDimensionRemediation,
   shouldProceedAfterNonActionableImplementationJudgment,
 } from './implementation/judgment-policy';
+import {
+  acceptanceContractsForTask,
+  implementationDeterministicRemediation,
+  implementationDeterministicResults,
+  synthesizeImplementationNote,
+  verificationWithAcceptanceGaps,
+} from './implementation/evidence';
+import { repoFileContents } from './repo-files';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
 import { taskPacketRailsForTask } from './task-packet-rails';
 import {
@@ -194,7 +196,6 @@ import {
   type CheckSummary,
   type DeliveryWorkflowState,
   type DeploymentReport,
-  type ImplementationNote,
   type JudgmentRef,
   type Readout,
   type ReleaseGate,
@@ -203,10 +204,6 @@ import {
   type Task,
   type TaskPlan,
 } from './workflow-schemas';
-import {
-  acceptanceContractsForCriteria,
-  verificationWithAcceptanceContractGaps,
-} from './acceptance-contracts';
 import {
   runHttpProbe,
   type ReleaseGateHttpProbeResult,
@@ -390,6 +387,12 @@ export {
   implementationWeakDimensionRemediation,
   shouldProceedAfterNonActionableImplementationJudgment,
 } from './implementation/judgment-policy';
+export {
+  acceptanceContractsForTask,
+  implementationDeterministicRemediation,
+  implementationDeterministicResults,
+  verificationWithAcceptanceGaps,
+} from './implementation/evidence';
 
 const execFileAsync = promisify(execFile);
 
@@ -492,21 +495,6 @@ const buildRoleForTask = (task: Task) => (task.owner === 'designer' ? 'designer'
 
 const taskStatusSummary = (state: Record<string, 'complete' | 'stuck' | 'blocked'>) =>
   Object.entries(state).map(([id, status]) => `${id}:${status}`);
-
-function repoFileContents(repoPath: string, paths: Array<string | undefined>) {
-  return paths
-    .filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
-    .map((path) => {
-      const normalizedPath = normalizeDeliveryPathReference(path);
-      const fullPath = isAbsolute(normalizedPath) ? normalizedPath : join(resolve(repoPath), normalizedPath);
-      if (!existsSync(fullPath)) return undefined;
-      return {
-        path: normalizedPath,
-        content: readFileSync(fullPath, 'utf8'),
-      };
-    })
-    .filter((file): file is { path: string; content: string } => Boolean(file));
-}
 
 function workerSourceSearchRoots(repoPath: string) {
   const root = resolve(repoPath);
@@ -1566,42 +1554,6 @@ async function collectReleaseGateEvidence({
   };
 }
 
-export function acceptanceContractsForTask({
-  repoPath,
-  task,
-  verification,
-}: {
-  repoPath?: string;
-  task: Task;
-  verification: { performed: string[]; missing: string[] };
-}) {
-  return acceptanceContractsForCriteria({
-    repoPath,
-    task,
-    verification,
-    criteria: taskVerificationAcceptanceContractCriteria(task),
-    contractIdForCriterion: (criterion, index) => acceptanceContractId(task, index, criterion),
-  });
-}
-
-export function verificationWithAcceptanceGaps({
-  repoPath,
-  task,
-  verification,
-}: {
-  repoPath?: string;
-  task: Task;
-  verification: { performed: string[]; missing: string[] };
-}) {
-  return verificationWithAcceptanceContractGaps({
-    repoPath,
-    task,
-    verification,
-    criteria: taskVerificationAcceptanceContractCriteria(task),
-    missingOwnedSurfacePaths: repoPath ? missingOwnedSurfacePaths(repoPath, task) : [],
-  });
-}
-
 function repairUnknownNumberIntegerLine(line: string) {
   return line.replace(/\bNumber\.isInteger\(([_$A-Za-z][_$A-Za-z0-9]*)\)\s*&&/g, (match, identifier, offset) => {
     const prefix = line.slice(0, offset);
@@ -1758,220 +1710,6 @@ async function applyBuildVerificationRepair({
 
 function commandFailureSummary(error: unknown, limit = 1000) {
   return verificationFailureSummaryFromCommandError(error, limit);
-}
-
-function synthesizeImplementationNote({
-  repoPath,
-  stage,
-  task,
-  taskPlan,
-  events,
-  buildResponse,
-  verification,
-}: {
-  repoPath: string;
-  stage: string;
-  task: Task;
-  taskPlan: TaskPlan;
-  events: DeliveryEvent[];
-  buildResponse: unknown;
-  verification: { performed: string[]; missing: string[] };
-}): ImplementationNote {
-  const filesTouched = implementationFilesTouched({ repoPath, stage, task, events });
-  const summary = responseText(buildResponse);
-  const honestVerification = verificationWithAcceptanceGaps({ repoPath, task, verification });
-  const acceptanceContracts = acceptanceContractsForTask({ repoPath, task, verification: honestVerification });
-
-  return {
-    artifact_type: 'implementation-note',
-    task: task.id,
-    changes: [
-      `Implemented ${task.id}: ${task.deliverable}`,
-      ...(summary ? [`Engineer response: ${compactDiagnostic(summary, 500)}`] : []),
-    ],
-    files_touched: filesTouched,
-    acceptance_contracts: acceptanceContracts,
-    assumptions: taskPlan.open_decisions,
-    verification: honestVerification,
-    risks: taskPlan.risks,
-  };
-}
-
-function acceptanceContractGaps(note: ImplementationNote) {
-  const contractGaps = (note.acceptance_contracts ?? [])
-    .filter((contract) => contract.status !== 'verified')
-    .filter((contract) => !isBehaviorLikeAcceptanceCriterion(contract.criterion))
-    .map((contract) => `${contract.id}: ${contract.criterion}${contract.gaps.length ? ` (${contract.gaps.join('; ')})` : ''}`);
-  if (contractGaps.length) return contractGaps;
-
-  return note.verification.missing
-    .filter((item) => /^Acceptance criterion not verified by automated checks:/i.test(item))
-    .map((item) => item.replace(/^Acceptance criterion not verified by automated checks:\s*/i, ''))
-    .filter((criterion) => !isBehaviorLikeAcceptanceCriterion(criterion));
-}
-
-export function implementationDeterministicResults({
-  repoPath,
-  stage,
-  role,
-  task,
-  note,
-  events,
-  verification,
-}: {
-  repoPath: string;
-  stage: string;
-  role: 'engineer' | 'designer';
-  task: Task;
-  note: ImplementationNote;
-  events: DeliveryEvent[];
-  verification: { performed: string[]; missing: string[] };
-}): DeterministicGateResult[] {
-  const files = repoFileContents(repoPath, note.files_touched);
-  const missingSurfaces = missingOwnedSurfacePaths(repoPath, task);
-  const unreplacedStubs = unreplacedPreflightStubPaths(repoPath, task);
-  const workflowIntegrationGaps = workflowStepIntegrationGaps(repoPath, task);
-  const workflowEntrypointGaps = workflowEntrypointImportGaps(repoPath, task);
-  const routeMiddlewareGaps = routeMiddlewareBypassGaps(repoPath, task);
-  const aiBindingGaps = workersAiBindingGaps(repoPath, task);
-  const workerConfigGaps = workerConfigHygieneGaps(repoPath, task);
-  const workerPackageGaps = workerPackageScaffoldGaps(repoPath, task);
-  const lifecycleStatusGaps = lifecycleStatusSchemaGaps(repoPath, task);
-  const profileKindGaps = profileKindContractGaps(repoPath, task);
-  const acceptanceGaps = acceptanceContractGaps(note);
-  const noteOwnership = runDeterministicCheck({
-    name: 'file_ownership',
-    role,
-    paths: note.files_touched,
-  });
-  const eventOwnership = runDeterministicCheck({
-    name: 'write_paths_in_boundary',
-    events,
-    stage,
-    role,
-  });
-  const ownership = noteOwnership.passed ? eventOwnership : noteOwnership;
-  const moduleLoads = runDeterministicCheck({
-    name: 'ran_code_before_complete',
-    events,
-    stage,
-  });
-  const crypto = noBcryptWeakHash(files);
-  const failedVerification = verification.missing.find((item) => /\bfailed:/i.test(item));
-
-  return [
-    { id: 'file_ownership', check: 'write_paths_in_boundary', ...ownership },
-    {
-      id: 'owned_surfaces_present',
-      check: 'owned_surfaces_present',
-      passed: missingSurfaces.length === 0,
-      reason: missingSurfaces.length ? `missing owned surfaces: ${missingSurfaces.join(', ')}` : 'ok',
-    },
-    {
-      id: 'preflight_stubs_replaced',
-      check: 'preflight_stubs_replaced',
-      passed: unreplacedStubs.length === 0,
-      reason: unreplacedStubs.length ? `preflight stubs remain: ${unreplacedStubs.join(', ')}` : 'ok',
-    },
-    {
-      id: 'workflow_step_integrated',
-      check: 'workflow_step_integrated',
-      passed: workflowIntegrationGaps.length === 0,
-      reason: workflowIntegrationGaps.length ? workflowIntegrationGaps.join('; ') : 'ok',
-    },
-    {
-      id: 'workflow_entrypoint_imported',
-      check: 'workflow_entrypoint_imported',
-      passed: workflowEntrypointGaps.length === 0,
-      reason: workflowEntrypointGaps.length ? workflowEntrypointGaps.join('; ') : 'ok',
-    },
-    {
-      id: 'route_middleware_layering',
-      check: 'middleware_layering',
-      passed: routeMiddlewareGaps.length === 0,
-      reason: routeMiddlewareGaps.length ? routeMiddlewareGaps.join('; ') : 'ok',
-    },
-    {
-      id: 'workers_ai_binding_required',
-      check: 'workers_ai_binding_required',
-      passed: aiBindingGaps.length === 0,
-      reason: aiBindingGaps.length ? aiBindingGaps.join('; ') : 'ok',
-    },
-    {
-      id: 'cloudflare_worker_config_current',
-      check: 'worker_config_hygiene',
-      passed: workerConfigGaps.length === 0,
-      reason: workerConfigGaps.length ? workerConfigGaps.join('; ') : 'ok',
-    },
-    {
-      id: 'worker_package_scaffold_current',
-      check: 'worker_package_hygiene',
-      passed: workerPackageGaps.length === 0,
-      reason: workerPackageGaps.length ? workerPackageGaps.join('; ') : 'ok',
-    },
-    {
-      id: 'lifecycle_status_schema_constrained',
-      check: 'state_explicitness',
-      passed: lifecycleStatusGaps.length === 0,
-      reason: lifecycleStatusGaps.length ? lifecycleStatusGaps.join('; ') : 'ok',
-    },
-    {
-      id: 'profile_kind_contract_aligned',
-      check: 'profile_kind_contract',
-      passed: profileKindGaps.length === 0,
-      reason: profileKindGaps.length ? profileKindGaps.join('; ') : 'ok',
-    },
-    {
-      id: 'acceptance_contracts_satisfied',
-      check: 'acceptance_criteria_contracts',
-      passed: acceptanceGaps.length === 0,
-      reason: acceptanceGaps.length ? acceptanceGaps.slice(0, 8).join('; ') : 'ok',
-    },
-    { id: 'module_loads', check: 'ran_code_before_complete', ...moduleLoads },
-    {
-      id: 'verification_passed',
-      check: 'build_verification_passed',
-      passed: verification.performed.length > 0 && !failedVerification,
-      reason: failedVerification ?? (verification.performed.length ? 'ok' : 'no build verification command passed'),
-    },
-    { id: 'crypto_compliance', check: 'no_bcrypt_weak_hash', ...crypto },
-  ];
-}
-
-export function implementationDeterministicRemediation(results: DeterministicGateResult[]) {
-  return results
-    .filter((result) => !result.passed)
-    .filter((result) =>
-      [
-        'file_ownership',
-        'write_paths_in_boundary',
-        'owned_surfaces_present',
-        'preflight_stubs_replaced',
-        'workflow_step_integrated',
-        'workflow_entrypoint_imported',
-        'route_middleware_layering',
-        'middleware_layering',
-        'workers_ai_binding_required',
-        'cloudflare_worker_config_current',
-        'worker_config_hygiene',
-        'worker_package_scaffold_current',
-        'worker_package_hygiene',
-        'lifecycle_status_schema_constrained',
-        'state_explicitness',
-        'profile_kind_contract_aligned',
-        'profile_kind_contract',
-        'acceptance_contracts_satisfied',
-        'acceptance_criteria_contracts',
-        'module_loads',
-        'ran_code_before_complete',
-        'verification_passed',
-        'build_verification_passed',
-      ].includes(String(result.id ?? result.check)),
-    )
-    .map((result) => {
-      const id = String(result.id ?? result.check ?? 'deterministic_check');
-      return `DETERMINISTIC ${id} failed: ${result.reason ?? 'no reason recorded'}`;
-    });
 }
 
 export function releaseGateRequiredEvidencePassed(evidence?: ReleaseGateEvidence): DeterministicGateResult {

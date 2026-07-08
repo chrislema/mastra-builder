@@ -332,6 +332,11 @@ Completed extraction:
 - `implementation/judgment-policy.ts` for actionable implementation judge
   remediation, soft non-actionable completion policy, and implementation
   finding-step synthesis.
+- `implementation/evidence.ts` for implementation note synthesis,
+  acceptance-contract evidence gaps, deterministic implementation gate results,
+  and deterministic remediation text.
+- `repo-files.ts` for shared repo-relative file content reads used by workflow
+  prompts and implementation evidence.
 
 Keep in build-task workflow:
 

@@ -138,6 +138,10 @@ Do not redo these:
   `implementation/reusable-artifacts.ts`
 - Implementation judgment actionability and non-actionable completion policy:
   `implementation/judgment-policy.ts`
+- Implementation note synthesis, acceptance-contract evidence gaps,
+  deterministic implementation results, and remediation text:
+  `implementation/evidence.ts`
+- Shared repository file reading: `repo-files.ts`
 
 ## Cleanup Rules
 
