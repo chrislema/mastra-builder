@@ -4484,7 +4484,7 @@ test('acceptance contracts verify vanilla Worker scaffold static assets and work
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /WeeklyWorkflow export/);
 });
 
-test('acceptance contract gate rejects partial workflow implementations', () => {
+test('behavior acceptance gaps do not trigger deterministic implementation retries', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-workflow-contract-gap-'));
   mkdirSync(join(repoPath, 'src/workflows'), { recursive: true });
   mkdirSync(join(repoPath, 'src'), { recursive: true });
@@ -4551,8 +4551,63 @@ test('acceptance contract gate rejects partial workflow implementations', () => 
   });
 
   const acceptanceGate = results.find((result) => result.id === 'acceptance_contracts_satisfied');
+  assert.equal(contracts[0].status, 'unverified');
+  assert.equal(acceptanceGate?.passed, true);
+  assert.equal(acceptanceGate?.reason, 'ok');
+  assert.doesNotMatch(implementationDeterministicRemediation(results).join('\n'), /acceptance_contracts_satisfied/);
+});
+
+test('structural acceptance gaps remain deterministic implementation blockers', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-structural-contract-blocker-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/domain.js'), 'export const OTHER = true;\n');
+  const [task] = taskPlan([
+    {
+      id: 'T03',
+      depends_on: [],
+      owned_surfaces: ['src/domain.js'],
+      acceptance_criteria: ['src/domain.js exports PROVIDER_IDS constant.'],
+    },
+  ]).tasks;
+  const verification = { performed: ['npm run typecheck passed'], missing: [] };
+  const contracts = acceptanceContractsForTask({ repoPath, task, verification });
+  const note = {
+    artifact_type: 'implementation-note' as const,
+    task: 'T03',
+    changes: ['Implemented part of T03.'],
+    files_touched: ['src/domain.js'],
+    acceptance_contracts: contracts,
+    assumptions: [],
+    verification,
+    risks: [],
+  };
+
+  const results = implementationDeterministicResults({
+    repoPath,
+    stage: 'build:T03',
+    role: 'engineer',
+    task,
+    note,
+    events: [
+      { type: 'stage_start', stage: 'build:T03', role: 'engineer' },
+      {
+        type: 'tool_use',
+        stage: 'build:T03',
+        role: 'engineer',
+        tool: 'mastra_workspace_write_file',
+        ok: true,
+        paths: ['src/domain.js'],
+      },
+      { type: 'run_code', stage: 'build:T03', command: 'npm run typecheck', ok: true },
+      { type: 'stage_end', stage: 'build:T03', reason: 'complete_stage' },
+    ],
+    verification,
+  });
+
+  const acceptanceGate = results.find((result) => result.id === 'acceptance_contracts_satisfied');
+  assert.equal(contracts[0].status, 'unverified');
   assert.equal(acceptanceGate?.passed, false);
-  assert.match(acceptanceGate?.reason ?? '', /WeeklyWorkflow creates or receives a run/);
+  assert.match(acceptanceGate?.reason ?? '', /PROVIDER_IDS/);
   assert.match(implementationDeterministicRemediation(results).join('\n'), /acceptance_contracts_satisfied/);
 });
 

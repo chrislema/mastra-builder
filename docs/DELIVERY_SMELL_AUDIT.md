@@ -42,21 +42,23 @@ tests were available as performed evidence:
 
 ## Current Audit Counts
 
-After stopping generic file evidence from verifying behavior-shaped criteria:
+After stopping generic file evidence from verifying behavior-shaped criteria and
+keeping behavior-only evidence gaps out of deterministic implementation retries:
 
 - Acceptance contracts: 173
 - Structured evidence: 32
 - Command/test evidence: 21
-- Generic file evidence: 25
-- Unverified contracts: 95
-- Behavior-shaped criteria: 75
+- Generic file evidence: 24
+- Unverified contracts: 96
+- Behavior-shaped criteria: 78
 - Behavior criteria verified by generic file evidence: 0
-- Behavior criteria still unverified: 56
+- Behavior criteria still unverified: 58
 - Total audit smells: 120
 
 This is an intentional intermediate state: behavior is no longer falsely marked
-verified by token overlap, but the harness still needs to route that behavior
-proof to generated tests, command evidence, judges, or release gates.
+verified by token overlap and behavior-only proof gaps no longer cause
+deterministic implementation retry loops. The harness still needs to route that
+behavior proof to generated tests, command evidence, judges, or release gates.
 
 Largest clusters:
 
@@ -76,6 +78,8 @@ Largest clusters:
 3. Keep missing executable behavior evidence out of the deterministic
    implementation retry loop; route it toward generated project tests, judges,
    release-gate evidence, or explicit follow-up work.
+   Done in the retry-loop cleanup checkpoint; structural contract gaps still
+   block deterministic retries, behavior-only gaps do not.
 4. Replace the highest-volume behavior criteria with test-task or command
    evidence patterns, starting with API route behavior and frontend state
    behavior.

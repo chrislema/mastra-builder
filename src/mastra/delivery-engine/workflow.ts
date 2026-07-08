@@ -52,6 +52,7 @@ import {
 import { safePersistDeliveryStateWithMastra } from './observability';
 import { deliveryStructuredOutputOptions } from './models';
 import { parseDeliveryStructuredOutput } from './structured-output';
+import { isBehaviorLikeAcceptanceCriterion } from './acceptance-evidence-policy';
 import {
   deliveryWorkflowInputSchema,
   normalizeDeliveryWorkflowInput,
@@ -5164,12 +5165,14 @@ function synthesizeImplementationNote({
 function acceptanceContractGaps(note: ImplementationNote) {
   const contractGaps = (note.acceptance_contracts ?? [])
     .filter((contract) => contract.status !== 'verified')
+    .filter((contract) => !isBehaviorLikeAcceptanceCriterion(contract.criterion))
     .map((contract) => `${contract.id}: ${contract.criterion}${contract.gaps.length ? ` (${contract.gaps.join('; ')})` : ''}`);
   if (contractGaps.length) return contractGaps;
 
   return note.verification.missing
     .filter((item) => /^Acceptance criterion not verified by automated checks:/i.test(item))
-    .map((item) => item.replace(/^Acceptance criterion not verified by automated checks:\s*/i, ''));
+    .map((item) => item.replace(/^Acceptance criterion not verified by automated checks:\s*/i, ''))
+    .filter((criterion) => !isBehaviorLikeAcceptanceCriterion(criterion));
 }
 
 export function implementationDeterministicResults({
