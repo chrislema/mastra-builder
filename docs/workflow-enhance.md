@@ -329,6 +329,9 @@ Completed extraction:
 - `implementation/reusable-artifacts.ts` for prior stopped task detection,
   reusable implementation artifact validation, build resume cursor planning,
   and touched-file inference from implementation-stage events.
+- `implementation/judgment-policy.ts` for actionable implementation judge
+  remediation, soft non-actionable completion policy, and implementation
+  finding-step synthesis.
 
 Keep in build-task workflow:
 

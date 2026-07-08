@@ -136,6 +136,8 @@ Do not redo these:
 - Reusable implementation artifacts, build resume cursor policy, prior stopped
   task detection, and touched-file inference:
   `implementation/reusable-artifacts.ts`
+- Implementation judgment actionability and non-actionable completion policy:
+  `implementation/judgment-policy.ts`
 
 ## Cleanup Rules
 
