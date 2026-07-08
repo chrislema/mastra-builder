@@ -7,6 +7,7 @@ import {
   acceptanceContractsForTask,
   buildTimeoutRemediation,
   buildVerificationCommandPlan,
+  buildVerificationCommandPlans,
   canSalvageTimedOutBuildAttempt,
   createMissingOwnedSurfaceStubs,
   deliveryBuildResumePlan,
@@ -1526,6 +1527,51 @@ test('task plan normalization does not inject workflow or auth contracts into st
   assert.doesNotMatch(criteria, /ADMIN_TOKEN|SESSION_SECRET|signed session|auth\/session/);
   assert.doesNotMatch(criteria, /Run lifecycle contract defines|completed_empty\/no-transcript|latest transcript|Transcript regeneration|D1 state/);
   assert.match(byId.T02.acceptance_criteria.join('\n'), /do not define persisted run lifecycle states/);
+});
+
+test('task plan normalization moves provider failure behavior criteria to a smoke-test task', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'tsconfig.json', 'src/index.ts'],
+      acceptance_criteria: ['Root Worker scaffold exists.'],
+    },
+    {
+      id: 'T04',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/providers.ts'],
+      acceptance_criteria: [
+        'src/providers.ts exports a dispatcher that accepts env, model metadata, and prompt input and returns normalized text plus optional inputTokens and outputTokens.',
+        'Provider adapters only receive models that have passed configured-state validation; missing keyed secrets are handled before adapter dispatch.',
+        'Provider adapter failures are converted to normalized provider_error or timeout_or_network_error values with client-safe messages defined by src/contracts.ts.',
+        'Raw upstream response body snippets are bounded, stripped of obvious secret-bearing fields, and not displayed directly to the frontend as unredacted exception text.',
+        'Workers AI adapter returns a normalized missing_binding error if env.AI is missing despite route validation.',
+      ],
+    },
+    {
+      id: 'T05',
+      depends_on: ['T04'],
+      owned_surfaces: ['src/run.ts'],
+      acceptance_criteria: ['src/run.ts calls the provider dispatcher.'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const providerTask = byId.T04;
+  const testTask = byId['T04-provider-behavior-tests'];
+
+  assert.ok(testTask);
+  assert.equal(testTask.owner, 'engineer');
+  assert.deepEqual(testTask.depends_on, ['T04']);
+  assert.deepEqual(testTask.owned_surfaces, ['test/provider-adapters.test.ts']);
+  assert.doesNotMatch(providerTask.acceptance_criteria.join('\n'), /provider_error|timeout_or_network_error|missing_binding/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /provider_error/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /timeout_or_network_error/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /missing_binding/);
+  assert.ok(byId.T05.depends_on.includes('T04-provider-behavior-tests'));
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
 test('task plan repair preservation does not carry generated route policy into stateless api-run plans', () => {
@@ -3995,6 +4041,39 @@ test('provider adapter contract accepts split normalized errors module', () => {
   assert.equal(contracts.every((contract) => contract.status === 'verified'), true);
 });
 
+test('provider failure contracts use provider-focused test evidence instead of generic test success', () => {
+  const [task] = taskPlan([
+    {
+      id: 'T04-provider-behavior-tests',
+      owner: 'engineer',
+      depends_on: ['T04'],
+      owned_surfaces: ['test/provider-adapters.test.ts'],
+      acceptance_criteria: [
+        'Provider adapter failures are converted to normalized provider_error or timeout_or_network_error values with client-safe messages defined by src/contracts.ts.',
+      ],
+    },
+  ]).tasks;
+
+  const genericTestContracts = acceptanceContractsForTask({
+    task,
+    verification: { performed: ['npm run test passed: validation rejects empty model lists'], missing: [] },
+  });
+  assert.equal(genericTestContracts[0].status, 'unverified');
+
+  const providerTestContracts = acceptanceContractsForTask({
+    task,
+    verification: {
+      performed: [
+        'npm run test passed: test/provider-adapters.test.ts > provider adapter failures normalize to provider_error and timeout_or_network_error client-safe RunResult values',
+      ],
+      missing: [],
+    },
+  });
+
+  assert.equal(providerTestContracts[0].status, 'verified');
+  assert.match(providerTestContracts[0].evidence.join('\n'), /provider behavior test evidence/);
+});
+
 test('provider adapter contract rejects hard-coded provider secret env reads', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-provider-adapter-hardcoded-secret-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
@@ -4994,6 +5073,45 @@ test('release gate evidence planner runs the available package verification matr
       { tier: 'smoke', command: 'npm run build', required: true },
     ],
   );
+});
+
+test('build verification plans typecheck plus behavior tests without build scripts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-build-verification-matrix-'));
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          typecheck: 'tsc --noEmit',
+          test: 'vitest run',
+          build: 'wrangler deploy --dry-run',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(buildVerificationCommandPlans(repoPath), [
+    {
+      command: 'npm run typecheck',
+      executable: 'npm',
+      args: ['run', 'typecheck'],
+      timeoutMs: 120_000,
+    },
+    {
+      command: 'npm run test',
+      executable: 'npm',
+      args: ['run', 'test'],
+      timeoutMs: 120_000,
+    },
+  ]);
+  assert.deepEqual(buildVerificationCommandPlan(repoPath), {
+    command: 'npm run typecheck',
+    executable: 'npm',
+    args: ['run', 'typecheck'],
+    timeoutMs: 120_000,
+  });
 });
 
 test('build verification falls back to Wrangler dry run for vanilla JS Workers', () => {

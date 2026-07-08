@@ -1244,6 +1244,12 @@ function acceptanceCriterionTokens(criterion: string) {
   );
 }
 
+function providerAdapterBehaviorCriterion(criterion: string) {
+  return /\b(?:configured-state validation|missing keyed secrets?|provider adapter failures?|provider_error|timeout_or_network_error|client-safe messages?|raw upstream response body snippets?|missing_binding|client-safe RunResult|unrelated model runs)\b/i.test(
+    criterion,
+  );
+}
+
 function repoFileContents(repoPath: string, paths: Array<string | undefined>) {
   return paths
     .filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
@@ -1268,6 +1274,15 @@ function acceptanceCriterionCommandEvidence(criterion: string, performed: string
   const text = criterion.toLowerCase();
   const evidence = performed.join('\n').toLowerCase();
 
+  if (
+    providerAdapterBehaviorCriterion(criterion) &&
+    /\bnpm run test passed\b|\bvitest\b/.test(evidence) &&
+    /\b(provider adapters?|provider_error|timeout_or_network_error|missing keyed secrets?|missing workers ai binding|execute model|client-safe)\b/.test(
+      evidence,
+    )
+  ) {
+    return 'provider behavior test evidence covered provider adapter failure and client-safe error criteria';
+  }
   if (/\b(typecheck|tsc|typescript)\b/.test(text) && /\b(typecheck|tsc)\b/.test(evidence)) {
     return 'verification command covered TypeScript/typecheck criterion';
   }

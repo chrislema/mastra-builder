@@ -126,6 +126,7 @@ import {
 } from './release-gate-command-plan';
 import {
   buildVerificationCommandPlan as buildVerificationCommandPlanBase,
+  buildVerificationCommandPlans as buildVerificationCommandPlansBase,
   deploymentReportSuccessNextSteps as deploymentReportSuccessNextStepsBase,
   localDeploymentReportFromReleaseGateEvidence as localDeploymentReportFromReleaseGateEvidenceBase,
   packageVerificationScripts,
@@ -1366,6 +1367,32 @@ function taskOwnsContractSurface(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:contracts|validation)\.[cm]?[jt]s$/i);
 }
 
+function taskOwnsProviderAdapterSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/providers\.[cm]?[jt]s$/i);
+}
+
+function providerAdapterSurfaceExtension(task: Task) {
+  const providerSurface = taskOwnedBoundaryPaths(task).find((path) => /^src\/providers\.[cm]?[jt]s$/i.test(path));
+  return providerSurface && /\.(?:ts|mts|cts)$/.test(providerSurface) ? 'ts' : 'js';
+}
+
+function providerAdapterBehaviorCriterion(criterion: string) {
+  return /\b(?:configured-state validation|missing keyed secrets?|provider adapter failures?|provider_error|timeout_or_network_error|client-safe messages?|raw upstream response body snippets?|missing_binding|client-safe RunResult|unrelated model runs)\b/i.test(
+    criterion,
+  );
+}
+
+function taskLooksLikeProviderAdapterBehaviorTest(task: Task, providerTaskId: string) {
+  return (
+    task.owner === 'engineer' &&
+    task.depends_on.includes(providerTaskId) &&
+    taskOwnedBoundaryPaths(task).some((path) => /^test\/.*provider.*\.test\.[cm]?[jt]s$/i.test(path)) &&
+    /\bprovider adapters?\b|\bsrc\/providers\.[cm]?[jt]s\b|\bprovider_error\b|\btimeout_or_network_error\b/i.test(
+      [task.deliverable, ...task.acceptance_criteria, ...task.owned_surfaces].join('\n'),
+    )
+  );
+}
+
 function taskOwnsAiValidationSurface(task: Task) {
   return taskOwnsPathMatching(task, /^src\/(?:aiJson|jsonOutput|aiValidation|aiSchemas?|schemas?)\.[cm]?[jt]s$/i);
 }
@@ -2413,6 +2440,78 @@ function taskWorkflowImplementationSurface(task: Task) {
   );
 }
 
+function uniqueTaskIdFromTasks(tasks: Task[], baseId: string) {
+  const existingIds = new Set(tasks.map((task) => task.id));
+  if (!existingIds.has(baseId)) return baseId;
+
+  let suffix = 2;
+  while (existingIds.has(`${baseId}-${suffix}`)) suffix += 1;
+  return `${baseId}-${suffix}`;
+}
+
+function providerAdapterBehaviorTestTask(providerTask: Task, testId: string, criteria: string[]): Task {
+  const extension = providerAdapterSurfaceExtension(providerTask);
+  const testSurface = `test/provider-adapters.test.${extension}`;
+  return {
+    id: testId,
+    owner: 'engineer',
+    deliverable:
+      'Add provider adapter behavior tests that prove failure normalization, secret handling, and Workers AI binding failures with fake provider environments.',
+    depends_on: [providerTask.id],
+    acceptance_criteria: Array.from(
+      new Set([
+        `${testSurface} uses fake Workers AI/fetch/provider inputs and does not call real provider APIs.`,
+        `${testSurface} proves provider adapter failures normalize to provider_error and timeout_or_network_error RunResult values with client-safe messages from src/contracts.ts.`,
+        `${testSurface} proves missing keyed secrets and missing Workers AI binding fail closed before external provider calls.`,
+        'npm test passes and includes provider adapter behavior coverage.',
+        ...criteria,
+      ]),
+    ),
+    owned_surfaces: [testSurface],
+  };
+}
+
+function withProviderAdapterBehaviorTestTasks(tasks: Task[]) {
+  let changed = false;
+  let next = [...tasks];
+
+  for (const providerTask of tasks) {
+    if (!taskOwnsProviderAdapterSurface(providerTask)) continue;
+    const behaviorCriteria = providerTask.acceptance_criteria.filter(providerAdapterBehaviorCriterion);
+    if (!behaviorCriteria.length) continue;
+
+    const existingTestTask = next.find((task) => taskLooksLikeProviderAdapterBehaviorTest(task, providerTask.id));
+    const testId = existingTestTask?.id ?? uniqueTaskIdFromTasks(next, `${providerTask.id}-provider-behavior-tests`);
+
+    if (!existingTestTask) {
+      const providerIndex = next.findIndex((task) => task.id === providerTask.id);
+      const insertionIndex = providerIndex < 0 ? next.length : providerIndex + 1;
+      next = [
+        ...next.slice(0, insertionIndex),
+        providerAdapterBehaviorTestTask(providerTask, testId, behaviorCriteria),
+        ...next.slice(insertionIndex),
+      ];
+      changed = true;
+    }
+
+    next = next.map((task) => {
+      if (task.id === providerTask.id) {
+        const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !providerAdapterBehaviorCriterion(criterion));
+        if (acceptance_criteria.length === task.acceptance_criteria.length) return task;
+        changed = true;
+        return { ...task, acceptance_criteria };
+      }
+
+      if (task.id === testId || !task.depends_on.includes(providerTask.id) || task.depends_on.includes(testId)) return task;
+      if (!taskCanDependOnTaskList(next, task.id, testId)) return task;
+      changed = true;
+      return appendDependencies(task, [testId]);
+    });
+  }
+
+  return { tasks: next, changed };
+}
+
 function sourceContractCriteriaForTask(
   task: Task,
   context: {
@@ -2612,6 +2711,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, s
       changed = true;
       tasks = withEntrypoint.tasks;
     }
+  }
+
+  const withProviderBehaviorTests = withProviderAdapterBehaviorTestTasks(tasks);
+  if (withProviderBehaviorTests.changed) {
+    changed = true;
+    tasks = withProviderBehaviorTests.tasks;
   }
 
   const withDependencies = withCloudflareWorkerDependencyContracts(tasks);
@@ -4155,6 +4260,10 @@ export function buildVerificationCommandPlan(repoPath: string) {
   return buildVerificationCommandPlanBase(repoPath);
 }
 
+export function buildVerificationCommandPlans(repoPath: string) {
+  return buildVerificationCommandPlansBase(repoPath);
+}
+
 async function ensureNodeDependencies({
   repoPath,
   mastra,
@@ -4272,8 +4381,8 @@ async function runBuildVerification({
   taskIndex?: number;
   allowRepair?: boolean;
 }) {
-  const verificationCommand = buildVerificationCommandPlan(repoPath);
-  if (!verificationCommand) {
+  const verificationCommands = buildVerificationCommandPlans(repoPath);
+  if (!verificationCommands.length) {
     return {
       performed: [] as string[],
       missing: ['No package verification script or Wrangler config found for this build task.'],
@@ -4282,61 +4391,67 @@ async function runBuildVerification({
 
   await ensureNodeDependencies({ repoPath, mastra, stage });
 
-  const command = verificationCommand.command;
-  await recordRunCodeStart({ repoPath, mastra, stage, command, timeoutMs: verificationCommand.timeoutMs });
-  try {
-    const result = await execFileAsync(verificationCommand.executable, verificationCommand.args, {
-      cwd: resolve(repoPath),
-      timeout: verificationCommand.timeoutMs,
-      maxBuffer: 1_000_000,
-      env: process.env,
-    });
-    await appendDeliveryEventState({
-      repoPath,
-      mastra,
-      event: {
-        type: 'run_code',
-        stage,
-        command,
-        ok: true,
-        output_summary: compactDiagnostic(`${result.stdout}\n${result.stderr}`, 500),
-      },
-    });
-    return {
-      performed: [`${command} passed`],
-      missing: [] as string[],
-    };
-  } catch (error) {
-    const failure = commandFailureSummary(error, 1000);
-    await appendDeliveryEventState({
-      repoPath,
-      mastra,
-      event: {
-        type: 'run_code',
-        stage,
-        command,
-        ok: false,
-        error: failure,
-      },
-    });
+  const performed: string[] = [];
+  for (const verificationCommand of verificationCommands) {
+    const command = verificationCommand.command;
+    await recordRunCodeStart({ repoPath, mastra, stage, command, timeoutMs: verificationCommand.timeoutMs });
+    try {
+      const result = await execFileAsync(verificationCommand.executable, verificationCommand.args, {
+        cwd: resolve(repoPath),
+        timeout: verificationCommand.timeoutMs,
+        maxBuffer: 1_000_000,
+        env: process.env,
+      });
+      const outputSummary = compactDiagnostic(`${result.stdout}\n${result.stderr}`, 500);
+      await appendDeliveryEventState({
+        repoPath,
+        mastra,
+        event: {
+          type: 'run_code',
+          stage,
+          command,
+          ok: true,
+          output_summary: outputSummary,
+        },
+      });
+      performed.push(outputSummary ? `${command} passed: ${outputSummary}` : `${command} passed`);
+    } catch (error) {
+      const failure = commandFailureSummary(error, 1000);
+      await appendDeliveryEventState({
+        repoPath,
+        mastra,
+        event: {
+          type: 'run_code',
+          stage,
+          command,
+          ok: false,
+          error: failure,
+        },
+      });
 
-    if (allowRepair && (await applyBuildVerificationRepair({ repoPath, mastra, stage, taskPlan, taskIndex, failure }))) {
-      return runBuildVerification({ repoPath, mastra, stage, taskPlan, taskIndex, allowRepair: false });
-    }
+      if (allowRepair && (await applyBuildVerificationRepair({ repoPath, mastra, stage, taskPlan, taskIndex, failure }))) {
+        return runBuildVerification({ repoPath, mastra, stage, taskPlan, taskIndex, allowRepair: false });
+      }
 
-    const staleWorkspaceFailure = staleWorkspaceVerificationRemediation({ repoPath, taskPlan, failure });
-    if (staleWorkspaceFailure) {
+      const staleWorkspaceFailure = staleWorkspaceVerificationRemediation({ repoPath, taskPlan, failure });
+      if (staleWorkspaceFailure) {
+        return {
+          performed,
+          missing: [`${command} failed: ${staleWorkspaceFailure}`],
+        };
+      }
+
       return {
-        performed: [] as string[],
-        missing: [`${command} failed: ${staleWorkspaceFailure}`],
+        performed,
+        missing: [`${command} failed: ${commandFailureSummary(error, 600)}`],
       };
     }
-
-    return {
-      performed: [] as string[],
-      missing: [`${command} failed: ${commandFailureSummary(error, 600)}`],
-    };
   }
+
+  return {
+    performed,
+    missing: [] as string[],
+  };
 }
 
 const releaseGateLocalAdminToken = 'release-gate-local-admin-token';

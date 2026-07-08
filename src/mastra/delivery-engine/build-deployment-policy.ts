@@ -31,24 +31,49 @@ function buildVerificationScript(repoPath: string) {
   return packageVerificationScripts(repoPath)[0];
 }
 
-export function buildVerificationCommandPlan(repoPath: string) {
+export interface BuildVerificationCommandPlan {
+  command: string;
+  executable: string;
+  args: string[];
+  timeoutMs: number;
+}
+
+function npmScriptCommandPlan(script: string): BuildVerificationCommandPlan {
+  return {
+    command: `npm run ${script}`,
+    executable: 'npm',
+    args: ['run', script],
+    timeoutMs: 120_000,
+  };
+}
+
+export function buildVerificationCommandPlans(repoPath: string): BuildVerificationCommandPlan[] {
+  const scripts = packageVerificationScripts(repoPath);
+  const plans: BuildVerificationCommandPlan[] = [];
+  const primaryScript = scripts.includes('typecheck') ? 'typecheck' : scripts.includes('check') ? 'check' : undefined;
+
+  if (primaryScript) plans.push(npmScriptCommandPlan(primaryScript));
+  if (scripts.includes('test')) plans.push(npmScriptCommandPlan('test'));
+  if (!plans.length && scripts.includes('build')) plans.push(npmScriptCommandPlan('build'));
+
+  if (plans.length) return plans;
+
   const script = buildVerificationScript(repoPath);
-  if (script) {
-    return {
-      command: `npm run ${script}`,
-      executable: 'npm',
-      args: ['run', script],
-      timeoutMs: 120_000,
-    };
-  }
+  if (script) return [npmScriptCommandPlan(script)];
 
   const dryRunCommand = releaseGateWorkerDeployDryRunCommand(repoPath);
-  if (!dryRunCommand) return undefined;
+  if (!dryRunCommand) return [];
 
-  return {
-    ...dryRunCommand,
-    timeoutMs: 180_000,
-  };
+  return [
+    {
+      ...dryRunCommand,
+      timeoutMs: 180_000,
+    },
+  ];
+}
+
+export function buildVerificationCommandPlan(repoPath: string) {
+  return buildVerificationCommandPlans(repoPath)[0];
 }
 
 function releaseGateEvidenceVerification(evidence?: ReleaseGateEvidence) {
