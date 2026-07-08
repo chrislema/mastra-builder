@@ -15,6 +15,7 @@ import {
   getDeliveryMastraStorageUrl,
 } from './config';
 import { deliveryStartWorkflow } from './delivery-engine/launcher-workflow';
+import { deliveryScaffoldWorkflow } from './delivery-engine/scaffold-workflow';
 import {
   deliveryBuildTaskWorkflow,
   deliveryBuildWorkflow,
@@ -50,6 +51,7 @@ export const mastra = new Mastra({
     deliveryStartWorkflow,
     deliveryWorkflow,
     deliveryPlanningWorkflow,
+    deliveryScaffoldWorkflow,
     deliveryReviewWorkflow,
     deliveryBuildWorkflow,
     deliveryBuildTaskWorkflow,

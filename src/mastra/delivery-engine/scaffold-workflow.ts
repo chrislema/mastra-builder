@@ -1,0 +1,120 @@
+import { basename, resolve } from 'node:path';
+import { createStep, createWorkflow } from '@mastra/core/workflows';
+import { z } from 'zod';
+import { projectFactorySourcePolicySchema } from './project-factory/schemas';
+import { materializeProjectScaffold, normalizeProjectName, renderProjectScaffold } from './project-factory';
+import { sourceDocumentsFromRepo, sourcePolicyFromDocuments } from './source-policy';
+import type { MastraLike } from './observability';
+import { writeDeliveryArtifact } from './state';
+import {
+  appendDeliveryEventState,
+  endDeliveryStageState,
+  recordDeliveryArtifactState,
+  startDeliveryStageState,
+} from './state-service';
+
+export const deliveryScaffoldInputSchema = z.object({
+  repoPath: z.string().min(1),
+  runId: z.string().optional(),
+  projectName: z.string().min(1).optional(),
+  sourcePolicy: projectFactorySourcePolicySchema.optional(),
+});
+
+export const deliveryScaffoldOutputSchema = z.object({
+  repoPath: z.string(),
+  runId: z.string().optional(),
+  manifestPath: z.string(),
+  profileList: z.array(z.string()),
+  generatedFiles: z.array(z.string()),
+  bindingMap: z.record(z.string(), z.string()),
+  validationCommands: z.array(z.string()),
+});
+
+export type DeliveryScaffoldInput = z.input<typeof deliveryScaffoldInputSchema>;
+export type DeliveryScaffoldOutput = z.output<typeof deliveryScaffoldOutputSchema>;
+
+export async function executeDeliveryScaffold(input: DeliveryScaffoldInput, mastra?: MastraLike): Promise<DeliveryScaffoldOutput> {
+  const parsed = deliveryScaffoldInputSchema.parse(input);
+  const repoPath = resolve(parsed.repoPath);
+  const sourceDocuments = sourceDocumentsFromRepo(repoPath);
+  const sourcePolicy = parsed.sourcePolicy ?? sourcePolicyFromDocuments(sourceDocuments);
+  const scaffold = renderProjectScaffold({
+    projectName: parsed.projectName ?? normalizeProjectName(basename(repoPath)),
+    sourceDocuments,
+    sourcePolicy,
+  });
+
+  await startDeliveryStageState({
+    repoPath,
+    mastra,
+    stage: 'scaffold',
+    role: 'engineer',
+    surfaces: scaffold.manifest.generatedFiles,
+  });
+
+  materializeProjectScaffold(repoPath, scaffold);
+
+  const manifestPath = '.delivery/artifacts/scaffold-manifest.json';
+  writeDeliveryArtifact({
+    repoPath,
+    artifactPath: manifestPath,
+    artifact: scaffold.manifest,
+  });
+  await recordDeliveryArtifactState({
+    repoPath,
+    mastra,
+    type: 'scaffold-manifest',
+    path: manifestPath,
+  });
+  await appendDeliveryEventState({
+    repoPath,
+    mastra,
+    event: {
+      type: 'scaffold_generated',
+      stage: 'scaffold',
+      profiles: scaffold.manifest.profileList,
+      generated_files: scaffold.manifest.generatedFiles,
+      validation_commands: scaffold.manifest.validationCommands,
+    },
+  });
+  await endDeliveryStageState({
+    repoPath,
+    mastra,
+    stage: 'scaffold',
+    reason: 'complete_stage',
+  });
+
+  return deliveryScaffoldOutputSchema.parse({
+    repoPath,
+    runId: parsed.runId,
+    manifestPath,
+    profileList: scaffold.manifest.profileList,
+    generatedFiles: scaffold.manifest.generatedFiles,
+    bindingMap: scaffold.manifest.bindingMap,
+    validationCommands: scaffold.manifest.validationCommands,
+  });
+}
+
+const createScaffoldManifestStep = createStep({
+  id: 'create-scaffold-manifest',
+  description: 'Generate deterministic Cloudflare Worker scaffold files and record the scaffold manifest artifact.',
+  inputSchema: deliveryScaffoldInputSchema,
+  outputSchema: deliveryScaffoldOutputSchema,
+  execute: async ({ inputData, mastra }) => executeDeliveryScaffold(inputData, mastra as MastraLike),
+});
+
+export const deliveryScaffoldWorkflow = createWorkflow({
+  id: 'delivery-scaffold',
+  description: 'Deterministically scaffold a Cloudflare Worker project before implementation agents run.',
+  inputSchema: deliveryScaffoldInputSchema,
+  outputSchema: deliveryScaffoldOutputSchema,
+  options: {
+    // Imported lazily to avoid a circular reference in tests that import this standalone workflow.
+    onError: async (errorInfo) => {
+      const { markDeliveryRunFailedOnWorkflowError } = await import('./workflow');
+      await markDeliveryRunFailedOnWorkflowError(errorInfo);
+    },
+  },
+})
+  .then(createScaffoldManifestStep)
+  .commit();

@@ -11,6 +11,7 @@ import {
   deliveryWorkflow,
   markDeliveryRunFailedOnWorkflowError,
 } from '../../src/mastra/delivery-engine/workflow.ts';
+import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaffold-workflow.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
 
@@ -19,6 +20,7 @@ test('delivery workflow is split into native stage workflows', () => {
     [
       deliveryWorkflow.id,
       deliveryPlanningWorkflow.id,
+      deliveryScaffoldWorkflow.id,
       deliveryReviewWorkflow.id,
       deliveryBuildWorkflow.id,
       deliveryBuildTaskWorkflow.id,
@@ -28,6 +30,7 @@ test('delivery workflow is split into native stage workflows', () => {
     [
       'delivery-workflow',
       'delivery-planning',
+      'delivery-scaffold',
       'delivery-review',
       'delivery-build',
       'delivery-build-task',
@@ -62,4 +65,5 @@ test('delivery stage workflows close delivery state on workflow errors', () => {
   ]) {
     assert.equal(workflow.options.onError, markDeliveryRunFailedOnWorkflowError, `${workflow.id} missing onError cleanup`);
   }
+  assert.equal(typeof deliveryScaffoldWorkflow.options.onError, 'function', 'delivery-scaffold missing onError cleanup');
 });
