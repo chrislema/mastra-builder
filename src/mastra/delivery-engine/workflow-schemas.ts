@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { scaffoldManifestSchema } from './project-factory/schemas';
 import { deliveryWorkflowNormalizedInputSchema } from './run-input';
 
 export const taskSchema = z.object({
@@ -233,6 +234,8 @@ export const deliveryWorkflowStateSchema = z.object({
   questions: z.array(z.string()).default([]),
   nextSteps: z.array(z.string()).default([]),
   sourcePolicy: sourcePolicySchema.optional(),
+  scaffoldManifest: scaffoldManifestSchema.optional(),
+  scaffoldManifestPath: z.string().optional(),
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
   deploymentReport: deploymentReportSchema.optional(),
@@ -245,6 +248,8 @@ export const deliveryStageOutputSchema = workflowOutputSchema.extend({
   deployMode: z.enum(['local', 'production']),
   reviewMode: z.enum(['fast', 'thorough']).default('thorough'),
   sourcePolicy: sourcePolicySchema.optional(),
+  scaffoldManifest: scaffoldManifestSchema.optional(),
+  scaffoldManifestPath: z.string().optional(),
   taskPlan: taskPlanSchema.optional(),
   releaseGate: releaseGateSchema.optional(),
 });

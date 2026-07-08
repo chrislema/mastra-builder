@@ -1,7 +1,7 @@
 import { basename, resolve } from 'node:path';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
-import { projectFactorySourcePolicySchema } from './project-factory/schemas';
+import { projectFactorySourcePolicySchema, scaffoldManifestSchema } from './project-factory/schemas';
 import { materializeProjectScaffold, normalizeProjectName, renderProjectScaffold } from './project-factory';
 import { sourceDocumentsFromRepo, sourcePolicyFromDocuments } from './source-policy';
 import type { MastraLike } from './observability';
@@ -24,6 +24,7 @@ export const deliveryScaffoldOutputSchema = z.object({
   repoPath: z.string(),
   runId: z.string().optional(),
   manifestPath: z.string(),
+  scaffoldManifest: scaffoldManifestSchema,
   profileList: z.array(z.string()),
   generatedFiles: z.array(z.string()),
   bindingMap: z.record(z.string(), z.string()),
@@ -88,6 +89,7 @@ export async function executeDeliveryScaffold(input: DeliveryScaffoldInput, mast
     repoPath,
     runId: parsed.runId,
     manifestPath,
+    scaffoldManifest: scaffold.manifest,
     profileList: scaffold.manifest.profileList,
     generatedFiles: scaffold.manifest.generatedFiles,
     bindingMap: scaffold.manifest.bindingMap,

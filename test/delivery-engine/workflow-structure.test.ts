@@ -40,6 +40,14 @@ test('delivery workflow is split into native stage workflows', () => {
   );
 });
 
+test('delivery workflow scaffolds deterministically between planning and review', () => {
+  const source = workflowSource();
+  assert.match(source, /\.then\(deliveryPlanningWorkflow\)\s+\.then\(createScaffoldArtifactsStep\)\s+\.then\(deliveryReviewWorkflow\)/);
+  assert.match(source, /id: 'create-scaffold-artifacts'/);
+  assert.match(source, /executeDeliveryScaffold/);
+  assert.match(source, /scaffold_manifest: scaffoldManifestPromptSummary/);
+});
+
 test('workflow agent calls use run-scoped Mastra memory', () => {
   const source = workflowSource();
   const requestContextCount = source.match(/requestContext: createDeliveryRequestContext/g)?.length ?? 0;

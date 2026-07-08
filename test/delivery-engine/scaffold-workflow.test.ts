@@ -31,6 +31,8 @@ test('delivery scaffold workflow writes deterministic Worker scaffold and record
   assert.ok(output.profileList.includes('worker-d1'));
   assert.ok(output.generatedFiles.includes('wrangler.jsonc'));
   assert.ok(output.generatedFiles.includes('test/contracts.test.ts'));
+  assert.equal(output.scaffoldManifest.main, 'src/index.ts');
+  assert.deepEqual(output.scaffoldManifest.validationCommands, ['npm run typecheck', 'npm test']);
 
   assert.equal(existsSync(join(repoPath, 'package.json')), true);
   assert.equal(existsSync(join(repoPath, 'wrangler.jsonc')), true);

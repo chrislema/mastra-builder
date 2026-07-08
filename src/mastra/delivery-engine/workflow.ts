@@ -201,6 +201,7 @@ import {
   sourcePolicyFromDocuments,
   sourcePolicyFromRepo,
 } from './source-policy';
+import { executeDeliveryScaffold } from './scaffold-workflow';
 import {
   architectBouncePlannerRevisionPrompt,
   initialPlannerPrompt,
@@ -407,11 +408,34 @@ const normalizeDeliveryWorkflowState = (state?: Partial<DeliveryWorkflowState>):
   questions: state?.questions ?? [],
   nextSteps: state?.nextSteps ?? [],
   sourcePolicy: state?.sourcePolicy,
+  scaffoldManifest: state?.scaffoldManifest,
+  scaffoldManifestPath: state?.scaffoldManifestPath,
   taskPlan: state?.taskPlan,
   releaseGate: state?.releaseGate,
   deploymentReport: state?.deploymentReport,
   deploymentReportPath: state?.deploymentReportPath,
 });
+
+function scaffoldStageFields(input: Partial<DeliveryWorkflowState>) {
+  return {
+    ...(input.scaffoldManifest ? { scaffoldManifest: input.scaffoldManifest } : {}),
+    ...(input.scaffoldManifestPath ? { scaffoldManifestPath: input.scaffoldManifestPath } : {}),
+  };
+}
+
+function scaffoldManifestPromptSummary(manifest: DeliveryWorkflowState['scaffoldManifest'] | undefined) {
+  if (!manifest) return null;
+  return {
+    profiles: manifest.profileList,
+    language: manifest.language,
+    main: manifest.main,
+    generated_files: manifest.generatedFiles,
+    binding_map: manifest.bindingMap,
+    package_scripts: manifest.packageScripts,
+    validation_commands: manifest.validationCommands,
+    test_runtime_matrix: manifest.testRuntimeMatrix,
+  };
+}
 
 async function syncDeliveryWorkflowState({
   state,
@@ -448,6 +472,8 @@ async function syncDeliveryWorkflowState({
     questions: output.questions ?? current.questions,
     nextSteps: output.nextSteps ?? current.nextSteps,
     sourcePolicy: output.sourcePolicy ?? current.sourcePolicy,
+    scaffoldManifest: output.scaffoldManifest ?? current.scaffoldManifest,
+    scaffoldManifestPath: output.scaffoldManifestPath ?? current.scaffoldManifestPath,
     taskPlan: output.taskPlan ?? current.taskPlan,
     releaseGate: output.releaseGate ?? current.releaseGate,
     deploymentReport: output.deploymentReport ?? current.deploymentReport,
@@ -7303,6 +7329,42 @@ export const deliveryPlanningWorkflow = createWorkflow({
   .then(syncPlanStateStep)
   .commit();
 
+const createScaffoldArtifactsStep = createStep({
+  id: 'create-scaffold-artifacts',
+  description: 'Generate deterministic Cloudflare Worker scaffold artifacts after planning and before agent implementation.',
+  inputSchema: planStageOutputSchema,
+  outputSchema: planStageOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
+  execute: async ({ inputData, mastra, state, setState }) => {
+    if (inputData.status !== 'planned') return inputData;
+
+    const scaffold = await executeDeliveryScaffold(
+      {
+        repoPath: inputData.repoPath,
+        runId: inputData.runId,
+        sourcePolicy: inputData.sourcePolicy,
+      },
+      mastra,
+    );
+    const artifacts = [...new Set([...inputData.artifacts, scaffold.manifestPath])];
+    const nextSteps = [
+      `Scaffold manifest generated at ${scaffold.manifestPath}.`,
+      ...inputData.nextSteps.filter((step) => !/scaffold manifest generated/i.test(step)),
+    ];
+    const output = {
+      ...inputData,
+      artifacts,
+      scaffoldManifest: scaffold.scaffoldManifest,
+      scaffoldManifestPath: scaffold.manifestPath,
+      nextSteps,
+    };
+
+    await syncDeliveryWorkflowState({ state, setState, output });
+    await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
+    return output;
+  },
+});
+
 const prepareReviewLoopStep = createStep({
   id: 'prepare-review-loop',
   description: 'Prepare architect review retry state for the native workflow loop.',
@@ -7316,6 +7378,7 @@ const prepareReviewLoopStep = createStep({
       reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
+      ...scaffoldStageFields(inputData),
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -7356,6 +7419,7 @@ const prepareReviewLoopStep = createStep({
       reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
+      ...scaffoldStageFields(inputData),
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -7395,6 +7459,7 @@ const executeReviewAttemptStep = createStep({
       reviewMode: inputData.reviewMode,
       taskPlan,
       releaseGate: inputData.releaseGate,
+      ...scaffoldStageFields(inputData),
     });
 
     const suffix = attempt === 0 ? 'initial' : `retry-${attempt}`;
@@ -7432,7 +7497,10 @@ Return exactly one JSON object, not a bare findings array, with this shape:
 }
 
 Task plan:
-${JSON.stringify(taskPlan, null, 2)}`,
+${JSON.stringify(taskPlan, null, 2)}
+
+Scaffold manifest:
+${JSON.stringify(scaffoldManifestPromptSummary(inputData.scaffoldManifest), null, 2)}`,
           {
             ...structuredNoToolOptions,
             abortSignal,
@@ -7700,14 +7768,16 @@ const finalizeReviewLoopStep = createStep({
   description: 'Finalize architect review loop output for delivery workflow handoff.',
   inputSchema: reviewLoopStateSchema,
   outputSchema: deliveryStageOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
   scorers: deliveryReviewStepScorers,
-  execute: async ({ inputData }) => ({
+  execute: async ({ inputData, state }) => ({
     repoPath: inputData.repoPath,
     maxRetries: inputData.maxRetries,
     deployMode: inputData.deployMode,
     reviewMode: inputData.reviewMode,
     taskPlan: inputData.taskPlan,
     releaseGate: inputData.releaseGate,
+    ...scaffoldStageFields(inputData.scaffoldManifest ? inputData : state),
     status: inputData.status,
     runId: inputData.runId,
     summary: inputData.summary,
@@ -7748,6 +7818,7 @@ const prepareBuildTasksStep = createStep({
       reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
+      ...scaffoldStageFields(inputData),
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -7804,6 +7875,7 @@ const prepareBuildTasksStep = createStep({
       reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
+      ...scaffoldStageFields(inputData),
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -7832,6 +7904,7 @@ const prepareBuildTaskAttemptLoopStep = createStep({
       reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
+      ...scaffoldStageFields(inputData),
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -8136,6 +8209,7 @@ const executeBuildTaskAttemptStep = createStep({
       open_decisions: taskPlan.open_decisions,
       risks: taskPlan.risks,
       remediation: inputData.remediation,
+      scaffold_manifest: scaffoldManifestPromptSummary(inputData.scaffoldManifest),
       failure_class: failureClass,
       missing_owned_surfaces: missingSurfaces,
       unreplaced_preflight_stubs: unreplacedStubs,
@@ -8891,13 +8965,15 @@ const finalizeBuildTaskAttemptLoopStep = createStep({
   description: 'Finalize native build task attempt loop output.',
   inputSchema: buildTaskAttemptStateSchema,
   outputSchema: buildTaskResultSchema,
-  execute: async ({ inputData }) => ({
+  stateSchema: deliveryWorkflowStateSchema,
+  execute: async ({ inputData, state }) => ({
     repoPath: inputData.repoPath,
     maxRetries: inputData.maxRetries,
     deployMode: inputData.deployMode,
     reviewMode: inputData.reviewMode,
     taskPlan: inputData.taskPlan,
     releaseGate: inputData.releaseGate,
+    ...scaffoldStageFields(inputData.scaffoldManifest ? inputData : state),
     status: inputData.status === 'reviewed' ? ('stuck' as const) : inputData.status,
     runId: inputData.runId,
     summary:
@@ -8937,10 +9013,12 @@ const aggregateBuildTaskResultsStep = createStep({
   description: 'Aggregate workflow-native build task results into the delivery stage output.',
   inputSchema: buildTaskResultsSchema,
   outputSchema: deliveryStageOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
   scorers: deliveryBuildStepScorers,
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, state }) => {
     const first = inputData[0];
     if (!first) throw new Error('build loop did not receive any task results');
+    const scaffoldFields = scaffoldStageFields(first.scaffoldManifest ? first : state);
 
     const uniqueArtifacts = Array.from(new Set(inputData.flatMap((result) => result.artifacts)));
     const checkKeys = new Set<string>();
@@ -8975,6 +9053,7 @@ const aggregateBuildTaskResultsStep = createStep({
         reviewMode: first.reviewMode,
         taskPlan: first.taskPlan,
         releaseGate: first.releaseGate,
+        ...scaffoldFields,
         status: first.status,
         runId: first.runId,
         summary: first.summary,
@@ -8995,6 +9074,7 @@ const aggregateBuildTaskResultsStep = createStep({
         reviewMode: first.reviewMode,
         taskPlan: first.taskPlan,
         releaseGate: first.releaseGate,
+        ...scaffoldFields,
         status: 'stuck' as const,
         runId: first.runId,
         summary: 'Build loop stopped with stuck or blocked tasks.',
@@ -9013,6 +9093,7 @@ const aggregateBuildTaskResultsStep = createStep({
       reviewMode: first.reviewMode,
       taskPlan: first.taskPlan,
       releaseGate: first.releaseGate,
+      ...scaffoldFields,
       status: 'built' as const,
       runId: first.runId,
       summary: `Build loop completed: ${taskStatusSummary(taskState).join(', ')}`,
@@ -9054,6 +9135,7 @@ const prepareReleaseGateLoopStep = createStep({
       reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
+      ...scaffoldStageFields(inputData),
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -9077,6 +9159,7 @@ const prepareReleaseGateLoopStep = createStep({
       reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: inputData.releaseGate,
+      ...scaffoldStageFields(inputData),
       status: inputData.status,
       runId: inputData.runId,
       summary: inputData.summary,
@@ -9345,14 +9428,16 @@ const finalizeReleaseGateLoopStep = createStep({
   description: 'Finalize native release gate retry loop output.',
   inputSchema: releaseGateLoopStateSchema,
   outputSchema: deliveryStageOutputSchema,
+  stateSchema: deliveryWorkflowStateSchema,
   scorers: deliveryReleaseGateStepScorers,
-  execute: async ({ inputData }) => ({
+  execute: async ({ inputData, state }) => ({
     repoPath: inputData.repoPath,
     maxRetries: inputData.maxRetries,
     deployMode: inputData.deployMode,
     reviewMode: inputData.reviewMode,
     taskPlan: inputData.taskPlan,
     releaseGate: inputData.releaseGate,
+    ...scaffoldStageFields(inputData.scaffoldManifest ? inputData : state),
     status: inputData.status,
     runId: inputData.runId,
     summary: inputData.summary,
@@ -9712,6 +9797,7 @@ export const deliveryWorkflow = createWorkflow({
   },
 })
   .then(deliveryPlanningWorkflow)
+  .then(createScaffoldArtifactsStep)
   .then(deliveryReviewWorkflow)
   .then(deliveryBuildWorkflow)
   .then(deliveryReleaseGateWorkflow)
