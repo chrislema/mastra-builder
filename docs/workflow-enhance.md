@@ -266,6 +266,8 @@ Completed extraction:
   Worker contract normalizer and task verification acceptance criteria.
 - `planning/task-plan-normalizer.ts` for the root task-plan normalization
   composition used by planning and revision steps.
+- `planning/task-plan-revision.ts` for planner revision response parsing and
+  plan-gate remediation synthesis.
 
 Keep in planning workflow:
 

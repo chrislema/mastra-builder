@@ -124,6 +124,8 @@ Do not redo these:
   `planning/cloudflare-worker-contracts-policy.ts`
 - Root task-plan normalization composition:
   `planning/task-plan-normalizer.ts`
+- Planner revision response parsing and plan-gate remediation:
+  `planning/task-plan-revision.ts`
 
 ## Cleanup Rules
 

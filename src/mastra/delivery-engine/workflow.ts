@@ -114,6 +114,7 @@ import {
 } from './planning/profile-contract-policy';
 import { taskVerificationAcceptanceContractCriteria } from './planning/cloudflare-worker-contracts-policy';
 import { normalizeTaskPlanForDelivery } from './planning/task-plan-normalizer';
+import { parsePlannerRevisionResponse, planGateRevisionRemediation } from './planning/task-plan-revision';
 import {
   legacyProjectScaffoldHygiene,
   ownsTypeScriptInputSurface,
@@ -326,6 +327,7 @@ export { taskPlanDeterministicResults } from './planning/task-plan-gates';
 export { routeBoundaryConsistencyHygiene } from './planning/route-boundary-policy';
 export { normalizeTaskPlanCloudflareWorkerContracts } from './planning/cloudflare-worker-contracts-policy';
 export { normalizeTaskPlanForDelivery } from './planning/task-plan-normalizer';
+export { parsePlannerRevisionResponse, planGateRevisionRemediation } from './planning/task-plan-revision';
 
 const execFileAsync = promisify(execFile);
 
@@ -394,22 +396,6 @@ function readCachedPlannerOutput({
   if (!generatedSliceDependencyHygiene(taskPlan.data).passed) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
-}
-
-function parsePlannerRevisionResponse(response: unknown, label: string) {
-  try {
-    return {
-      revision: parseDeliveryStructuredOutput(plannerRevisionOutputSchema, response, label),
-      repairedFromBareTaskPlan: false,
-    };
-  } catch (error) {
-    const taskPlan = parseDeliveryStructuredOutput(taskPlanSchema, response, `${label} taskPlan`);
-    return {
-      revision: { taskPlan },
-      repairedFromBareTaskPlan: true,
-      repairReason: compactDiagnostic(error),
-    };
-  }
 }
 
 function scaffoldStageFields(input: Partial<DeliveryWorkflowState>) {
@@ -3341,21 +3327,6 @@ const createPlannerArtifactsStep = createStep({
     return plannerOutput;
   },
 });
-
-function planGateRevisionRemediation({
-  deterministicResults,
-  judgment,
-}: {
-  deterministicResults: DeterministicGateResult[];
-  judgment: AggregatedJudgment;
-}) {
-  const failedChecks = deterministicResults.filter((check) => !check.passed);
-  if (failedChecks.length) {
-    return failedChecks.map((check) => check.reason ?? 'deterministic task-plan check failed');
-  }
-  if (!judgment.passed) return judgment.remediation;
-  return [];
-}
 
 async function reviseTaskPlanFromPlanGate({
   mastra,
