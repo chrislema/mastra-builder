@@ -191,7 +191,7 @@ Verification:
 
 ### Phase 3: Planning And Task-Plan Policy
 
-Status: in progress.
+Status: complete.
 
 Goal: move planner normalization and task graph policy into a planning module.
 
@@ -362,6 +362,8 @@ Verification:
 
 ### Phase 5: Build Verification And Local Evidence
 
+Status: complete.
+
 Goal: move command planning and command execution evidence out of workflow
 composition.
 
@@ -413,7 +415,7 @@ Verification:
 
 ### Phase 6: Deployment Policy
 
-Status: in progress.
+Status: complete.
 
 Goal: keep local/production deployment decisions deterministic and isolated.
 
