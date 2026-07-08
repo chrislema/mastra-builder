@@ -79,7 +79,7 @@ import {
   reusableImplementationArtifactForTask,
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
-  sourceDocumentsDeclareBookmarksService,
+  sourceDocumentsDeclareExternalServiceBindings,
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
   sourceDocumentsDeclareTalkingHeadTranscriptContract,
@@ -133,7 +133,7 @@ const talkingHeadSourcePolicy = {
   pagesRequired: false,
   requiredProfileKinds: ['audience_segments', 'voice_profile'],
   talkingHeadTranscriptRequired: true,
-  bookmarksServiceRequired: true,
+  externalServiceBindings: ['BOOKMARKS'],
 };
 
 const workerEnvironmentMirrorKeys = [
@@ -244,24 +244,24 @@ test('planner questions do not suspend for settled policy or preferences', () =>
   );
 });
 
-test('planner readout normalization moves BOOKMARKS adapter ambiguity to safe assumptions', () => {
+test('planner readout normalization moves external service adapter ambiguity to safe assumptions', () => {
   const normalized = normalizeReadoutSafeAdapterAmbiguities(
     readout([
-      'The exact BOOKMARKS service binding date-window API is not specified: the plan needs the endpoint path/RPC method, HTTP method, request parameters, and response envelope before the bookmark client can be wired safely.',
+      'The exact ANALYTICS service binding date-window API is not specified: the plan needs the endpoint path/RPC method, HTTP method, request parameters, and response envelope before the client can be wired safely.',
     ]),
   );
 
   assert.deepEqual(normalized.blocking_ambiguities, []);
-  assert.match(normalized.safe_assumptions.join('\n'), /env\.BOOKMARKS\.fetch/);
-  assert.match(normalized.safe_assumptions.join('\n'), /src\/bookmarkClient\.ts/);
+  assert.match(normalized.safe_assumptions.join('\n'), /source-declared external Worker service binding/);
+  assert.doesNotMatch(normalized.safe_assumptions.join('\n'), /BOOKMARKS|bookmarkClient/);
 });
 
 test('task plan open decisions must be decision-shaped blockers', () => {
   const blockerPlan = taskPlan([{ depends_on: [] }]);
   blockerPlan.open_decisions = [
     [
-      'Topic: BOOKMARKS service binding call shape',
-      'Why it matters: blocks T7 bookmark fetch implementation because the workflow cannot know whether to call fetch or RPC safely',
+      'Topic: ANALYTICS service binding call shape',
+      'Why it matters: blocks T7 analytics import implementation because the workflow cannot know whether to call fetch or RPC safely',
       'Options considered: fetch with date-window query; RPC method with explicit window arguments',
       'Follow-up impact: T7 cannot be finalized until the binding contract is confirmed',
     ].join(' | '),
@@ -272,10 +272,10 @@ test('task plan open decisions must be decision-shaped blockers', () => {
   const futureTaskBlockerPlan = taskPlan([{ depends_on: [] }]);
   futureTaskBlockerPlan.open_decisions = [
     [
-      'Topic: Bookmark service date-window contract',
-      'Why it matters: Blocks T08 implementation of src/bookmarks/client.ts because the Worker must know whether to call env.BOOKMARKS.fetch() or an RPC method.',
+      'Topic: Analytics service date-window contract',
+      'Why it matters: Blocks T08 implementation of src/analytics/client.ts because the Worker must know whether to call env.ANALYTICS.fetch() or an RPC method.',
       'Options considered: service-binding fetch endpoint with from/to query; RPC-style method; documented public HTTP fallback for local development.',
-      'Follow-up impact: Resolve before T08 can be completed against the real bookmarks service; other tasks can proceed with the low-risk adapter boundary.',
+      'Follow-up impact: Resolve before T08 can be completed against the real analytics service; other tasks can proceed with the low-risk adapter boundary.',
     ].join(' | '),
   ];
   assert.deepEqual(openDecisionHygiene(futureTaskBlockerPlan), { passed: true, reason: 'ok' });
@@ -369,7 +369,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       talkingHeadTranscriptRequired: false,
-      bookmarksServiceRequired: false,
+      externalServiceBindings: [],
     }).passed,
     false,
   );
@@ -378,7 +378,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       talkingHeadTranscriptRequired: false,
-      bookmarksServiceRequired: false,
+      externalServiceBindings: [],
     }).reason,
     /did not declaratively require Cloudflare Pages/,
   );
@@ -387,7 +387,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: true,
       requiredProfileKinds: [],
       talkingHeadTranscriptRequired: false,
-      bookmarksServiceRequired: false,
+      externalServiceBindings: [],
     }),
     { passed: true, reason: 'ok' },
   );
@@ -396,7 +396,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       talkingHeadTranscriptRequired: false,
-      bookmarksServiceRequired: false,
+      externalServiceBindings: [],
     }),
     { passed: true, reason: 'ok' },
   );
@@ -409,8 +409,15 @@ test('source docs declare product-specific profile and transcript policies', () 
   ];
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(genericDocs), []);
   assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(genericDocs), false);
-  assert.equal(sourceDocumentsDeclareBookmarksService(genericDocs), false);
+  assert.deepEqual(sourceDocumentsDeclareExternalServiceBindings(genericDocs), []);
   assert.equal(sourceDocumentsDeclareShortLinkLifecycle(genericDocs), false);
+
+  assert.deepEqual(
+    sourceDocumentsDeclareExternalServiceBindings([
+      { path: 'vision.md', content: 'Fetch recent analytics through env.ANALYTICS and call env.AI for model output.' },
+    ]),
+    ['ANALYTICS'],
+  );
 
   const talkingHeadDocs = [
     {
@@ -426,7 +433,7 @@ test('source docs declare product-specific profile and transcript policies', () 
   ];
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(talkingHeadDocs), ['audience_segments', 'voice_profile']);
   assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(talkingHeadDocs), true);
-  assert.equal(sourceDocumentsDeclareBookmarksService(talkingHeadDocs), true);
+  assert.deepEqual(sourceDocumentsDeclareExternalServiceBindings(talkingHeadDocs), ['BOOKMARKS']);
 
   const shortLinkDocs = [
     { path: 'vision.md', content: 'Build a Cloudflare Worker URL shortener for customer short links.' },
@@ -5878,7 +5885,7 @@ test('acceptance contracts verify Worker env binding mirrors with structured wra
       depends_on: [],
       owned_surfaces: ['wrangler.jsonc'],
       acceptance_criteria: [
-        'wrangler.jsonc defines env.staging and env.production and mirrors BOOKMARKS, DB, ARTIFACTS, WEEKLY_WORKFLOW, AI, assets.directory "./public", assets.binding "ASSETS", and required non-secret vars in both environments.',
+        'wrangler.jsonc defines env.staging and env.production and mirrors service binding BOOKMARKS, DB, ARTIFACTS, WEEKLY_WORKFLOW, AI, assets.directory "./public", assets.binding "ASSETS", and required non-secret vars in both environments.',
       ],
     },
   ]).tasks;

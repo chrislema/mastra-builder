@@ -60,10 +60,15 @@ Completed cleanup checkpoints:
   - Verification passed: `npm run typecheck`, `npm test`.
 - `78f9095 Extract source document policy`
   - Source-document declarations for Pages, profile kinds, Talking Head
-    transcript contracts, bookmarks, and short-link lifecycle now live in
-    `source-policy.ts`.
+    transcript contracts, external Worker service bindings, and short-link
+    lifecycle now live in `source-policy.ts`.
   - `workflow.ts` re-exports the same public helpers for compatibility.
   - Verification passed: `npm run typecheck`, `npm test`.
+- Current cleanup pass
+  - Replace bookmarks-specific shared harness policy with generic external
+    Worker service binding policy.
+  - Keep project-specific vocabulary in source docs and eval/test fixtures, not
+    in central helper names or global planner prompt rules.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.

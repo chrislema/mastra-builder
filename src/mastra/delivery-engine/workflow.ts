@@ -113,8 +113,8 @@ import {
 } from './release-gate-probes';
 import { appendBoundedOutput, availableTcpPort, delay, stopChildProcess } from './process-utils';
 import {
-  bookmarksAdapterPolicyLine,
-  sourceDocumentsDeclareBookmarksService,
+  externalServiceAdapterPolicyLine,
+  sourceDocumentsDeclareExternalServiceBindings,
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
   sourceDocumentsDeclareTalkingHeadTranscriptContract,
@@ -125,7 +125,7 @@ import {
 } from './source-policy';
 
 export {
-  sourceDocumentsDeclareBookmarksService,
+  sourceDocumentsDeclareExternalServiceBindings,
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
   sourceDocumentsDeclareTalkingHeadTranscriptContract,
@@ -238,7 +238,7 @@ function parseReviewReportResponse(response: unknown, label: string) {
   }
 }
 
-const plannerPolicyVersion = 'worker-first-local-v15';
+const plannerPolicyVersion = 'worker-first-local-v16';
 
 function plannerSourceFingerprint(sourceDocuments: Array<{ path: string; content: string }>) {
   return createHash('sha256').update(JSON.stringify(sourceDocuments)).digest('hex');
@@ -398,23 +398,23 @@ function namesTaskScopedBlocker(decision: string) {
   return /\bblocks?\s+T\d[\w-]*\b/i.test(decision) || /\bbefore\s+T\d[\w-]*\b/i.test(decision);
 }
 
-function looksLikeSafeBookmarksAdapterAmbiguity(question: string) {
+function looksLikeSafeExternalServiceAdapterAmbiguity(question: string) {
   return (
-    /\bBOOKMARKS\b|\bbookmarks service\b|\benv\.BOOKMARKS\b/i.test(question) &&
+    /\b(?:external\s+Worker\s+service|Worker\s+service|service\s+binding|env\.[A-Z][A-Z0-9_]*)\b/i.test(question) &&
     /\b(endpoint|RPC|method|path|parameters?|response envelope|contract|date-window|date window|API shape)\b/i.test(question)
   );
 }
 
 export function normalizeReadoutSafeAdapterAmbiguities(readout: Readout) {
-  const safeAdapterQuestions = readout.blocking_ambiguities.filter(looksLikeSafeBookmarksAdapterAmbiguity);
+  const safeAdapterQuestions = readout.blocking_ambiguities.filter(looksLikeSafeExternalServiceAdapterAmbiguity);
   if (!safeAdapterQuestions.length) return readout;
 
   const blocking_ambiguities = readout.blocking_ambiguities.filter(
-    (question) => !looksLikeSafeBookmarksAdapterAmbiguity(question),
+    (question) => !looksLikeSafeExternalServiceAdapterAmbiguity(question),
   );
   const safeAssumptions = safeAdapterQuestions.map(
     (question) =>
-      `Safe adapter default: ${question} Proceed with env.BOOKMARKS.fetch behind src/bookmarkClient.ts using a date-window request and normalized Bookmark[] response; document the adapter contract risk instead of blocking delivery.`,
+      `Safe adapter default: ${question} Proceed with a small typed adapter around the source-declared external Worker service binding; keep the assumed request/response shape isolated and document the contract risk instead of blocking unrelated delivery work.`,
   );
 
   return {
@@ -8818,7 +8818,7 @@ Open-decision hygiene:
 - Do not stop for preferences the harness already settles: Worker over Pages unless source docs declaratively require Pages, vanilla UI over frameworks, Wrangler over GitHub Actions deploy, local validation before production, or Workers AI binding shape.
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
 - If an unknown is a non-blocking delivery concern, put it in taskPlan.risks.
-${bookmarksAdapterPolicyLine(sourcePolicy)}
+${externalServiceAdapterPolicyLine(sourcePolicy)}
 ${specContextLine}
 - Every open_decisions entry must be one string with this exact field shape:
   "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
@@ -9057,7 +9057,7 @@ Task-plan quality requirements:
 - Every taskPlan.tasks[].owned_surfaces entry must be a concrete repo path, not a conceptual label or wildcard. Use "unknown: <why>" only when the file truly cannot be known.
 - Do not plan functions/** owned surfaces unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
 - Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks.
-${bookmarksAdapterPolicyLine(sourcePolicy)}
+${externalServiceAdapterPolicyLine(sourcePolicy)}
 - Every taskPlan.open_decisions entry must use this exact field shape:
 "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
 - The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.

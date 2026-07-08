@@ -136,7 +136,7 @@ export const sourcePolicySchema = z.object({
   pagesRequired: z.boolean().default(false),
   requiredProfileKinds: z.array(z.string()).default([]),
   talkingHeadTranscriptRequired: z.boolean().default(false),
-  bookmarksServiceRequired: z.boolean().default(false),
+  externalServiceBindings: z.array(z.string()).default([]),
 });
 
 export const plannerCacheSchema = z.object({

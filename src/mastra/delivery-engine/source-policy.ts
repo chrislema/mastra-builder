@@ -57,9 +57,28 @@ export function sourceDocumentsDeclareTalkingHeadTranscriptContract(sourceDocume
   );
 }
 
-export function sourceDocumentsDeclareBookmarksService(sourceDocuments: SourceDocument[]) {
+const standardCloudflareBindingNames = new Set(['AI', 'ASSETS', 'DB', 'ARTIFACTS', 'KV', 'R2']);
+
+export function sourceDocumentsDeclareExternalServiceBindings(sourceDocuments: SourceDocument[]) {
   const text = sourceDocumentText(sourceDocuments);
-  return /\bBOOKMARKS\b|\benv\.BOOKMARKS\b|\bbookmarks\s+service\b|\bbookmark\s+service\b/i.test(text);
+  const bindings = new Set<string>();
+  const patterns = [
+    /\b(?:fetch|call|RPC|HTTP|API)\b.{0,80}\benv\.([A-Z][A-Z0-9_]*)\b/gi,
+    /\benv\.([A-Z][A-Z0-9_]*)\b.{0,80}\b(?:fetch|call|RPC|HTTP|API)\b/gi,
+    /\benv\.([A-Z][A-Z0-9_]*)\b(?=[\s\S]{0,120}\b(?:external\s+Worker\s+service|Worker\s+service|service\s+binding)\b)/gi,
+    /\b(?:external\s+Worker\s+service|Worker\s+service|service\s+binding)\s+(?:named\s+|called\s+)?([A-Z][A-Z0-9_]*)\b/gi,
+    /\b([A-Z][A-Z0-9_]*)\s+(?:external\s+Worker\s+service|Worker\s+service|service\s+binding)\b/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      if (match[1] !== match[1].toUpperCase()) continue;
+      const binding = match[1].toUpperCase();
+      if (!standardCloudflareBindingNames.has(binding)) bindings.add(binding);
+    }
+  }
+
+  return [...bindings].sort();
 }
 
 function sourceLineNegatesShortLinks(line: string) {
@@ -86,13 +105,14 @@ export function sourcePolicyFromDocuments(sourceDocuments: SourceDocument[]): So
     pagesRequired: sourceDocumentsDeclarePages(sourceDocuments),
     requiredProfileKinds: sourceDocumentsRequiredProfileKinds(sourceDocuments),
     talkingHeadTranscriptRequired: sourceDocumentsDeclareTalkingHeadTranscriptContract(sourceDocuments),
-    bookmarksServiceRequired: sourceDocumentsDeclareBookmarksService(sourceDocuments),
+    externalServiceBindings: sourceDocumentsDeclareExternalServiceBindings(sourceDocuments),
   };
 }
 
-export function bookmarksAdapterPolicyLine(sourcePolicy: SourcePolicy) {
-  return sourcePolicy.bookmarksServiceRequired
-    ? '\n- The BOOKMARKS service API shape is not a human blocker. Default to an env.BOOKMARKS.fetch adapter in src/bookmarkClient.ts with a date-window request and normalized Bookmark[] response, then record contract mismatch as a risk.'
+export function externalServiceAdapterPolicyLine(sourcePolicy: SourcePolicy) {
+  const bindings = sourcePolicy.externalServiceBindings.map((binding) => `env.${binding}`);
+  return bindings.length
+    ? `\n- Source docs declare external Worker service binding(s): ${bindings.join(', ')}. Unknown service API shapes are not human blockers. Create a small typed adapter boundary around each source-declared binding, use the safest minimal fetch/RPC assumption from the source docs, and record unresolved contract details as risks instead of blocking unrelated tasks.`
     : '';
 }
 

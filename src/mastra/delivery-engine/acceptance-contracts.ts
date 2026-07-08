@@ -333,6 +333,33 @@ function workerJsonConfigBindingDeclarations(config: Record<string, unknown>) {
   return declarations;
 }
 
+function serviceBindingRequirementsFromCriterion(criterion: string) {
+  const names = new Set<string>();
+  const patterns = [
+    /\b([A-Z][A-Z0-9_]*)\b.{0,80}\b(?:external\s+Worker\s+service|Worker\s+service|service\s+binding)\b/gi,
+    /\b(?:external\s+Worker\s+service|Worker\s+service|service\s+binding)\s+(?:named\s+|called\s+)?([A-Z][A-Z0-9_]*)\b/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of criterion.matchAll(pattern)) {
+      if (match[1] !== match[1].toUpperCase()) continue;
+      names.add(match[1].toUpperCase());
+    }
+  }
+
+  return [...names].map((name) => ({ name, kind: 'service' as const }));
+}
+
+function uniqueBindingRequirements(bindings: Array<{ name: string; kind: WorkerBindingKind }>) {
+  const seen = new Set<string>();
+  return bindings.filter((binding) => {
+    const key = `${binding.kind}:${binding.name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function workerJsonConfigVarNames(config: Record<string, unknown>) {
   const vars = recordValue(config.vars);
   return vars ? Object.keys(vars).filter(Boolean) : [];
@@ -591,16 +618,17 @@ function workerConfigEnvironmentContractEvidence(context: AcceptanceContractCont
     };
   }
 
-  const requiredBindingCandidates: Array<{ name: string; kind: WorkerBindingKind }> = [
-    { name: 'BOOKMARKS', kind: 'service' },
+  const namedBindingCandidates: Array<{ name: string; kind: WorkerBindingKind }> = [
     { name: 'DB', kind: 'd1' },
     { name: 'ARTIFACTS', kind: 'r2' },
     { name: 'WEEKLY_WORKFLOW', kind: 'workflow' },
     { name: 'AI', kind: 'ai' },
     { name: 'ASSETS', kind: 'assets' },
   ];
-  const requiredBindings = requiredBindingCandidates.filter((binding) =>
-    new RegExp(`\\b${binding.name}\\b`, 'i').test(context.criterion),
+  const requiredBindings = uniqueBindingRequirements(
+    namedBindingCandidates
+      .filter((binding) => new RegExp(`\\b${binding.name}\\b`, 'i').test(context.criterion))
+      .concat(serviceBindingRequirementsFromCriterion(context.criterion)),
   );
 
   const gaps: string[] = [];
