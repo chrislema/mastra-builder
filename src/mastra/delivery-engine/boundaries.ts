@@ -30,6 +30,7 @@ export const roleBoundaries = {
       'test/**',
       'lib/**',
       'scripts/**',
+      'docs/**',
       'db/**',
       'migrations/**',
       'wrangler.jsonc',

@@ -1054,6 +1054,20 @@ test('task plan role hygiene allows engineer-owned Worker smoke tests under test
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalizeTaskPlanRoleBoundaries(plan)), { passed: true, reason: 'ok' });
 });
 
+test('task plan role hygiene allows engineer-owned technical documentation', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['docs/security-boundary.md'],
+      acceptance_criteria: [
+        'docs/security-boundary.md documents production abuse controls for paid provider routes.',
+      ],
+    },
+  ]);
+
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalizeTaskPlanRoleBoundaries(plan)), { passed: true, reason: 'ok' });
+});
+
 test('task plan normalization splits oversized storage-only tasks and rewires downstream dependencies', () => {
   const plan = taskPlan([
     {

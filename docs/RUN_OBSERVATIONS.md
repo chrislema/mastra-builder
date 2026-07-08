@@ -373,3 +373,45 @@ For each run, record:
 - Stop decision: classify cross-task contract-drift criteria as behavior-like
   evidence criteria so they stay visible as pending evidence but do not block
   deterministic implementation completion for the source contract task.
+
+### 2026-07-08 12:20 CDT - CLI Resume Run 7 Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved; pick up from existing generated files and
+  `.delivery` state instead of clearing the project.
+- Forward-progress question: after commit `78596d1` treats cross-task contract
+  drift criteria as pending evidence, does the preserved benchmark clear the
+  prior `T02-contracts-AC09` deterministic retry loop and move to the next build
+  task?
+- Cheap/static verification already tried before this run:
+  - `node --import tsx --test test/delivery-engine/workflow-policy.test.ts`
+    passed with the new cross-task contract drift regression test.
+  - `node --import tsx --test test/delivery-engine/smell-audit.test.ts`
+    passed.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+  - `npm run audit:smells -- --projectFolder
+    /Users/chrislema/mastra/projects/benchmark --assume-typecheck
+    --assume-tests` reported `Total smells: 0` on the active benchmark plan.
+- Guardrail: if this run stalls, classify the failure from the report first.
+  Do not add broad string matching in `workflow.ts`.
+- Workflow run ID: `d75f9062-c64b-46bd-85bd-7e1bb0b159ec`
+- Delivery run ID: `run-mrccgg7b-1bc9bcad`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/d75f9062-c64b-46bd-85bd-7e1bb0b159ec.json`
+- Result: `deliveryStatus` was `stuck`; workflow control path completed and
+  wrote a report.
+- Confirmed/non-confirmed: this run stopped in deterministic planner revision
+  gates before reaching build, so commit `78596d1` has not yet been validated by
+  a full delivery pass.
+- New blocker: planner revision assigned `T04` to owner `engineer` while owning
+  `docs/security-boundary.md`; current engineer role boundaries allowed
+  `README.md` but not `docs/**`.
+- Failure class: harness role-boundary gap. Technical/operator documentation is
+  a legitimate engineer-owned surface in this Worker delivery harness, so
+  `docs/**` should be allowed without weakening public UI or runtime ownership.
+- Stop decision: add `docs/**` to engineer-owned surfaces with a focused role
+  hygiene test, then run cheap checks before another paid delivery pass.
