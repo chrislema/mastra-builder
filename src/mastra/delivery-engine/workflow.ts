@@ -60,6 +60,7 @@ import {
   deliveryWorkflowInputSchema,
   normalizeDeliveryWorkflowInput,
 } from './run-input';
+import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
 import {
   buildTaskAttemptStateSchema,
   buildTaskResultSchema,
@@ -202,6 +203,7 @@ import {
   sourcePolicyFromRepo,
 } from './source-policy';
 import { executeDeliveryScaffold } from './scaffold-workflow';
+import type { ScaffoldManifest } from './project-factory/schemas';
 import {
   architectBouncePlannerRevisionPrompt,
   initialPlannerPrompt,
@@ -3300,7 +3302,30 @@ export function routeBoundaryConsistencyHygiene(taskPlan: TaskPlan) {
   return { passed: true, reason: 'ok' };
 }
 
-export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
+export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan, scaffoldManifest?: ScaffoldManifest) {
+  if (existsSync(join(repoPath, 'package.json'))) return { passed: true, reason: 'ok' };
+  if (
+    scaffoldManifest?.generatedFiles.includes('package.json') &&
+    scaffoldManifest.generatedFiles.includes(scaffoldManifest.main) &&
+    scaffoldManifest.generatedFiles.some((path) => path === 'wrangler.jsonc' || path === 'wrangler.toml')
+  ) {
+    return {
+      passed: true,
+      reason: 'ok: deterministic project factory owns the root Worker scaffold before implementation.',
+    };
+  }
+
+  const plansRuntimeWork = taskPlan.tasks.some(ownsWorkerRuntimeSurface);
+  if (!plansRuntimeWork) return { passed: true, reason: 'ok' };
+
+  return {
+    passed: true,
+    reason:
+      'ok: root Worker scaffold is owned by the deterministic project factory and will be validated by the scaffold manifest gate before implementation.',
+  };
+}
+
+export function legacyProjectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
   if (existsSync(join(repoPath, 'package.json'))) return { passed: true, reason: 'ok' };
 
   const plansRuntimeWork = taskPlan.tasks.some(ownsWorkerRuntimeSurface);
@@ -3358,7 +3383,7 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
 
 function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
   const sourcePolicy = sourcePolicyFromRepo(repoPath);
-  return normalizeTaskPlanOperatorDocumentation(
+  return annotateTaskPlanWithTypedMetadata(normalizeTaskPlanOperatorDocumentation(
     normalizeTaskPlanCloudflareWorkerContracts(
       normalizeTaskPlanGeneratedSliceDependencies(
         normalizeTaskPlanLargeStorageTasks(
@@ -3371,7 +3396,7 @@ function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): Tas
       ),
       sourcePolicy,
     ),
-  );
+  ));
 }
 
 const taskPlanDeterministicResults = ({
@@ -7352,6 +7377,9 @@ const createScaffoldArtifactsStep = createStep({
       ...scaffold.checks.map((check) => ({ check: check.check, passed: check.passed, reason: check.reason })),
     ];
     const failedScaffoldChecks = scaffold.checks.filter((check) => !check.passed);
+    const taskPlan = inputData.taskPlan
+      ? annotateTaskPlanWithTypedMetadata(inputData.taskPlan, scaffold.scaffoldManifest)
+      : inputData.taskPlan;
     const nextSteps = [
       `Scaffold manifest generated at ${scaffold.manifestPath}.`,
       ...inputData.nextSteps.filter((step) => !/scaffold manifest generated/i.test(step)),
@@ -7364,6 +7392,7 @@ const createScaffoldArtifactsStep = createStep({
         : inputData.summary,
       artifacts,
       checks,
+      taskPlan,
       scaffoldManifest: scaffold.scaffoldManifest,
       scaffoldManifestPath: scaffold.manifestPath,
       nextSteps: failedScaffoldChecks.length ? failedScaffoldChecks.map((check) => check.reason) : nextSteps,

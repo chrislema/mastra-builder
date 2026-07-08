@@ -107,6 +107,7 @@ import {
   wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 import { fileOwnership } from '../../src/mastra/delivery-engine/checks.ts';
+import { renderProjectScaffold } from '../../src/mastra/delivery-engine/project-factory/index.ts';
 import { verificationFailureSummaryFromCommandError } from '../../src/mastra/delivery-engine/implementation-retry-policy.ts';
 import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
 
@@ -455,75 +456,24 @@ test('source docs declare product-specific profile and transcript policies', () 
   );
 });
 
-test('bare Worker project plans require package scaffold before runtime surfaces', () => {
+test('bare Worker project plan scaffold hygiene delegates root rails to the project factory', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-project-scaffold-'));
-  const badPlan = taskPlan([
+  const runtimePlan = taskPlan([
     {
       depends_on: [],
       owned_surfaces: ['wrangler.toml', 'src/env.ts', 'src/index.ts'],
     },
   ]);
 
-  const badResult = projectScaffoldHygiene(repoPath, badPlan);
-  assert.equal(badResult.passed, false);
-  assert.match(badResult.reason, /no package\.json/);
+  const delegatedResult = projectScaffoldHygiene(repoPath, runtimePlan);
+  assert.equal(delegatedResult.passed, true);
+  assert.match(delegatedResult.reason, /deterministic project factory/);
 
-  const packageOnlyPlan = taskPlan([
-    {
-      depends_on: [],
-      owned_surfaces: ['package.json'],
-    },
-    {
-      depends_on: ['T1'],
-      owned_surfaces: ['wrangler.jsonc', 'src/index.js'],
-    },
-  ]);
-  const packageOnlyResult = projectScaffoldHygiene(repoPath, packageOnlyPlan);
-  assert.equal(packageOnlyResult.passed, false);
-  assert.match(packageOnlyResult.reason, /no Worker source input/);
-
-  const delayedConfigPlan = taskPlan([
-    {
-      depends_on: [],
-      owned_surfaces: ['package.json', 'src/index.js'],
-    },
-    {
-      depends_on: ['T1'],
-      owned_surfaces: ['wrangler.jsonc'],
-    },
-  ]);
-  const delayedConfigResult = projectScaffoldHygiene(repoPath, delayedConfigPlan);
-  assert.equal(delayedConfigResult.passed, false);
-  assert.match(delayedConfigResult.reason, /root task/);
-  assert.match(delayedConfigResult.reason, /Wrangler dry-run validation/);
-
-  const tsWithoutTsconfigPlan = taskPlan([
-    {
-      depends_on: [],
-      owned_surfaces: ['package.json', 'src/index.ts', 'wrangler.jsonc'],
-    },
-  ]);
-  const tsWithoutTsconfigResult = projectScaffoldHygiene(repoPath, tsWithoutTsconfigPlan);
-  assert.equal(tsWithoutTsconfigResult.passed, false);
-  assert.match(tsWithoutTsconfigResult.reason, /TypeScript Worker source but not tsconfig\.json/);
-
-  const tomlPlan = taskPlan([
-    {
-      depends_on: [],
-      owned_surfaces: ['package.json', 'src/index.js', 'wrangler.toml'],
-    },
-  ]);
-  const tomlResult = projectScaffoldHygiene(repoPath, tomlPlan);
-  assert.equal(tomlResult.passed, false);
-  assert.match(tomlResult.reason, /wrangler\.jsonc/);
-
-  const goodPlan = taskPlan([
-    {
-      depends_on: [],
-      owned_surfaces: ['package.json', 'src/index.js', 'wrangler.jsonc'],
-    },
-  ]);
-  assert.deepEqual(projectScaffoldHygiene(repoPath, goodPlan), { passed: true, reason: 'ok' });
+  const scaffold = renderProjectScaffold({ projectName: 'Factory Owned Worker' });
+  assert.deepEqual(projectScaffoldHygiene(repoPath, runtimePlan, scaffold.manifest), {
+    passed: true,
+    reason: 'ok: deterministic project factory owns the root Worker scaffold before implementation.',
+  });
 });
 
 test('engineer ownership allows Wrangler generated Worker type surface', () => {
@@ -557,8 +507,9 @@ test('bare Worker project plans normalize root scaffold surfaces and static asse
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\*\.cpuprofile/);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /scripts\.typecheck exactly as "node scripts\/check-js\.js"/);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
-  assert.equal(projectScaffoldHygiene(repoPath, normalized).passed, false);
-  assert.match(projectScaffoldHygiene(repoPath, normalized).reason, /root task/);
+  const scaffoldResult = projectScaffoldHygiene(repoPath, normalized);
+  assert.equal(scaffoldResult.passed, true);
+  assert.match(scaffoldResult.reason, /project factory/);
 });
 
 test('bare Worker project plans can auto-add missing root Wrangler config', () => {
@@ -586,7 +537,7 @@ test('bare Worker project plans can auto-add missing root Wrangler config', () =
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /first build slice is structurally runnable by Wrangler/);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /scripts\.typecheck exactly as "node scripts\/check-js\.js"/);
   assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
-  assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
+  assert.equal(projectScaffoldHygiene(repoPath, normalized).passed, true);
 });
 
 test('bare TypeScript Worker root scaffolds normalize to canonical registry-backed contracts', () => {
@@ -7511,21 +7462,24 @@ test('task plan schema describes explicit Worker environment commands', () => {
   assert.match(descriptions, /wrangler dev --env staging/);
   assert.match(descriptions, /wrangler deploy --env production/);
   assert.match(descriptions, /env\.staging\/env\.production|env\.staging and env\.production/);
-  assert.match(descriptions, /root scaffold task owns package\.json, \.gitignore, wrangler\.jsonc/);
+  assert.match(descriptions, /deterministic delivery-scaffold owns root rails/);
+  assert.match(descriptions, /canonical Node\/Worker\/jsdom test runtime routing/);
 });
 
-test('agent and task-plan template describe root Worker config scaffold', () => {
+test('agent and task-plan template describe factory-owned Worker scaffold rails', () => {
   const agentInstructions = readFileSync(join(process.cwd(), 'src/mastra/delivery-engine/agents.ts'), 'utf8');
   const taskPlanTemplate = readFileSync(
     join(process.cwd(), 'src/mastra/delivery-engine/templates/task-plan.md'),
     'utf8',
   );
 
-  assert.match(agentInstructions, /package\.json, \.gitignore, wrangler\.jsonc/);
-  assert.match(agentInstructions, /Wrangler dry-run validation can run from the first build slice/);
+  assert.match(agentInstructions, /deterministic delivery-scaffold workflow owns the root Worker rails/);
+  assert.match(agentInstructions, /Do not create a task whose only purpose is root scaffold ownership/);
+  assert.doesNotMatch(agentInstructions, /Wrangler dry-run validation can run from the first build slice/);
   assert.match(taskPlanTemplate, /package\.json`/);
   assert.match(taskPlanTemplate, /`\.gitignore`, `wrangler\.jsonc`/);
-  assert.match(taskPlanTemplate, /Wrangler dry-run\s+validation can run from the first build slice/);
+  assert.match(taskPlanTemplate, /Plan\s+product-specific tasks, not a root scaffold task/);
+  assert.doesNotMatch(taskPlanTemplate, /Wrangler dry-run\s+validation can run from the first build slice/);
 });
 
 test('Worker package scaffold hygiene requires current Wrangler tooling and config-based scripts', () => {

@@ -403,6 +403,7 @@ export function renderProjectScaffold(input: unknown): ProjectScaffold {
     language,
     main,
     generatedFiles: files.map((file) => file.path),
+    generatedFileSurfaces: Object.fromEntries(files.map((file) => [file.path, file.surfaceKind])),
     testRuntimeMatrix: testRuntimeMatrixForProfiles(profiles),
     bindingMap: bindingMapForProfiles(profiles),
     packageScripts: packageScriptsForLanguage(language),

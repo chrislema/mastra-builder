@@ -47,6 +47,9 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
   assert.equal(scaffold.manifest.main, 'src/index.ts');
   assert.ok(scaffold.manifest.generatedFiles.includes('tsconfig.json'));
   assert.ok(scaffold.manifest.generatedFiles.includes('migrations/0001_app_events.sql'));
+  assert.equal(scaffold.manifest.generatedFileSurfaces['src/index.ts'], 'worker');
+  assert.equal(scaffold.manifest.generatedFileSurfaces['test/contracts.test.ts'], 'test');
+  assert.equal(scaffold.manifest.generatedFileSurfaces['migrations/0001_app_events.sql'], 'migration');
   assert.deepEqual(scaffold.manifest.bindingMap, {
     ASSETS: 'static assets binding for ./public',
     AI: 'Workers AI binding',

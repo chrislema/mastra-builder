@@ -244,6 +244,19 @@ framework beside Mastra.
 
 ## Implementation Plan
 
+### Implementation Status
+
+- Phase 0: complete.
+- Phase 1: complete; the deterministic Worker project factory and test runtime
+  matrix are covered by repo unit tests.
+- Phase 2: complete; `delivery-scaffold` materializes a scaffold manifest,
+  validates generated files against it, and feeds the manifest into later
+  workflow stages.
+- Phase 3: in progress; planner prompts no longer require root scaffold task
+  ownership, active plan scaffold hygiene delegates root rails to the project
+  factory, and task rows now receive workflow-derived `task`/`surface`/
+  `evidence`/`runtime` metadata.
+
 ### Phase 0: Freeze Expensive Run Loop
 
 Goal: stop spending on full delivery runs until deterministic rails are ready.

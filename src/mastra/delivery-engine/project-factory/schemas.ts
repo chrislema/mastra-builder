@@ -70,6 +70,7 @@ export const scaffoldManifestSchema = z.object({
   language: projectLanguageSchema,
   main: z.string().min(1),
   generatedFiles: z.array(z.string().min(1)),
+  generatedFileSurfaces: z.record(z.string().min(1), scaffoldSurfaceKindSchema).default({}),
   testRuntimeMatrix: z.array(testRuntimeRuleSchema),
   bindingMap: z.record(z.string(), z.string()),
   packageScripts: z.record(z.string(), z.string()),

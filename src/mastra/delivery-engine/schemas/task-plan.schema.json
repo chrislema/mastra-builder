@@ -17,7 +17,7 @@
           "id": { "type": "string", "pattern": "^T[0-9]+$" },
           "owner": {
             "enum": ["engineer", "designer"],
-            "description": "engineer owns Worker config/source/migration files like package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml, src/**, workers/**, and migrations/**. In a brand-new Worker project, the root scaffold task owns package.json, .gitignore, wrangler.jsonc, and the Worker entrypoint together so Wrangler dry-run validation can run from the first build slice. Worker config tasks should define env.staging and env.production, mirroring required bindings and vars because Wrangler environments do not inherit them. New Worker package scripts should use wrangler dev --env staging and wrangler deploy --env production. TypeScript Worker scaffolds should use Wrangler-generated worker-configuration.d.ts types, not hand-written runtime types. designer owns static UI files like public/index.html, public/styles.css, public/app.js, and assets/**."
+            "description": "engineer owns Worker source/test/migration files like src/**, workers/**, test/**, and migrations/**, plus product-specific config edits when source documents require them. In a brand-new Worker project, deterministic delivery-scaffold owns root rails such as package.json, .gitignore, wrangler.jsonc, tsconfig.json when needed, vitest.config.ts, the initial Worker entrypoint, and canonical test runtime routing before implementation agents run. Worker config tasks should define env.staging and env.production when they intentionally own product-specific config changes, mirroring required bindings and vars because Wrangler environments do not inherit them. New Worker package scripts should use wrangler dev --env staging and wrangler deploy --env production. TypeScript Worker scaffolds should use Wrangler-generated worker-configuration.d.ts types, not hand-written runtime types. designer owns static UI files like public/index.html, public/styles.css, public/app.js, and assets/**."
           },
           "deliverable": { "type": "string", "minLength": 1 },
           "depends_on": { "type": "array", "items": { "type": "string", "pattern": "^T[0-9]+$" } },
@@ -33,10 +33,14 @@
             "items": { "type": "string", "minLength": 1 }
           },
           "owned_surfaces": {
-            "description": "Concrete repo paths this task will change, for example package.json, wrangler.jsonc, wrangler.toml, src/index.js, workers/tally.js, public/settings.html, migrations/0001_schema.sql. Wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/** are not allowed. Use ['unknown: <reason>'] only when genuinely unknown; conceptual labels are not allowed. In a bare Worker folder, root scaffold ownership must include package.json, .gitignore, wrangler.jsonc, and at least one concrete Worker source input such as src/index.js or workers/app.js before runtime/source/static asset/migration tasks; include tsconfig.json only for TypeScript Worker source, configure package scripts to run wrangler dev --env staging, wrangler deploy --env production, and wrangler types before tsc, and define env.staging/env.production for staging-aware local validation and human-approved Wrangler production deploys.",
+            "description": "Concrete repo paths this task will change, for example src/index.js, src/routes/tally.js, test/api-routes.test.ts, public/settings.html, migrations/0001_schema.sql, README.md, or product-specific config files. Wildcards such as src/**/*.ts, src/storage/*.ts, public/**, or src/** are not allowed. Use ['unknown: <reason>'] only when genuinely unknown; conceptual labels are not allowed. In a bare Worker folder, deterministic delivery-scaffold owns package.json, .gitignore, wrangler.jsonc, tsconfig.json when needed, vitest.config.ts, the initial Worker entrypoint, public shell files, contract shell files, and canonical Node/Worker/jsdom test runtime routing before implementation agents run. Plan product-specific changes to those files only when the source documents require implementation work there; Wrangler local validation remains wrangler dev --env staging and human-approved production deployment remains wrangler deploy --env production.",
             "type": "array",
             "minItems": 1,
             "items": { "type": "string", "minLength": 1 }
+          },
+          "metadata": {
+            "description": "Optional workflow-derived metadata. The harness may add task.kind, surface.kind, evidence.kind, runtime.kind, and scaffold generated file facts after deterministic normalization; planners do not need to author this by hand.",
+            "type": "object"
           }
         }
       }

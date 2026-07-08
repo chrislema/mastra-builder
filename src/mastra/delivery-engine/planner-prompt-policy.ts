@@ -40,7 +40,7 @@ Do not write code. Ask only blocking questions. Record safe assumptions in the r
 Task owners must be engineer or designer. Verification, release gating, and deployment happen in later workflow stages, not task rows.
 Project policy:
 - This harness is for Chris's standalone Cloudflare Worker projects. Do not plan desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
-- Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require TypeScript.
+- Default new projects to a vanilla JavaScript Worker with vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo, source docs, or selected Cloudflare bindings require TypeScript.
 - Prefer wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - New Worker config must define env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments.
 - Use wrangler CLI for deploy and local runtime validation; never use GitHub Actions as the deployment path.
@@ -48,9 +48,12 @@ Project policy:
 - Git/gh may support source-control steps, but production deployment is a separate Wrangler action after human approval: wrangler deploy --env production.
 - New Worker config must use compatibility_date "${compatibilityDate}" unless the source docs explicitly require a different recent date.
 Every task must have checkable acceptance criteria and owned_surfaces.
+Factory-owned scaffold context:
+- Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
+- When the target project is new, a deterministic delivery-scaffold workflow will create package.json, .gitignore, wrangler.jsonc, tsconfig.json when needed, vitest.config.ts, the Worker entrypoint, public shell files, contract shell files, and canonical test runtime routing before implementation agents run.
+- Do not create tasks whose only purpose is root scaffold ownership for package.json, .gitignore, wrangler.jsonc, tsconfig.json, vitest.config.ts, .dev.vars.example, or the initial public shell. Plan product-specific changes inside those surfaces only when the vision/spec requires implementation work there.
 Worker task slicing:
-- For a brand-new Worker project, the first root engineer scaffold task must own package.json, .gitignore, wrangler.jsonc, and the Worker entrypoint so Wrangler dry-run validation can run from the first build slice.
-- Keep D1 schema/migration work separate from Worker config: migrations/*.sql belongs in a later task after the root scaffold/config task.
+- Keep D1 schema/migration work separate from Worker routes and repositories: migrations/*.sql belongs in a dedicated storage task when D1 is required.
 - Include an engineer-owned README.md operator documentation task near the end. It must document local Wrangler validation, required Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 Owned-surface hygiene:
@@ -59,14 +62,10 @@ Owned-surface hygiene:
 - Do not use conceptual labels such as "Worker Env types", "wrangler configuration", "Workflow binding registration", "API routes", or "UI assets".
 - If the exact file is genuinely unknowable, use "unknown: <why>" instead of a label.
 Role-boundary hygiene:
-- Engineer tasks own Worker config/source/test/migration files such as package.json, tsconfig.json when TypeScript is used, wrangler.jsonc, wrangler.toml when existing or source-required, src/**, workers/**, test/** Worker smoke tests, and migrations/**.
+- Engineer tasks own Worker source/test/migration files such as src/**, workers/**, test/**, and migrations/**, plus product-specific config edits when the source docs require them.
 - Designer tasks own static UI files such as public/index.html, public/styles.css, public/app.js, and assets/**.
 - Do not put public/** files in engineer-owned tasks; create or reuse a designer task for vanilla HTML/CSS/JS UI work.
 - Do not plan functions/** owned surfaces unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
-Root scaffold hygiene:
-- Target package.json is ${repoScaffoldState.packageJson}; target tsconfig.json is ${repoScaffoldState.tsconfigJson}.
-- If package.json is missing and the plan creates a standalone Worker project, the first root engineer task must own package.json, .gitignore, wrangler.jsonc, and at least one concrete Worker source entry such as src/index.js or workers/app.js. Include tsconfig.json only when the Worker source is TypeScript.
-- Worker runtime/config/source/static asset/migration tasks must depend on that scaffold task unless they own package.json and the Worker source entry themselves.
 Open-decision hygiene:
 - taskPlan.open_decisions is only for genuine blockers that prevent a task from being implemented safely.
 - Do not stop for preferences the harness already settles: Worker over Pages unless source docs declaratively require Pages, vanilla UI over frameworks, Wrangler over GitHub Actions deploy, local validation before production, or Workers AI binding shape.
@@ -104,7 +103,7 @@ Return a full replacement taskPlan object. Do not write implementation code. Do 
 
 Project policy:
 - This harness is for Chris's standalone Cloudflare Worker projects, not desktop apps, mobile apps, generic Node servers, React/Vite apps, or Cloudflare Pages unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
-- Default new projects to a vanilla JavaScript Worker module entry, Wrangler config, and vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo or source docs explicitly require it.
+- Default new projects to a vanilla JavaScript Worker with vanilla HTML/CSS/JS under public/ when a UI is needed. Use TypeScript only when the existing repo, source docs, or selected Cloudflare bindings require it.
 - Use wrangler.jsonc for new Worker config unless the repo already has wrangler.toml or the source docs explicitly require TOML.
 - New Worker config must define env.staging and env.production. Mirror required bindings and vars inside both environments because Wrangler does not inherit them across environments.
 - Use Wrangler CLI for local validation and deployment; never make GitHub Actions the deployment path.
@@ -113,8 +112,8 @@ Project policy:
 - New Worker config must use compatibility_date "${compatibilityDate}" unless the source docs explicitly require a different recent date.
 
 Task-plan quality requirements:
-- For a brand-new Worker project, the first root engineer scaffold task must own package.json, .gitignore, wrangler.jsonc, and the Worker entrypoint so Wrangler dry-run validation can run from the first build slice.
-- Keep D1 schema/migration work separate from Worker config: migrations/*.sql belongs in a later task after the root scaffold/config task.
+- A deterministic delivery-scaffold workflow owns root Worker scaffold files before implementation agents run. Do not add planner rows solely to own package.json, .gitignore, wrangler.jsonc, tsconfig.json, vitest.config.ts, .dev.vars.example, or initial public shell files.
+- Keep D1 schema/migration work separate from Worker routes and repositories: migrations/*.sql belongs in a dedicated storage task when D1 is required.
 - Include an engineer-owned README.md operator documentation task near the end for local Wrangler validation, Cloudflare resources/bindings/secrets, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.
 - When a deliverable is split into generated slices such as T05, T05-part-2, and T05-part-3, downstream tasks outside that slice family must depend on the final slice ID, not the first or middle slice.
 - Preserve concrete deliverables, checkable acceptance criteria, owned surfaces, and task owner boundaries.

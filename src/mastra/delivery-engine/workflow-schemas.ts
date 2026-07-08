@@ -1,6 +1,43 @@
 import { z } from 'zod';
-import { scaffoldManifestSchema } from './project-factory/schemas';
+import { scaffoldManifestSchema, scaffoldSurfaceKindSchema, testRuntimeKindSchema } from './project-factory/schemas';
 import { deliveryWorkflowNormalizedInputSchema } from './run-input';
+
+export const taskKindSchema = z.enum([
+  'product',
+  'scaffold',
+  'contract',
+  'worker',
+  'frontend',
+  'storage',
+  'provider-adapter',
+  'workflow',
+  'evidence',
+  'operator-docs',
+]);
+
+export const evidenceKindSchema = z.enum([
+  'none',
+  'contract',
+  'validation',
+  'api-route',
+  'frontend',
+  'provider-adapter',
+  'worker-smoke',
+  'local-gate',
+]);
+
+export const taskMetadataSchema = z.object({
+  task: z.object({ kind: taskKindSchema }).optional(),
+  surface: z.object({ kind: scaffoldSurfaceKindSchema }).optional(),
+  evidence: z.object({ kind: evidenceKindSchema }).optional(),
+  runtime: z.object({ kind: testRuntimeKindSchema }).optional(),
+  scaffold: z
+    .object({
+      owned_by_factory: z.boolean(),
+      generated_files: z.array(z.string()).default([]),
+    })
+    .optional(),
+});
 
 export const taskSchema = z.object({
   id: z.string(),
@@ -11,6 +48,7 @@ export const taskSchema = z.object({
   owned_surfaces: z.array(z.string()),
   source_task_id: z.string().optional(),
   source_acceptance_criteria: z.array(z.string()).optional(),
+  metadata: taskMetadataSchema.optional(),
 });
 
 export const readoutSchema = z.object({
@@ -311,6 +349,7 @@ export const deploymentApprovalSuspendSchema = z.object({
 export const planStageOutputSchema = deliveryStageOutputSchema;
 
 export type TaskPlan = z.infer<typeof taskPlanSchema>;
+export type TaskMetadata = z.infer<typeof taskMetadataSchema>;
 export type Readout = z.infer<typeof readoutSchema>;
 export type ReviewReport = z.infer<typeof reviewReportSchema>;
 export type ImplementationNote = z.infer<typeof implementationNoteSchema>;
