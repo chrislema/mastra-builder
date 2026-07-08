@@ -107,6 +107,10 @@ Do not redo these:
   `planning/task-plan-gates.ts`
 - Topological task ordering:
   `task-plan-dependencies.ts`
+- Cloudflare acceptance-criteria sanitizer and canonicalization policy:
+  `planning/cloudflare-contract-criteria-policy.ts`
+- Root Worker scaffold detection:
+  `planning/scaffold-policy.ts`
 
 ## Cleanup Rules
 

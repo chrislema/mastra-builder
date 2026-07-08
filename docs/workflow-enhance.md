@@ -248,6 +248,10 @@ Completed extraction:
   normalization, final-slice dependency policy, and generated-slice hygiene.
 - `planning/task-plan-gates.ts` for deterministic task-plan gate assembly.
 - `task-plan-dependencies.ts` now owns topological task ordering.
+- `planning/cloudflare-contract-criteria-policy.ts` for Cloudflare
+  acceptance-criteria sanitizer predicates and status/surface
+  canonicalization.
+- `planning/scaffold-policy.ts` now owns root Worker scaffold detection.
 
 Keep in planning workflow:
 

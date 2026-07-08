@@ -7,6 +7,7 @@ import {
   normalizedOwnedSurfaces,
   taskOwnsAnyExactSurface,
   taskOwnsExactSurface,
+  taskOwnsIndexSurface,
 } from '../task-plan-surface-policy';
 import { workerConfigPath, workerConfigSurfacePaths } from '../worker-hygiene';
 import type { ScaffoldManifest } from '../project-factory/schemas';
@@ -14,6 +15,10 @@ import type { Task, TaskPlan } from '../workflow-schemas';
 
 export function ownsPackageScaffold(task: Task) {
   return taskOwnsExactSurface(task, 'package.json');
+}
+
+export function taskIsRootScaffold(task: Task) {
+  return task.depends_on.length === 0 && ownsPackageScaffold(task) && taskOwnsIndexSurface(task);
 }
 
 function ownsWorkerConfigSurface(task: Task) {
