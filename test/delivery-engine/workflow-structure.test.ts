@@ -20,6 +20,7 @@ const taskPacketRailsSource = () => readFileSync('src/mastra/delivery-engine/tas
 const agentRuntimeSource = () =>
   [
     readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8'),
+    readFileSync('src/mastra/delivery-engine/implementation/build-task-runner.ts', 'utf8'),
     readFileSync('src/mastra/delivery-engine/agent-runtime/judge-runtime.ts', 'utf8'),
   ].join('\n');
 

@@ -148,6 +148,10 @@ Do not redo these:
 - Implementation attempt prompt, task packet assembly, retry-mode tool policy,
   and recovery prompt text:
   `implementation/attempt-prompt.ts`
+- Native build task attempt execution, implementation trace capture,
+  verification, deterministic gates, judgment handling, and retry-state
+  transitions:
+  `implementation/build-task-runner.ts`
 - Shared command evidence runner for run-code start events, execFile command
   execution, and command failure summaries:
   `evidence/command-runner.ts`

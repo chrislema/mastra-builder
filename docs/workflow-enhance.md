@@ -288,7 +288,7 @@ Verification:
 
 ### Phase 4: Implementation Task Execution
 
-Status: in progress.
+Status: complete.
 
 Goal: make build task execution a focused service rather than a long workflow
 step body.
@@ -343,6 +343,9 @@ Completed extraction:
 - `implementation/attempt-prompt.ts` for implementation attempt task-packet
   assembly, retry-mode tool policy, recovery prompt text, and post-write
   timeout selection.
+- `implementation/build-task-runner.ts` for native build task attempt
+  execution, implementation trace capture, verification, deterministic gates,
+  judgment handling, and retry-state transitions.
 
 Keep in build-task workflow:
 
