@@ -148,6 +148,9 @@ Do not redo these:
 - Implementation attempt prompt, task packet assembly, retry-mode tool policy,
   and recovery prompt text:
   `implementation/attempt-prompt.ts`
+- Shared command evidence runner for run-code start events, execFile command
+  execution, and command failure summaries:
+  `evidence/command-runner.ts`
 
 ## Cleanup Rules
 

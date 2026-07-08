@@ -382,6 +382,11 @@ Move:
 - release-gate evidence command execution.
 - release-gate evidence collection.
 
+Completed extraction:
+
+- `evidence/command-runner.ts` for run-code start events, shared execFile
+  command execution, and normalized command failure summaries.
+
 Keep in release-gate workflow:
 
 - call evidence collector.

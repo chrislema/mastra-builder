@@ -1,8 +1,7 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { promisify } from 'node:util';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import {
   appendDeliveryEventState,
@@ -233,7 +232,7 @@ import {
   wranglerDeployRevision,
   wranglerDeployUrls,
 } from './build-deployment-policy';
-import { verificationFailureSummaryFromCommandError } from './implementation-retry-policy';
+import { commandFailureSummary, execFileAsync, recordRunCodeStart } from './evidence/command-runner';
 import {
   buildReleaseGateRuntimeProbePlan,
   releaseGateRuntimeProbePlanRequiresAdminSecret as runtimeProbePlanRequiresAdminSecret,
@@ -390,8 +389,6 @@ export {
   typeScriptDiagnosticsFromText,
   type TypeScriptDiagnostic,
 } from './implementation/retry-runtime';
-
-const execFileAsync = promisify(execFile);
 
 function parseReviewReportResponse(response: unknown, label: string) {
   try {
@@ -638,32 +635,6 @@ async function ensureNodeDependencies({
       error: failure,
     };
   }
-}
-
-async function recordRunCodeStart({
-  repoPath,
-  mastra,
-  stage,
-  command,
-  timeoutMs,
-}: {
-  repoPath: string;
-  mastra: any;
-  stage: string;
-  command: string;
-  timeoutMs?: number;
-}) {
-  await appendDeliveryEventState({
-    repoPath,
-    mastra,
-    event: {
-      type: 'run_code_start',
-      stage,
-      command,
-      timeout_ms: timeoutMs,
-      output_summary: `Started ${command}.`,
-    },
-  });
 }
 
 async function runBuildVerification({
@@ -1236,10 +1207,6 @@ async function collectReleaseGateEvidence({
     commands,
     notes,
   };
-}
-
-function commandFailureSummary(error: unknown, limit = 1000) {
-  return verificationFailureSummaryFromCommandError(error, limit);
 }
 
 export function releaseGateRequiredEvidencePassed(evidence?: ReleaseGateEvidence): DeterministicGateResult {
