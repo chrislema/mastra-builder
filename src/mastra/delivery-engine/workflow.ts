@@ -126,6 +126,20 @@ import {
   type ReleaseGateEvidenceResult,
 } from './release-gate-command-plan';
 import {
+  buildTimeoutRemediation as buildTimeoutRemediationForTaskId,
+  canSalvageTimedOutBuildAttempt as canSalvageTimedOutBuildAttemptBase,
+  implementationFailureClass as implementationFailureClassBase,
+  implementationRetryMode as implementationRetryModeBase,
+  implementationToolChoiceForRetryMode as implementationToolChoiceForRetryModeBase,
+  outOfPlanVerificationFailurePathsFromTasks,
+  remediationHasVerificationFailure as remediationHasVerificationFailureBase,
+  staleDownstreamVerificationSurfacePathsFromOrderedTasks,
+  staleWorkspaceVerificationRemediation as staleWorkspaceVerificationRemediationFromTasks,
+  typeScriptDiagnosticsFromRemediation as typeScriptDiagnosticsFromRemediationBase,
+  typeScriptDiagnosticsFromText as typeScriptDiagnosticsFromTextBase,
+  type TypeScriptDiagnostic,
+} from './implementation-retry-policy';
+import {
   buildReleaseGateRuntimeProbePlan,
   releaseGateRuntimeProbePlanRequiresAdminSecret as runtimeProbePlanRequiresAdminSecret,
   type ReleaseGatePublicAssetProbeFile,
@@ -3742,17 +3756,6 @@ export function lifecycleStatusSchemaGaps(repoPath: string, task: Task) {
     });
 }
 
-function verificationFailurePaths(failure: string) {
-  const paths = new Set<string>();
-  const pathPattern =
-    /(?:^|\n)([^\s:()]+(?:\/[^\s:()]+)*\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|json|css|html?))(?::\d+(?::\d+)?|\(\d+,\d+\))/g;
-  for (const match of failure.matchAll(pathPattern)) {
-    const path = normalizeDeliveryPathReference(match[1]);
-    if (!path.startsWith('.delivery/') && !path.startsWith('node_modules/')) paths.add(path);
-  }
-  return [...paths];
-}
-
 export function staleDownstreamVerificationSurfacePaths({
   repoPath,
   taskPlan,
@@ -3764,22 +3767,13 @@ export function staleDownstreamVerificationSurfacePaths({
   currentTaskIndex: number;
   failure: string;
 }) {
-  const orderedTasks = topoOrderTasks(taskPlan.tasks);
-  const protectedSurfaces = orderedTasks
-    .slice(0, currentTaskIndex + 1)
-    .flatMap((task) => taskBoundarySurfaces(repoPath, task))
-    .map(concreteOwnedSurfacePath)
-    .filter((path): path is string => Boolean(path));
-  const downstreamTasks = orderedTasks.slice(currentTaskIndex + 1);
-
-  return verificationFailurePaths(failure).filter((path) => {
-    if (!existsSync(join(resolve(repoPath), path))) return false;
-    if (matchesAny(path, protectedSurfaces)) return false;
-
-    return downstreamTasks.some((task) => {
-      if (reusableImplementationArtifactForTask(repoPath, task)) return false;
-      return matchesAny(path, taskBoundarySurfaces(repoPath, task));
-    });
+  return staleDownstreamVerificationSurfacePathsFromOrderedTasks({
+    repoPath,
+    orderedTasks: topoOrderTasks(taskPlan.tasks),
+    currentTaskIndex,
+    failure,
+    taskBoundarySurfaces: (task) => taskBoundarySurfaces(repoPath, task),
+    reusableImplementationArtifactForTask: (task) => reusableImplementationArtifactForTask(repoPath, task),
   });
 }
 
@@ -3792,14 +3786,11 @@ export function outOfPlanVerificationFailurePaths({
   taskPlan: TaskPlan;
   failure: string;
 }) {
-  const allPlannedSurfaces = taskPlan.tasks
-    .flatMap((task) => taskBoundarySurfaces(repoPath, task))
-    .map(concreteOwnedSurfacePath)
-    .filter((path): path is string => Boolean(path));
-
-  return verificationFailurePaths(failure).filter((path) => {
-    if (!existsSync(join(resolve(repoPath), path))) return false;
-    return !matchesAny(path, allPlannedSurfaces);
+  return outOfPlanVerificationFailurePathsFromTasks({
+    repoPath,
+    tasks: taskPlan.tasks,
+    failure,
+    taskBoundarySurfaces: (task) => taskBoundarySurfaces(repoPath, task),
   });
 }
 
@@ -3812,11 +3803,13 @@ function staleWorkspaceVerificationRemediation({
   taskPlan?: TaskPlan;
   failure: string;
 }) {
-  if (!taskPlan) return undefined;
-  const paths = outOfPlanVerificationFailurePaths({ repoPath, taskPlan, failure });
-  if (!paths.length) return undefined;
-
-  return `STALE_WORKSPACE_VERIFICATION: repo-wide verification failed in existing file(s) outside the current task plan: ${paths.join(', ')}. Start from a clean project baseline, archive stale generated files, or revise the plan so those files are owned before retrying. Original failure: ${compactDiagnostic(failure, 500)}`;
+  return staleWorkspaceVerificationRemediationFromTasks({
+    repoPath,
+    tasks: taskPlan?.tasks,
+    failure,
+    taskBoundarySurfaces: (task) => taskBoundarySurfaces(repoPath, task),
+    compactDiagnostic,
+  });
 }
 
 export async function repairStaleDownstreamVerificationSurfaces({
@@ -3916,110 +3909,18 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
   return workerPackageScaffoldGapsWithGuards(repoPath, task, workerHygieneTaskGuards());
 }
 
-function remediationHasVerificationFailure(remediation: string[]) {
-  return remediation.some((item) =>
-    /\b(verification_passed|build_verification_passed|npm run|typecheck|tsc|TS\d+|Cannot find module)\b/i.test(item),
-  );
-}
-
-export type TypeScriptDiagnostic = {
-  path: string;
-  line: number;
-  column: number;
-  code: string;
-  message: string;
-};
+export type { TypeScriptDiagnostic };
 
 export function typeScriptDiagnosticsFromText(text: string) {
-  const diagnostics: TypeScriptDiagnostic[] = [];
-  const seen = new Set<string>();
-  const diagnosticPattern = /(^|\n)([^:\n()]+\.tsx?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+([^\n\r]+)/g;
-
-  for (const match of text.matchAll(diagnosticPattern)) {
-    const path = normalizeDeliveryPathReference(match[2] ?? '');
-    const line = Number(match[3]);
-    const column = Number(match[4]);
-    const code = match[5] ?? '';
-    const message = (match[6] ?? '').trim();
-    if (!path || !Number.isInteger(line) || !Number.isInteger(column) || !code || !message) continue;
-
-    const key = `${path}:${line}:${column}:${code}:${message}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    diagnostics.push({ path, line, column, code, message });
-  }
-
-  return diagnostics;
+  return typeScriptDiagnosticsFromTextBase(text);
 }
 
 export function typeScriptDiagnosticsFromRemediation(remediation: string[]) {
-  return typeScriptDiagnosticsFromText(remediation.join('\n'));
-}
-
-function remediationHasStaleWorkspaceVerificationFailure(remediation: string[]) {
-  return remediation.some((item) => /\bSTALE_WORKSPACE_VERIFICATION\b/i.test(item));
-}
-
-function remediationHasImplementationJudgmentFailure(remediation: string[]) {
-  return remediation.some((item) => /\b(GATE|DIMENSION|JUDGE|implementation judgment)\b/i.test(item));
-}
-
-function remediationHasJudgeTimeout(remediation: string[]) {
-  return remediation.some((item) => /\bJUDGE_TIMEOUT\b|judge.+timed out/i.test(item));
-}
-
-function remediationHasMissingSurfaceFailure(remediation: string[]) {
-  return remediation.some((item) => /\bowned_surfaces_present\b.*\bmissing owned surfaces\b/i.test(item));
-}
-
-function remediationHasUnreplacedPreflightStubFailure(remediation: string[]) {
-  return remediation.some((item) => /\b(preflight_stubs_replaced|preflight stubs remain)\b/i.test(item));
-}
-
-function remediationHasPolicyBoundaryFailure(remediation: string[]) {
-  return remediation.some((item) =>
-    /\b(file_ownership|write_paths_in_boundary|owned globs|forbidden glob|outside this task)\b/i.test(
-      item,
-    ),
-  );
-}
-
-function remediationHasReadBudgetFailure(remediation: string[]) {
-  return remediation.some((item) => /\bREAD_BUDGET_EXCEEDED\b|pre-write read\/list budget/i.test(item));
-}
-
-function remediationHasWorkerConfigFailure(remediation: string[]) {
-  return remediation.some((item) =>
-    /\b(cloudflare_worker_config_current|worker_config_hygiene|compatibility_date|nodejs_compat|observability)\b/i.test(
-      item,
-    ),
-  );
-}
-
-function remediationHasWorkerPackageFailure(remediation: string[]) {
-  return remediation.some((item) =>
-    /\b(worker_package_scaffold_current|worker_package_hygiene|worker-configuration\.d\.ts|generate-types|generated Wrangler types|wrangler v4|new Worker scaffolds)\b/i.test(
-      item,
-    ),
-  );
+  return typeScriptDiagnosticsFromRemediationBase(remediation);
 }
 
 export function implementationFailureClass(remediation: string[]) {
-  if (remediationHasMissingSurfaceFailure(remediation)) return 'missing_surface' as const;
-  if (remediationHasUnreplacedPreflightStubFailure(remediation)) return 'preflight_stub' as const;
-  if (remediationHasReadBudgetFailure(remediation)) return 'read_budget' as const;
-  if (remediationHasWorkerPackageFailure(remediation)) return 'worker_package' as const;
-  if (remediationHasWorkerConfigFailure(remediation)) return 'worker_config' as const;
-  if (remediationHasStaleWorkspaceVerificationFailure(remediation)) return 'stale_workspace_verification' as const;
-  if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
-  if (remediationHasPolicyBoundaryFailure(remediation)) return 'policy_boundary' as const;
-  if (remediationHasJudgeTimeout(remediation)) return 'judge_timeout' as const;
-  if (remediationHasImplementationJudgmentFailure(remediation)) return 'judge_quality' as const;
-  if (remediation.some((item) => /\b(no tool calls|without making a tool call|made no tool calls)\b/i.test(item))) {
-    return 'model_no_action' as const;
-  }
-  if (remediation.some((item) => /timed out/i.test(item))) return 'model_timeout' as const;
-  return 'unknown' as const;
+  return implementationFailureClassBase(remediation);
 }
 
 export function canSalvageTimedOutBuildAttempt({
@@ -4031,7 +3932,7 @@ export function canSalvageTimedOutBuildAttempt({
   missingSurfaces: string[];
   unreplacedStubs: string[];
 }) {
-  return stageHadToolUse && missingSurfaces.length === 0 && unreplacedStubs.length === 0;
+  return canSalvageTimedOutBuildAttemptBase({ stageHadToolUse, missingSurfaces, unreplacedStubs });
 }
 
 export function implementationRetryMode({
@@ -4043,38 +3944,11 @@ export function implementationRetryMode({
   missingSurfaces: string[];
   unreplacedStubs?: string[];
 }) {
-  const timeoutRecovery = remediation.some((item) => /timed out/i.test(item));
-  const failureClass = implementationFailureClass(remediation);
-  const noActionRecovery = failureClass === 'model_no_action';
-  if (failureClass === 'preflight_stub' || (unreplacedStubs.length && (timeoutRecovery || noActionRecovery))) {
-    return 'replace-stubs' as const;
-  }
-  if (
-    (timeoutRecovery || noActionRecovery || failureClass === 'missing_surface' || failureClass === 'read_budget') &&
-    missingSurfaces.length
-  ) {
-    return 'write-first' as const;
-  }
-  if (
-    timeoutRecovery ||
-    noActionRecovery ||
-    failureClass === 'read_budget' ||
-    failureClass === 'worker_package' ||
-    failureClass === 'worker_config' ||
-    failureClass === 'policy_boundary' ||
-    failureClass === 'judge_timeout' ||
-    remediationHasVerificationFailure(remediation) ||
-    remediationHasImplementationJudgmentFailure(remediation)
-  ) {
-    return 'focused-repair' as const;
-  }
-  return 'normal' as const;
+  return implementationRetryModeBase({ remediation, missingSurfaces, unreplacedStubs });
 }
 
 export function implementationToolChoiceForRetryMode(retryMode: ReturnType<typeof implementationRetryMode>) {
-  return retryMode === 'write-first' || retryMode === 'replace-stubs' || retryMode === 'focused-repair'
-    ? 'required'
-    : 'auto';
+  return implementationToolChoiceForRetryModeBase(retryMode);
 }
 
 function judgeRepairAlreadyAttempted(remediation: string[]) {
@@ -4108,58 +3982,15 @@ export function buildTimeoutRemediation({
   readBudgetExceeded?: boolean;
   priorRemediation?: string[];
 }) {
-  if (readBudgetExceeded && missingSurfaces.length) {
-    return [
-      `READ_BUDGET_EXCEEDED ${task.id}: the build attempt exhausted the pre-write read/list budget before creating owned surfaces. Create the missing owned surfaces now without listing or reading more files: ${missingSurfaces.join(', ')}.`,
-    ];
-  }
-
-  if (readBudgetExceeded) {
-    return preservePriorRemediation(
-      [
-        `READ_BUDGET_EXCEEDED ${task.id}: the build attempt exhausted the pre-write read/list budget. Make a focused write/edit to the boundary surfaces before any more reads.`,
-      ],
-      priorRemediation,
-    );
-  }
-
-  if (noToolCall && missingSurfaces.length) {
-    return [
-      `${task.id} build attempt made no tool calls after ${timeoutMs}ms. Create the missing owned surfaces before any broad investigation: ${missingSurfaces.join(', ')}.`,
-    ];
-  }
-
-  if (noToolCall && repairRecovery) {
-    return preservePriorRemediation([
-      `${task.id} repair attempt made no tool calls after ${timeoutMs}ms. Make a focused write to the existing boundary surfaces before returning.`,
-    ], priorRemediation);
-  }
-
-  if (noToolCall) {
-    return [
-      `${task.id} build attempt made no tool calls after ${timeoutMs}ms. Make a focused write to the boundary surfaces before returning.`,
-    ];
-  }
-
-  if (missingSurfaces.length) {
-    return [
-      `${task.id} build attempt timed out after ${timeoutMs}ms. Create the missing owned surfaces before any broad investigation: ${missingSurfaces.join(', ')}.`,
-    ];
-  }
-
-  if (repairRecovery) {
-    return preservePriorRemediation([
-      `${task.id} repair attempt timed out after ${timeoutMs}ms. Fix the reported repair findings in the existing boundary surfaces before any broad investigation.`,
-    ], priorRemediation);
-  }
-
-  return [
-    `${task.id} build attempt timed out after ${timeoutMs}ms. Edit the boundary surfaces before any broad investigation.`,
-  ];
-}
-
-function preservePriorRemediation(primary: string[], priorRemediation: string[]) {
-  return [...primary, ...priorRemediation.filter((item) => !primary.includes(item))];
+  return buildTimeoutRemediationForTaskId({
+    taskId: task.id,
+    timeoutMs,
+    missingSurfaces,
+    repairRecovery,
+    noToolCall,
+    readBudgetExceeded,
+    priorRemediation,
+  });
 }
 
 export function priorStoppedBuildTaskIds({
@@ -7993,7 +7824,7 @@ const executeBuildTaskAttemptStep = createStep({
     });
     const missingSurfaces = missingOwnedSurfacePaths(inputData.repoPath, task);
     const unreplacedStubs = unreplacedPreflightStubPaths(inputData.repoPath, task);
-    const verificationRecovery = remediationHasVerificationFailure(inputData.remediation);
+    const verificationRecovery = remediationHasVerificationFailureBase(inputData.remediation);
     const retryMode = implementationRetryMode({
       remediation: inputData.remediation,
       missingSurfaces,
