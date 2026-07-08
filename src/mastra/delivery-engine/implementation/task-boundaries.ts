@@ -1,6 +1,7 @@
-import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { ownsTypeScriptInputSurface, workerSourceSurfaceIsConcrete } from '../planning/scaffold-policy';
+import { appendDeliveryEventState } from '../state-service';
 import {
   concreteOwnedSurfacePath,
   effectiveOwnedSurfaces,
@@ -79,6 +80,10 @@ export function generatedTaskSurfacePaths(task: Task) {
   return output ? [output] : [];
 }
 
+function isGeneratedTaskSurfacePath(task: Task, path: string) {
+  return generatedTaskSurfacePaths(task).includes(path);
+}
+
 export function taskSourceBoundarySurfaces(repoPath: string, task: Task) {
   const generated = new Set(generatedTaskSurfacePaths(task));
   return taskBoundarySurfaces(repoPath, task).filter((surface) => {
@@ -149,4 +154,99 @@ export function missingInstalledPackageNames(repoPath: string) {
 
 export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
   return workerPackageScaffoldGapsWithGuards(repoPath, task, workerHygieneTaskGuards());
+}
+
+export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
+  return effectiveOwnedSurfaces(task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .filter((path) => !isGeneratedTaskSurfacePath(task, path))
+    .filter((path) => !existsSync(join(resolve(repoPath), path)));
+}
+
+const deliveryPreflightStubMarker = 'Delivery preflight stub';
+
+function surfaceLooksLikeWorkerEntrypoint(path: string) {
+  return (
+    /^worker\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path) ||
+    /^src\/index\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path) ||
+    /^workers\/.+\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path)
+  );
+}
+
+export function compileSafeStubForSurface(path: string) {
+  if (surfaceLooksLikeWorkerEntrypoint(path)) {
+    return [
+      `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.`,
+      'export default {',
+      '  fetch() {',
+      '    return Response.json({ status: "preflight_stub" });',
+      '  },',
+      '};',
+      '',
+    ].join('\n');
+  }
+
+  if (/\.(?:ts|mts|cts)$/.test(path)) {
+    return [
+      `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.`,
+      'export {};',
+      '',
+    ].join('\n');
+  }
+  if (/\.(?:js|mjs|cjs)$/.test(path)) {
+    return `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.\n`;
+  }
+  if (/\.json$/.test(path)) return '{}\n';
+  if (/\.(?:sql)$/.test(path)) return `-- ${deliveryPreflightStubMarker}. The implementation agent should replace this with task SQL.\n`;
+  if (/\.(?:toml|ya?ml)$/.test(path)) return `# ${deliveryPreflightStubMarker}. The implementation agent should replace this with task config.\n`;
+  if (/\.css$/.test(path)) return `/* ${deliveryPreflightStubMarker}. The implementation agent should replace this with task styles. */\n`;
+  if (/\.html?$/.test(path)) return `<!doctype html>\n<!-- ${deliveryPreflightStubMarker}. The implementation agent should replace this with task markup. -->\n`;
+  return '';
+}
+
+export async function createMissingOwnedSurfaceStubs({
+  repoPath,
+  task,
+  stage,
+  mastra,
+}: {
+  repoPath: string;
+  task: Task;
+  stage: string;
+  mastra?: any;
+}) {
+  const created: string[] = [];
+  for (const path of missingOwnedSurfacePaths(repoPath, task)) {
+    const fullPath = join(resolve(repoPath), path);
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, compileSafeStubForSurface(path));
+    created.push(path);
+  }
+
+  if (created.length) {
+    await appendDeliveryEventState({
+      repoPath,
+      mastra,
+      event: {
+        type: 'preflight_stub_created',
+        stage,
+        task: task.id,
+        paths: created,
+      },
+    }).catch(() => undefined);
+  }
+
+  return created;
+}
+
+export function unreplacedPreflightStubPaths(repoPath: string, task: Task) {
+  return taskBoundarySurfaces(repoPath, task)
+    .map(concreteOwnedSurfacePath)
+    .filter((path): path is string => Boolean(path))
+    .filter((path) => {
+      const fullPath = join(resolve(repoPath), path);
+      if (!existsSync(fullPath)) return false;
+      return readFileSync(fullPath, 'utf8').includes(deliveryPreflightStubMarker);
+    });
 }

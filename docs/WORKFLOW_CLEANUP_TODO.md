@@ -126,7 +126,8 @@ Do not redo these:
   `planning/task-plan-normalizer.ts`
 - Planner revision response parsing and plan-gate remediation:
   `planning/task-plan-revision.ts`
-- Worker task boundaries and task-scoped Worker hygiene guards:
+- Worker task boundaries, task-scoped Worker hygiene guards, and preflight
+  owned-surface stubs:
   `implementation/task-boundaries.ts`
 
 ## Cleanup Rules

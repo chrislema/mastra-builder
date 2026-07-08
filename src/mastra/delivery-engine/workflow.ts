@@ -120,12 +120,16 @@ import {
   projectScaffoldHygiene,
 } from './planning/scaffold-policy';
 import {
+  compileSafeStubForSurface,
+  createMissingOwnedSurfaceStubs,
   currentWorkerCompatibilityDate,
   generatedTaskSurfacePaths,
   missingInstalledPackageNames,
+  missingOwnedSurfacePaths,
   taskBoundarySurfaces,
   taskOwnsPackageManifest,
   taskSourceBoundarySurfaces,
+  unreplacedPreflightStubPaths,
   workerConfigHygieneGaps,
   workerConfigTaskPacketPolicy,
   workerConfigTaskPacketPolicyForTask,
@@ -333,8 +337,11 @@ export { parsePlannerRevisionResponse, planGateRevisionRemediation } from './pla
 export {
   generatedTaskSurfacePaths,
   missingInstalledPackageNames,
+  missingOwnedSurfacePaths,
   taskBoundarySurfaces,
   taskSourceBoundarySurfaces,
+  createMissingOwnedSurfaceStubs,
+  unreplacedPreflightStubPaths,
   workerConfigHygieneGaps,
   workerConfigTaskPacketPolicy,
   workerConfigTaskPacketPolicyForTask,
@@ -892,10 +899,6 @@ function workerSourceContainsRouteLiteral(repoPath: string, route: string) {
   return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeContainsRouteLiteral(sourceRoot, route, scanned));
 }
 
-function isGeneratedTaskSurfacePath(task: Task, path: string) {
-  return generatedTaskSurfacePaths(task).includes(path);
-}
-
 export function profileKindTaskPacketPolicy(sourcePolicy: SourcePolicy) {
   if (!sourcePolicy.requiredProfileKinds.length) return null;
   return {
@@ -910,101 +913,6 @@ export function profileKindTaskPacketPolicyForTask(task: Task, sourcePolicy = so
     sourcePolicy.requiredProfileKinds.length
     ? profileKindTaskPacketPolicy(sourcePolicy)
     : null;
-}
-
-export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
-  return effectiveOwnedSurfaces(task)
-    .map(concreteOwnedSurfacePath)
-    .filter((path): path is string => Boolean(path))
-    .filter((path) => !isGeneratedTaskSurfacePath(task, path))
-    .filter((path) => !existsSync(join(resolve(repoPath), path)));
-}
-
-const deliveryPreflightStubMarker = 'Delivery preflight stub';
-
-function surfaceLooksLikeWorkerEntrypoint(path: string) {
-  return (
-    /^worker\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path) ||
-    /^src\/index\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path) ||
-    /^workers\/.+\.(?:js|mjs|cjs|ts|mts|cts)$/.test(path)
-  );
-}
-
-function compileSafeStubForSurface(path: string) {
-  if (surfaceLooksLikeWorkerEntrypoint(path)) {
-    return [
-      `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.`,
-      'export default {',
-      '  fetch() {',
-      '    return Response.json({ status: "preflight_stub" });',
-      '  },',
-      '};',
-      '',
-    ].join('\n');
-  }
-
-  if (/\.(?:ts|mts|cts)$/.test(path)) {
-    return [
-      `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.`,
-      'export {};',
-      '',
-    ].join('\n');
-  }
-  if (/\.(?:js|mjs|cjs)$/.test(path)) {
-    return `// ${deliveryPreflightStubMarker}. The implementation agent should replace this with task code.\n`;
-  }
-  if (/\.json$/.test(path)) return '{}\n';
-  if (/\.(?:sql)$/.test(path)) return `-- ${deliveryPreflightStubMarker}. The implementation agent should replace this with task SQL.\n`;
-  if (/\.(?:toml|ya?ml)$/.test(path)) return `# ${deliveryPreflightStubMarker}. The implementation agent should replace this with task config.\n`;
-  if (/\.css$/.test(path)) return `/* ${deliveryPreflightStubMarker}. The implementation agent should replace this with task styles. */\n`;
-  if (/\.html?$/.test(path)) return `<!doctype html>\n<!-- ${deliveryPreflightStubMarker}. The implementation agent should replace this with task markup. -->\n`;
-  return '';
-}
-
-export async function createMissingOwnedSurfaceStubs({
-  repoPath,
-  task,
-  stage,
-  mastra,
-}: {
-  repoPath: string;
-  task: Task;
-  stage: string;
-  mastra?: any;
-}) {
-  const created: string[] = [];
-  for (const path of missingOwnedSurfacePaths(repoPath, task)) {
-    const fullPath = join(resolve(repoPath), path);
-    mkdirSync(dirname(fullPath), { recursive: true });
-    writeFileSync(fullPath, compileSafeStubForSurface(path));
-    created.push(path);
-  }
-
-  if (created.length) {
-    await appendDeliveryEventState({
-      repoPath,
-      mastra,
-      event: {
-        type: 'preflight_stub_created',
-        stage,
-        task: task.id,
-        paths: created,
-      },
-    }).catch(() => undefined);
-  }
-
-  return created;
-}
-
-export function unreplacedPreflightStubPaths(repoPath: string, task: Task) {
-  return taskBoundarySurfaces(repoPath, task)
-    .map(concreteOwnedSurfacePath)
-    .filter((path): path is string => Boolean(path))
-    .filter((path) => {
-      const fullPath = join(resolve(repoPath), path);
-      if (!existsSync(fullPath)) return false;
-      return readFileSync(fullPath, 'utf8').includes(deliveryPreflightStubMarker);
-    });
 }
 
 function sqlHasCheckConstraintForColumn(sql: string, column: string) {

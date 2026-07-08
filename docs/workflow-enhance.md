@@ -319,7 +319,8 @@ Completed extraction:
 
 - `implementation/task-boundaries.ts` for task boundary surfaces, generated
   Wrangler type ownership, Worker config/package/binding hygiene guards,
-  installed package freshness, and source boundary filtering.
+  installed package freshness, source boundary filtering, and compile-safe
+  preflight stubs for missing owned surfaces.
 
 Keep in build-task workflow:
 
