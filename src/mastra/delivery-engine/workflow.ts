@@ -116,6 +116,14 @@ import {
   type ReleaseGatePublicAssetProbeFile,
 } from './release-gate-runtime-probe-plan';
 import {
+  aiOutputValidationContract,
+  routeEndpointDefaultCriteria as sourceRouteEndpointDefaultCriteria,
+  runRouteFamilyLabel as sourceRunRouteFamilyLabel,
+  runRouteMutationCriterion as sourceRunRouteMutationCriterion,
+  sourceScopedDeliveryContracts,
+  type SourceScopedDeliveryContracts,
+} from './task-plan-source-contracts';
+import {
   releaseGateTranscriptFixtureAvailable as transcriptFixtureAvailable,
   releaseGateTranscriptFixtureSchemaGaps as transcriptFixtureSchemaGaps,
   releaseGateTranscriptVersionAuditSql,
@@ -1485,9 +1493,6 @@ function withoutSessionRouteCrossSurfaceCriteria(task: Task) {
   };
 }
 
-const aiOutputValidationContract =
-  'AI output validation treats model JSON as untrusted input: scores are bounded integers, required rationales and transcript fields are non-empty, sourceUrls are preserved from selected sources, primarySegment is supplied, and word counts are computed by code before persistence.';
-
 function aiOutputValidationCriterion(criterion: string) {
   return /\bAI output validation treats model JSON as untrusted input\b/i.test(criterion);
 }
@@ -1747,72 +1752,37 @@ function taskRouteEndpointSourceCriteria(task: Task) {
   );
 }
 
-function sourceScopedDeliveryContracts(sourcePolicy?: SourcePolicy) {
-  const legacyFixtureMode = !sourcePolicy;
-  return {
-    profileState: legacyFixtureMode || sourcePolicy.requiredProfileKinds.length > 0,
-    latestTranscript: legacyFixtureMode || sourcePolicy.latestTranscriptRequired,
-  };
-}
-
-type SourceScopedDeliveryContracts = ReturnType<typeof sourceScopedDeliveryContracts>;
-
 function taskRouteEndpointDefaultCriteria(task: Task, contractScope: SourceScopedDeliveryContracts) {
-  const criteria: string[] = [];
-
-  if (contractScope.profileState && taskOwnsProfileRoute(task)) {
-    criteria.push(
-      'POST /profiles accepts multipart/form-data uploads for audience_segments and voice_profile markdown, validates kind/content/size, persists the original markdown through the profile service boundary, and can set the uploaded profile active.',
-      'POST /profiles/:id/activate atomically activates the selected profile for its kind, deactivates the previous active profile for that kind, and returns the active profile metadata without exposing raw markdown.',
-      'GET /profiles returns profile metadata and active-state summaries for authenticated operators without exposing raw profile markdown or R2 object contents.',
-    );
-  }
-
-  if (contractScope.latestTranscript && taskOwnsManualRunRoute(task)) {
-    criteria.push(
-      'POST /runs creates a queued manual run record with a default previous-seven-day window when no window is supplied, uses active profile artifact IDs when profile IDs are omitted, returns runId with status queued, and starts WEEKLY_WORKFLOW through the workflow binding/service boundary.',
-      'GET /runs/:id returns run status, requested window, profile artifact IDs used, selected candidate ID, transcript ID, status/error details, and never exposes raw profile markdown or fetched source content.',
-    );
-  }
-
-  if (contractScope.latestTranscript && taskOwnsLatestRoute(task)) {
-    criteria.push(
-      'GET /latest returns the latest completed transcript with title, hook, transcript, captions, sourceUrls, primarySegment, whyThisWasPicked, generatedAt, and run ID; it excludes completed_empty/no-transcript, failed, queued, and running runs and never exposes private profile markdown or fetched source content.',
-    );
-  }
-
-  if (contractScope.latestTranscript && taskOwnsRegenerationRoute(task)) {
-    criteria.push(
-      'POST /runs/:id/regenerate creates a new transcript version for the selected run through the transcript generation/service boundary, preserves prior transcript rows, advances the current transcript pointer only when intended, and returns updated transcript metadata.',
-    );
-  }
-
-  if (contractScope.latestTranscript && taskOwnsCandidateRoute(task)) {
-    criteria.push(
-      'Candidate routes for a run return candidate metadata and selection state without exposing private profile markdown or raw fetched source content, and candidate selection changes persist through the run/transcript repository boundary.',
-    );
-  }
-
-  return criteria;
+  return sourceRouteEndpointDefaultCriteria(
+    {
+      ownsProfileRoute: taskOwnsProfileRoute(task),
+      ownsManualRunRoute: taskOwnsManualRunRoute(task),
+      ownsLatestRoute: taskOwnsLatestRoute(task),
+      ownsRegenerationRoute: taskOwnsRegenerationRoute(task),
+      ownsCandidateRoute: taskOwnsCandidateRoute(task),
+    },
+    contractScope,
+  );
 }
 
 function taskRunRouteFamilyLabel(task: Task) {
-  const families = [
-    taskOwnsManualRunRoute(task) ? 'run' : undefined,
-    taskOwnsLatestRoute(task) ? 'latest' : undefined,
-    taskOwnsRegenerationRoute(task) ? 'regeneration' : undefined,
-    taskOwnsCandidateRoute(task) ? 'candidate' : undefined,
-  ].filter(Boolean);
-  return families.length ? families.join(', ') : 'run';
+  return sourceRunRouteFamilyLabel({
+    ownsProfileRoute: taskOwnsProfileRoute(task),
+    ownsManualRunRoute: taskOwnsManualRunRoute(task),
+    ownsLatestRoute: taskOwnsLatestRoute(task),
+    ownsRegenerationRoute: taskOwnsRegenerationRoute(task),
+    ownsCandidateRoute: taskOwnsCandidateRoute(task),
+  });
 }
 
 function runRouteMutationCriterion(task: Task) {
-  const mutations = [
-    taskOwnsManualRunRoute(task) ? 'run creation' : undefined,
-    taskOwnsRegenerationRoute(task) ? 'regeneration' : undefined,
-  ].filter(Boolean);
-  if (!mutations.length) return undefined;
-  return `Cookie-authenticated ${mutations.join(' and ')} mutations enforce the session CSRF token or same-origin Origin validation contract from the auth/session boundary.`;
+  return sourceRunRouteMutationCriterion({
+    ownsProfileRoute: taskOwnsProfileRoute(task),
+    ownsManualRunRoute: taskOwnsManualRunRoute(task),
+    ownsLatestRoute: taskOwnsLatestRoute(task),
+    ownsRegenerationRoute: taskOwnsRegenerationRoute(task),
+    ownsCandidateRoute: taskOwnsCandidateRoute(task),
+  });
 }
 
 function routeReachabilityNames(tasks: Task[], routeTasks: Task[], contractScope: SourceScopedDeliveryContracts) {

@@ -85,6 +85,10 @@ Completed cleanup checkpoints:
     lifecycle, latest transcript, runs, and profiles into
     `release-gate-runtime-probe-plan.ts`, leaving `workflow.ts` to supply
     source-policy and repo-inspection facts.
+  - Start source-scoped task-plan contract extraction by moving profile/latest
+    scope calculation, route endpoint default criteria, run-route labels, run
+    mutation criteria, and AI output validation contract text into
+    `task-plan-source-contracts.ts`.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
