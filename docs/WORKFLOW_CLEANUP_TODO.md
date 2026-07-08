@@ -103,6 +103,12 @@ Completed cleanup checkpoints:
     `task-plan-dependencies.ts`, including safe-dependency checks,
     dependency appends, dependency-based insertion/move, and cyclic dependency
     cleanup used by route/session/final-entrypoint ordering.
+  - Extract Worker config and package hygiene into `worker-hygiene.ts`,
+    including Wrangler JSONC/TOML parsing, current Worker config policy,
+    Workers AI binding checks, Env/Wrangler binding alignment, deployment
+    environment mirrors, package scaffold hygiene, and installed-package
+    freshness. `workflow.ts` now keeps only task-boundary guard adapters and
+    release-gate orchestration.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
