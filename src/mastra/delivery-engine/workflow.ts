@@ -2555,6 +2555,19 @@ function apiRouteBehaviorTestTask(routeTask: Task, testId: string, criteria: str
   };
 }
 
+function taskHasApiRouteBehaviorCriterion(task: Task) {
+  return [...task.acceptance_criteria, ...(task.source_acceptance_criteria ?? [])].some(
+    isApiRouteBehaviorAcceptanceCriterion,
+  );
+}
+
+function routeTaskBehaviorEvidenceCriterion(task: Task, criterion: string) {
+  return (
+    isApiRouteBehaviorAcceptanceCriterion(criterion) ||
+    (taskHasApiRouteBehaviorCriterion(task) && isBehaviorLikeAcceptanceCriterion(criterion))
+  );
+}
+
 function withApiRouteBehaviorTestTasks(tasks: Task[]) {
   let changed = false;
   let next = [...tasks];
@@ -2563,8 +2576,8 @@ function withApiRouteBehaviorTestTasks(tasks: Task[]) {
     if (!taskOwnsApiRouteBehaviorSurface(routeTask)) continue;
     const behaviorCriteria = Array.from(
       new Set(
-        [...routeTask.acceptance_criteria, ...(routeTask.source_acceptance_criteria ?? [])].filter(
-          isApiRouteBehaviorAcceptanceCriterion,
+        [...routeTask.acceptance_criteria, ...(routeTask.source_acceptance_criteria ?? [])].filter((criterion) =>
+          routeTaskBehaviorEvidenceCriterion(routeTask, criterion),
         ),
       ),
     );

@@ -45,19 +45,20 @@ tests were available as performed evidence:
 After stopping generic file evidence from verifying behavior-shaped criteria,
 keeping behavior-only evidence gaps out of deterministic implementation retries,
 copying API route and frontend behavior criteria onto explicit evidence tasks,
-and preserving those criteria on the implementation tasks as first-class
-contracts:
+preserving those criteria on the implementation tasks as first-class contracts,
+and carrying non-endpoint behavior from tasks that already declare explicit API
+route behavior into the same route evidence task:
 
-- Acceptance contracts: 231
+- Acceptance contracts: 238
 - Structured evidence: 33
 - Command/test evidence: 36
 - Generic file evidence: 25
-- Unverified contracts: 137
-- Behavior-shaped criteria: 124
+- Unverified contracts: 144
+- Behavior-shaped criteria: 131
 - Behavior criteria verified by generic file evidence: 0
-- Behavior criteria still unverified: 17
-- Pending behavior evidence: 81
-- Total audit smells: 81
+- Behavior criteria still unverified: 10
+- Pending behavior evidence: 95
+- Total audit smells: 74
 
 This is an intentional intermediate state: behavior is no longer falsely marked
 verified by token overlap, behavior-only proof gaps no longer cause
@@ -70,9 +71,11 @@ command evidence, judges, or release gates.
 
 Largest clusters:
 
-- `T05`: API route behavior now has an explicit `T05-api-route-behavior-tests`
-  task; remaining route/provider batch behavior still needs better ownership or
-  command evidence.
+- `T05`: API route and same-task route behavior now have an explicit
+  `T05-api-route-behavior-tests` task. The normalizer only broadens same-task
+  behavior when the route task already carries explicit API route behavior, so
+  auth/session/generated route-integration tasks do not get stray route-test
+  tasks.
 - `T06`, `T07`, `T08`, `T09`: frontend/runtime behavior now has explicit
   `*-frontend-behavior-tests` tasks; remaining smells are mostly structural
   generic-file evidence or non-behavior unverified UI/documentation contracts.

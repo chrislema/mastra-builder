@@ -1593,6 +1593,7 @@ test('task plan normalization copies API route behavior criteria to a smoke-test
         'GET /api/health returns JSON exactly shaped with ok true and service "benchmark".',
         'POST /api/run returns HTTP 400 for malformed JSON with a normalized validation_error response and no provider call.',
         'POST /api/run returns a normalized one-result provider_error response when the provider adapter fails.',
+        'Unknown model ids produce a normalized unknown_model result before provider dispatch.',
       ],
       source_acceptance_criteria: [
         'GET /api/models returns a models array containing id, label, vendor, provider, and configured for each catalog entry.',
@@ -1621,6 +1622,7 @@ test('task plan normalization copies API route behavior criteria to a smoke-test
   assert.match(testTask.acceptance_criteria.join('\n'), /GET \/api\/health/);
   assert.match(testTask.acceptance_criteria.join('\n'), /GET \/api\/models/);
   assert.match(testTask.acceptance_criteria.join('\n'), /POST \/api\/run/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /unknown_model result before provider dispatch/);
   assert.match([...(routeTask.source_acceptance_criteria ?? [])].join('\n'), /GET \/api\/models/);
   assert.ok(byId.T06.depends_on.includes('T05-api-route-behavior-tests'));
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
