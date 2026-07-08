@@ -230,6 +230,9 @@ Completed extraction:
   contract criteria helpers.
 - `planning/large-task-policy.ts` for splitting oversized implementation tasks
   into ordered delivery slices.
+- `planning/config-schema-policy.ts` for splitting Worker config and D1
+  migration ownership, with shared Worker/D1 surface predicates in
+  `task-plan-surface-policy.ts`.
 
 Keep in planning workflow:
 

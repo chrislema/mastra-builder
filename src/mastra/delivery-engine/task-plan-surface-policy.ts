@@ -1,4 +1,5 @@
 import { normalizeDeliveryPathReference } from './checks';
+import { workerConfigSurfacePaths } from './worker-hygiene';
 import type { Task } from './workflow-schemas';
 
 const knownRootPathSurfaces = new Set([
@@ -47,6 +48,22 @@ export function concreteOwnedSurfacePath(surface: string) {
 
 export function taskOwnedBoundaryPaths(task: Task) {
   return normalizedOwnedSurfaces(task).map(concreteOwnedSurfacePath).filter((path): path is string => Boolean(path));
+}
+
+export function isWorkerConfigSurfacePath(path: string) {
+  return (workerConfigSurfacePaths as readonly string[]).includes(path);
+}
+
+export function taskOwnsWorkerConfigFile(task: Task) {
+  return taskOwnedBoundaryPaths(task).some(isWorkerConfigSurfacePath);
+}
+
+export function taskOwnsD1MigrationFile(task: Task) {
+  return taskOwnedBoundaryPaths(task).some((path) => path.startsWith('migrations/') && path.endsWith('.sql'));
+}
+
+export function taskD1MigrationSurface(task: Task) {
+  return taskOwnedBoundaryPaths(task).find((path) => path.startsWith('migrations/') && path.endsWith('.sql'));
 }
 
 export function taskOwnsPathMatching(task: Task, pattern: RegExp) {

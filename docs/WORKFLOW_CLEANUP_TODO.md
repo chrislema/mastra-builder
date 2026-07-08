@@ -87,6 +87,8 @@ Do not redo these:
   `planning/task-contracts.ts`
 - Oversized implementation task splitting:
   `planning/large-task-policy.ts`
+- Worker config and D1 schema task splitting:
+  `planning/config-schema-policy.ts`
 
 ## Cleanup Rules
 
