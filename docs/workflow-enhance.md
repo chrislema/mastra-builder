@@ -244,6 +244,9 @@ Completed extraction:
   acceptance-contract IDs, preservation, and regression checks.
 - `planning/route-boundary-policy.ts` for route-integration predicates and
   final entrypoint route-boundary consistency hygiene.
+- `planning/generated-slice-policy.ts` for generated-slice dependency
+  normalization, final-slice dependency policy, and generated-slice hygiene.
+- `planning/task-plan-gates.ts` for deterministic task-plan gate assembly.
 
 Keep in planning workflow:
 

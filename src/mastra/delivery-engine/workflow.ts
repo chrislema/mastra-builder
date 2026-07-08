@@ -19,7 +19,6 @@ import {
 } from './state-service';
 import { readDeliveryEvents, writeDeliveryArtifact, type DeliveryRunStatus } from './state';
 import {
-  dependencyGraphAcyclic,
   fileOwnership,
   matchesAny,
   noBcryptWeakHash,
@@ -105,6 +104,13 @@ import {
   preserveTaskPlanAcceptanceContracts,
   taskPlanAcceptanceContractRegression,
 } from './planning/acceptance-contract-preservation';
+import {
+  generatedSliceDependencyHygiene,
+  normalizeTaskPlanGeneratedSliceDependencies,
+  preEntrypointBoundaryDependencyId,
+  routeIntegrationDependencyId,
+} from './planning/generated-slice-policy';
+import { taskPlanDeterministicResults } from './planning/task-plan-gates';
 import { pagesFunctionsExceptionHygiene } from './planning/pages-policy';
 import { ownedSurfaceHygiene } from './planning/owned-surface-policy';
 import { normalizeTaskPlanRoleBoundaries, taskOwnedSurfaceRoleHygiene } from './planning/role-boundary-policy';
@@ -279,10 +285,8 @@ import {
 import {
   finalGeneratedSliceTaskId,
   generatedSliceAcceptanceCriterion,
-  generatedSliceDependencyHygiene as generatedSliceDependencyHygieneWithPolicy,
   generatedSliceFamilyId,
   generatedSliceFamilyTasks,
-  normalizeTaskPlanGeneratedSliceDependencies as normalizeGeneratedSliceDependencies,
 } from './task-plan-generated-slices';
 import {
   appendDependencies,
@@ -383,6 +387,11 @@ export {
   preserveTaskPlanAcceptanceContracts,
   taskPlanAcceptanceContractRegression,
 } from './planning/acceptance-contract-preservation';
+export {
+  generatedSliceDependencyHygiene,
+  normalizeTaskPlanGeneratedSliceDependencies,
+} from './planning/generated-slice-policy';
+export { taskPlanDeterministicResults } from './planning/task-plan-gates';
 export { routeBoundaryConsistencyHygiene } from './planning/route-boundary-policy';
 
 const execFileAsync = promisify(execFile);
@@ -1191,34 +1200,6 @@ function withoutFinalWorkerEntrypointDrift(task: Task, finalDependencyIds: Set<s
     acceptance_criteria,
     ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
   };
-}
-
-function preEntrypointBoundaryDependencyId(tasks: Task[], task: Task) {
-  const finalTaskId = finalGeneratedSliceTaskId(tasks, task.id);
-  const finalTask = tasks.find((candidate) => candidate.id === finalTaskId);
-  if (!finalTask || finalTask.id === task.id) return task.id;
-  if (taskOwnsRouteModule(finalTask) || taskOwnsPublicAppSurface(finalTask) || taskOwnsIndexSurface(finalTask)) {
-    return task.id;
-  }
-  return finalTask.id;
-}
-
-function routeIntegrationDependencyId(tasks: Task[], task: Task) {
-  const finalTaskId = finalGeneratedSliceTaskId(tasks, task.id);
-  const finalTask = tasks.find((candidate) => candidate.id === finalTaskId);
-  if (!finalTask || finalTask.id === task.id) return task.id;
-  if (taskOwnsRouteModule(finalTask)) return finalTask.id;
-  if (taskOwnsPublicAppSurface(finalTask) || taskOwnsIndexSurface(finalTask)) return preEntrypointBoundaryDependencyId(tasks, task);
-  return finalTask.id;
-}
-
-function canUsePreEntrypointGeneratedDependency(tasks: Task[], dependency: string, finalDependency: string) {
-  const dependencyTask = tasks.find((candidate) => candidate.id === dependency);
-  const finalTask = tasks.find((candidate) => candidate.id === finalDependency);
-  if (!dependencyTask || !finalTask) return false;
-  if (taskOwnsRouteModule(finalTask)) return false;
-  if (!taskOwnsPublicAppSurface(finalTask) && !taskOwnsIndexSurface(finalTask)) return false;
-  return preEntrypointBoundaryDependencyId(tasks, dependencyTask) === dependency;
 }
 
 function routerBoundaryProviderTasks(tasks: Task[]) {
@@ -2147,22 +2128,6 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, s
   return changed ? { ...taskPlan, tasks } : taskPlan;
 }
 
-function generatedSliceDependencyPolicy(taskPlan: TaskPlan) {
-  return {
-    canTaskDependOn: (taskId: string, dependencyId: string) => taskCanSafelyDependOn(taskPlan, taskId, dependencyId),
-    canUsePreEntrypointGeneratedDependency: (dependencyId: string, finalDependencyId: string) =>
-      canUsePreEntrypointGeneratedDependency(taskPlan.tasks, dependencyId, finalDependencyId),
-  };
-}
-
-export function normalizeTaskPlanGeneratedSliceDependencies(taskPlan: TaskPlan): TaskPlan {
-  return normalizeGeneratedSliceDependencies(taskPlan, generatedSliceDependencyPolicy(taskPlan));
-}
-
-export function generatedSliceDependencyHygiene(taskPlan: TaskPlan) {
-  return generatedSliceDependencyHygieneWithPolicy(taskPlan, generatedSliceDependencyPolicy(taskPlan));
-}
-
 function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
   const sourcePolicy = sourcePolicyFromRepo(repoPath);
   return annotateTaskPlanWithTypedMetadata(normalizeTaskPlanOperatorDocumentation(
@@ -2180,41 +2145,6 @@ function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): Tas
     ),
   ));
 }
-
-const taskPlanDeterministicResults = ({
-  repoPath,
-  taskPlan,
-  sourcePolicy,
-}: {
-  repoPath: string;
-  taskPlan: TaskPlan;
-  sourcePolicy?: SourcePolicy;
-}): DeterministicGateResult[] => [
-  { id: 'tasks_structurally_complete', check: 'plan_schema_complete', ...planSchemaComplete(taskPlan) },
-  { id: 'no_circular_dependencies', check: 'dependency_graph_acyclic', ...dependencyGraphAcyclic(taskPlan) },
-  { id: 'open_decisions_hygiene', check: 'open_decision_hygiene', ...openDecisionHygiene(taskPlan) },
-  { id: 'owned_surfaces_concrete', check: 'owned_surface_hygiene', ...ownedSurfaceHygiene(taskPlan) },
-  { id: 'owned_surfaces_match_roles', check: 'task_owned_surfaces_in_role_boundary', ...taskOwnedSurfaceRoleHygiene(taskPlan) },
-  { id: 'pages_functions_source_declared', check: 'pages_functions_exception', ...pagesFunctionsExceptionHygiene(taskPlan, sourcePolicy) },
-  { id: 'root_project_scaffolded', check: 'project_scaffold_hygiene', ...projectScaffoldHygiene(repoPath, taskPlan) },
-  { id: 'config_schema_tasks_split', check: 'config_schema_task_split_hygiene', ...configSchemaTaskSplitHygiene(taskPlan) },
-  { id: 'operator_documentation_planned', check: 'operator_documentation_hygiene', ...operatorDocumentationHygiene(taskPlan) },
-  {
-    id: 'generated_slice_dependencies_finalized',
-    check: 'generated_slice_dependency_hygiene',
-    ...generatedSliceDependencyHygiene(taskPlan),
-  },
-  {
-    id: 'profile_contract_dependency_order',
-    check: 'profile_contract_dependency_order',
-    ...profileContractDependencyHygiene(taskPlan),
-  },
-  {
-    id: 'route_boundary_consistent',
-    check: 'route_boundary_consistency',
-    ...routeBoundaryConsistencyHygiene(taskPlan),
-  },
-];
 
 function topoOrderTasks(tasks: Task[]) {
   const byId = new Map(tasks.map((task) => [task.id, task]));

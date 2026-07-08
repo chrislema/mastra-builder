@@ -101,6 +101,10 @@ Do not redo these:
   `planning/acceptance-contract-preservation.ts`
 - Route integration and final entrypoint consistency hygiene:
   `planning/route-boundary-policy.ts`
+- Generated-slice dependency policy:
+  `planning/generated-slice-policy.ts`
+- Deterministic task-plan gate assembly:
+  `planning/task-plan-gates.ts`
 
 ## Cleanup Rules
 
