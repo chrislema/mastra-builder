@@ -74,6 +74,21 @@ environment/network limitation, not as a code regression. The real build
 verification path requires network access. When build verification matters,
 rerun `npm run build` with approved network access before diagnosing code.
 
+## Enhanced Delivery Reset Rule
+
+The active reset is defined in `docs/enhanced-delivery-spec.md`.
+
+Until Phases 1-4 of that spec are implemented and green, do not run another
+full paid `delivery:run` loop unless Chris explicitly asks for it. Work should
+advance through deterministic code changes, fixture tests, typecheck, static
+audits, and focused unit tests.
+
+This reset may change the workflow shape. The current delivery workflow is a
+source of lessons and working behavior, not a protected architecture. Prefer
+thin Mastra workflows calling focused Cloudflare Worker project-factory,
+scaffold, evidence, memory, and scoring modules over adding more helper
+clusters to `workflow.ts`.
+
 ## Contract Rule
 
 Contracts are still the right idea, but only in the right form.
