@@ -81,6 +81,10 @@ Completed cleanup checkpoints:
     file writing, and version-audit SQL into
     `release-gate-transcript-fixture.ts`, leaving `workflow.ts` with only the
     repo-aware context wrapper.
+  - Extract runtime probe selection for public assets, health routes, short-link
+    lifecycle, latest transcript, runs, and profiles into
+    `release-gate-runtime-probe-plan.ts`, leaving `workflow.ts` to supply
+    source-policy and repo-inspection facts.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
