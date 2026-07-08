@@ -118,3 +118,48 @@ For each run, record:
   estimates to generated-project behavior tests that run the code, such as a
   DOM/browser test that adds a reference file, removes it, and asserts chips,
   state, token estimate, and run payload behavior.
+
+### 2026-07-08 - CLI Resume Run 2 Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved; do not clear generated files or `.delivery` state.
+- Forward-progress question: with the project preserved after the prior T06
+  retry edits, does the run reuse/clear `T06` and move forward, or does it
+  repeat the same `T06-AC07` blocker?
+- Guardrail: if it repeats the T06 removal/token estimate blocker, do not fix it
+  with more static string matching. Treat it as evidence that the next harness
+  improvement should run generated-project behavior tests.
+- Workflow run ID: `8fbcf2d9-73d3-4d8e-b7e8-f6ebb4f21e3a`
+- Delivery run ID: `run-mrbpd4pf-1712dda9`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/8fbcf2d9-73d3-4d8e-b7e8-f6ebb4f21e3a.json`
+- Result: `deliveryStatus` was `stuck`; workflow control path completed and
+  reported the stuck delivery state.
+- Reused stages: `T01`, `T03`, `T06`.
+- Newly completed stages: `T02` judged `0.75`; `T02-part-2` judged `0.913`
+  after retries.
+- Farthest verified task: `T02-part-2` complete, with `T03` and `T06` reused
+  as passing artifacts. The prior `T06-AC07` blocker did not repeat.
+- New blocker: `T04` stuck on `T03-AC14`, requiring provider adapter failures
+  to be converted to normalized `provider_error` or `timeout_or_network_error`
+  values with client-safe messages defined by `src/contracts.ts`.
+- Failure class: harness bug / missing behavior evidence. `T04` repeatedly
+  passed `npm run typecheck`, then failed deterministic
+  `acceptance_contracts_satisfied` checks that asked for more provider-specific
+  file evidence. This is the brittle contract pattern the operating doctrine
+  warns against.
+- Other signal: the run replanned into a 12-task graph and only reused part of
+  the previous path. That churn is worth watching because it can make resume
+  behavior appear to move backward even when individual artifacts are reused.
+- Post-run noise: LibSQL emitted `CLIENT_CLOSED` writes during shutdown after
+  the report was already written. Treat that as observability shutdown noise
+  unless it prevents traces/scores from being persisted in Studio.
+- Current hypothesis: the provider acceptance criteria are being enforced as
+  task-boundary/file-evidence strings instead of executable behavior. The next
+  fix should move these criteria toward generated-project tests or typed helper
+  evidence, and should also ensure deterministic retry/remediation respects the
+  intended retry budget.
+- Stop decision: do not run another paid delivery pass before fixing the `T04`
+  contract boundary with focused harness tests.
