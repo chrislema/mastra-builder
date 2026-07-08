@@ -158,6 +158,10 @@ Do not redo these:
 - Release-gate local admin secret path selection, temporary token injection,
   and restoration:
   `evidence/local-admin-secret.ts`
+- Release-gate evidence planning, route discovery, static evidence, dynamic
+  command execution, local Wrangler runtime probes, transcript fixtures, and
+  required-evidence pass/fail policy:
+  `evidence/release-gate-evidence.ts`
 
 ## Cleanup Rules
 

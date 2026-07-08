@@ -391,6 +391,9 @@ Completed extraction:
   stale-workspace failure classification.
 - `evidence/local-admin-secret.ts` for release-gate local admin secret path
   selection, temporary token injection, and restoration.
+- `evidence/release-gate-evidence.ts` for release-gate evidence planning,
+  route discovery, static evidence, dynamic command execution, local Wrangler
+  runtime probes, transcript fixtures, and required-evidence pass/fail policy.
 
 Keep in release-gate workflow:
 
