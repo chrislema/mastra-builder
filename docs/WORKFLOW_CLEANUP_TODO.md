@@ -145,6 +145,9 @@ Do not redo these:
 - Implementation retry runtime, stale-surface repair, engine policy mismatch
   detection, timeout remediation, and TypeScript narrowing auto-repair:
   `implementation/retry-runtime.ts`
+- Implementation attempt prompt, task packet assembly, retry-mode tool policy,
+  and recovery prompt text:
+  `implementation/attempt-prompt.ts`
 
 ## Cleanup Rules
 

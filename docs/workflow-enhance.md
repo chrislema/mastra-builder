@@ -340,6 +340,9 @@ Completed extraction:
 - `implementation/retry-runtime.ts` for stale verification surface detection
   and repair, engine policy mismatch detection, retry mode wrappers, timeout
   remediation, judge repair prompts, and TypeScript narrowing auto-repair.
+- `implementation/attempt-prompt.ts` for implementation attempt task-packet
+  assembly, retry-mode tool policy, recovery prompt text, and post-write
+  timeout selection.
 
 Keep in build-task workflow:
 

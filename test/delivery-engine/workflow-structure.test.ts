@@ -14,6 +14,9 @@ import {
 import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaffold-workflow.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
+const implementationAttemptPromptSource = () =>
+  readFileSync('src/mastra/delivery-engine/implementation/attempt-prompt.ts', 'utf8');
+const taskPacketRailsSource = () => readFileSync('src/mastra/delivery-engine/task-packet-rails.ts', 'utf8');
 const agentRuntimeSource = () =>
   [
     readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8'),
@@ -47,10 +50,13 @@ test('delivery workflow is split into native stage workflows', () => {
 
 test('delivery workflow scaffolds deterministically between planning and review', () => {
   const source = workflowSource();
+  const promptSource = implementationAttemptPromptSource();
+
   assert.match(source, /\.then\(deliveryPlanningWorkflow\)\s+\.then\(createScaffoldArtifactsStep\)\s+\.then\(deliveryReviewWorkflow\)/);
   assert.match(source, /id: 'create-scaffold-artifacts'/);
   assert.match(source, /executeDeliveryScaffold/);
-  assert.match(source, /scaffold_manifest: scaffoldManifestPromptSummary/);
+  assert.match(source, /scaffoldManifestSummary: scaffoldManifestPromptSummary/);
+  assert.match(promptSource, /scaffold_manifest: scaffoldManifestSummary/);
 });
 
 test('workflow agent calls use run-scoped Mastra memory', () => {
@@ -68,13 +74,18 @@ test('workflow agent calls use run-scoped Mastra memory', () => {
 
 test('delivery workflow records structured gate and task packet observability events', () => {
   const source = workflowSource();
+  const promptSource = implementationAttemptPromptSource();
+  const railsSource = taskPacketRailsSource();
+
   assert.match(source, /type: 'deterministic_gate_result'/);
   assert.match(source, /gate: 'task-plan'/);
   assert.match(source, /type: 'task_packets_emitted'/);
-  assert.match(source, /taskPacketRailsForTask/);
   assert.match(source, /verification_command_class: rails\.verification_command_class/);
   assert.match(source, /allowed_surfaces: rails\.allowed_surfaces/);
-  assert.match(source, /task_rails: taskRails/);
+  assert.match(promptSource, /taskPacketRailsForTask/);
+  assert.match(promptSource, /task_rails: taskRails/);
+  assert.match(railsSource, /allowed_surfaces: allowedSurfaces/);
+  assert.match(railsSource, /verification_command_class: verificationCommandClassForTask\(task\)/);
 });
 
 test('release gate is synthesized deterministically from evidence', () => {
