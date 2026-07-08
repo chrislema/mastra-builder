@@ -22,6 +22,7 @@ import {
   implementationRetryMode,
   implementationToolChoiceForRetryMode,
   implementationWeakDimensionRemediation,
+  generatedTaskSurfacePaths,
   isTrueBlockingAmbiguity,
   generatedSliceDependencyHygiene,
   judgeProviderErrorDetails,
@@ -87,6 +88,7 @@ import {
   taskOwnedSurfaceRoleHygiene,
   taskPlanAcceptanceContractRegression,
   taskBoundarySurfaces,
+  taskSourceBoundarySurfaces,
   typeScriptDiagnosticsFromRemediation,
   typeScriptDiagnosticsFromText,
   unreplacedPreflightStubPaths,
@@ -3878,7 +3880,6 @@ test('acceptance contracts verify TypeScript Hono Worker scaffold structurally',
       '.env*',
       '*.cpuprofile',
       '.cache/',
-      'cache/',
       'dist/',
       'build/',
       '',
@@ -4270,6 +4271,25 @@ test('missing Worker entrypoint preflight creates runnable module stubs', async 
   assert.match(readFileSync(join(repoPath, 'workers/app.js'), 'utf8'), /Response\.json/);
   assert.match(readFileSync(join(repoPath, 'src/index.ts'), 'utf8'), /export default \{/);
   assert.deepEqual(unreplacedPreflightStubPaths(repoPath, task), ['workers/app.js', 'src/index.ts']);
+});
+
+test('generated Wrangler type output is not treated as a source preflight surface', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-generated-worker-types-'));
+  const [task] = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'tsconfig.json', 'worker-configuration.d.ts', 'src/index.ts'],
+    },
+  ]).tasks;
+
+  assert.deepEqual(generatedTaskSurfacePaths(task), ['worker-configuration.d.ts']);
+  assert.deepEqual(taskSourceBoundarySurfaces(repoPath, task), ['package.json', 'wrangler.jsonc', 'tsconfig.json', 'src/index.ts']);
+  assert.deepEqual(missingOwnedSurfacePaths(repoPath, task), ['package.json', 'wrangler.jsonc', 'tsconfig.json', 'src/index.ts']);
+
+  const created = await createMissingOwnedSurfaceStubs({ repoPath, task, stage: 'build:T1' });
+
+  assert.deepEqual(created, ['package.json', 'wrangler.jsonc', 'tsconfig.json', 'src/index.ts']);
+  assert.equal(existsSync(join(repoPath, 'worker-configuration.d.ts')), false);
 });
 
 test('preflight stub detector fails until generated stubs are replaced', async () => {

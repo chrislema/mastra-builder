@@ -4278,6 +4278,16 @@ export function workerConfigTaskPacketPolicyForTask(task: Task) {
   return taskOwnsWorkerConfigFile(task) ? workerConfigTaskPacketPolicy() : null;
 }
 
+export function generatedTaskSurfacePaths(task: Task) {
+  const policy = workerConfigTaskPacketPolicyForTask(task);
+  const output = policy?.generated_types.output;
+  return output ? [output] : [];
+}
+
+function isGeneratedTaskSurfacePath(task: Task, path: string) {
+  return generatedTaskSurfacePaths(task).includes(path);
+}
+
 export function profileKindTaskPacketPolicy(sourcePolicy: SourcePolicy) {
   if (!sourcePolicy.requiredProfileKinds.length) return null;
   return {
@@ -4922,6 +4932,7 @@ export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
   return effectiveOwnedSurfaces(task)
     .map(concreteOwnedSurfacePath)
     .filter((path): path is string => Boolean(path))
+    .filter((path) => !isGeneratedTaskSurfacePath(task, path))
     .filter((path) => !existsSync(join(resolve(repoPath), path)));
 }
 
@@ -5051,6 +5062,14 @@ export function taskBoundarySurfaces(repoPath: string, task: Task) {
   }
 
   return [...surfaces];
+}
+
+export function taskSourceBoundarySurfaces(repoPath: string, task: Task) {
+  const generated = new Set(generatedTaskSurfacePaths(task));
+  return taskBoundarySurfaces(repoPath, task).filter((surface) => {
+    const path = concreteOwnedSurfacePath(surface);
+    return !path || !generated.has(path);
+  });
 }
 
 function sqlHasCheckConstraintForColumn(sql: string, column: string) {
@@ -11542,7 +11561,10 @@ const executeBuildTaskAttemptStep = createStep({
     const attempt = inputData.attempt;
     const attemptNumber = attempt + 1;
     const stage = `build:${task.id}`;
-    const usableSurfaces = taskBoundarySurfaces(inputData.repoPath, task).filter((surface) => !/^unknown\b/i.test(surface));
+    const sourceBoundarySurfaces = taskSourceBoundarySurfaces(inputData.repoPath, task).filter(
+      (surface) => !/^unknown\b/i.test(surface),
+    );
+    const generatedSurfaces = generatedTaskSurfacePaths(task);
     await updateDeliveryTaskState({
       repoPath: inputData.repoPath,
       id: task.id,
@@ -11556,7 +11578,7 @@ const executeBuildTaskAttemptStep = createStep({
       repoPath: inputData.repoPath,
       stage,
       role,
-      surfaces: usableSurfaces.length ? usableSurfaces : undefined,
+      surfaces: sourceBoundarySurfaces.length ? sourceBoundarySurfaces : undefined,
       mastra,
     });
 
@@ -11590,7 +11612,7 @@ const executeBuildTaskAttemptStep = createStep({
     const dependencySurfaces = directDependencySurfacePaths(taskPlan, task);
     const verificationFailureDiagnostics = typeScriptDiagnosticsFromRemediation(inputData.remediation);
     const focusedRepairFileContext = replaceStubsRecovery || focusedRepairRecovery
-      ? repoFileContents(inputData.repoPath, focusedRepairContextPaths(taskPlan, task, usableSurfaces))
+      ? repoFileContents(inputData.repoPath, focusedRepairContextPaths(taskPlan, task, sourceBoundarySurfaces))
       : [];
     const taskPacket = {
       scope: taskPlan.scope,
@@ -11608,7 +11630,8 @@ const executeBuildTaskAttemptStep = createStep({
       missing_owned_surfaces: missingSurfaces,
       unreplaced_preflight_stubs: unreplacedStubs,
       preflight_created_surfaces: preflightCreatedSurfaces,
-      boundary_surfaces: usableSurfaces,
+      boundary_surfaces: sourceBoundarySurfaces,
+      generated_surfaces: generatedSurfaces,
       direct_dependency_surfaces: dependencySurfaces,
       verification_failure_diagnostics: verificationFailureDiagnostics,
       package_manifest_owned: packageManifestOwned,
@@ -11636,6 +11659,7 @@ Execution rules:
 - Treat task_packet.acceptance_contracts as mandatory contracts. Do not return until every listed AC has concrete code evidence in the task's boundary surfaces, or until you surface a real blocker.
 - Do not replace a product acceptance contract with a weaker "slice completed" claim. If the contract names behavior, implement the behavior or leave the task incomplete.
 - Touch only the boundary surfaces in the task packet unless a dependency blocks the task.
+- generated_surfaces are workflow-generated evidence outputs, not source files. Do not write or edit generated_surfaces directly; configure their source inputs and scripts so workflow verification generates them.
 - If preflight_created_surfaces is non-empty, replace those stubs with the real implementation for this task.
 - If an owned surface is still missing, create it.
 - If unreplaced_preflight_stubs is non-empty, replace every listed stub before editing any other file.
@@ -11656,6 +11680,7 @@ Execution rules:
 - Treat platform_policy_findings as mandatory corrections, even when the original task text is stale.
 - Treat domain_contract_findings as mandatory corrections, even when TypeScript is already passing.
 - When worker_config_policy is not null, use the policy exactly: wrangler.jsonc for new projects, "$schema" from worker_config_policy.schema, compatibility_date from worker_config_policy.compatibility_date, compatibility_flags including "nodejs_compat", explicit observability enabled with head_sampling_rate, Workers Static Assets from worker_config_policy.static_assets when public/ UI files exist, worker_config_policy.deployment_environments with env.staging/env.production and the listed staging/prod Wrangler commands, worker_config_policy.generated_types for TypeScript source, and Wrangler binding names that exactly match generated Env binding property names.
+- For worker_config_policy.generated_types, do not hand-write worker-configuration.d.ts. Add scripts.generate-types and tsconfig include so "wrangler types" creates it during workflow verification.
 - For Worker scaffolds, use current Cloudflare tooling: Wrangler "latest" or v4+, scripts.dev as "wrangler dev --env staging", and scripts.deploy as "wrangler deploy --env production". For TypeScript Worker source, add scripts.generate-types as "wrangler types", scripts.typecheck as "npm run generate-types && tsc --noEmit", @types/node, and tsconfig.json. Do not add @cloudflare/workers-types; Wrangler generates Worker binding/runtime types from config.
 - Do not add React, Vite, Next, Vue, Svelte, or frontend build dependencies/scripts. Chris's Worker frontends are vanilla HTML/CSS/JS served as static assets.
 - When TypeScript is used, configure tsconfig.json for Workers: target ES2022 or newer, module ESNext, moduleResolution Bundler, lib includes ES2022+ and WebWorker, include contains src/**/*.ts and worker-configuration.d.ts, compilerOptions.types contains node when nodejs_compat is enabled, and strict is true. Do not put worker-configuration.d.ts in compilerOptions.types; TypeScript types entries are package names.
@@ -11704,7 +11729,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
 - Use focused_repair_file_context as your source for current file contents. It includes boundary files plus direct dependency files needed for type and domain contracts.
 - Do not list or read files in this attempt.
 - The tool choice is required; call mastra_workspace_edit_file or mastra_workspace_write_file now.
-- Prefer editing existing generated files over adding new files.
+- Do not edit generated_surfaces directly; fix the source config, source code, or package scripts that generate them.
 - Do not edit dependency context files unless they also appear in boundary_surfaces.
 - Do not read spec.md, wrangler.toml, package.json, or package-lock.json unless that exact file is listed in boundary_surfaces.
 - Do not add or import a package that is not already listed in existing_package_dependencies unless package_manifest_owned is true.`
@@ -11772,7 +11797,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
           repoPath: inputData.repoPath,
           stage,
           role,
-          surfaces: usableSurfaces.length ? usableSurfaces : undefined,
+          surfaces: sourceBoundarySurfaces.length ? sourceBoundarySurfaces : undefined,
           mastra,
         });
         buildResponse = {

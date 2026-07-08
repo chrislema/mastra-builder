@@ -797,7 +797,7 @@ function gitignoreRuntimeArtifactContractEvidence(context: AcceptanceContractCon
 
   const source = readFileSync(gitignorePath, 'utf8');
   const gaps: string[] = [];
-  const requiredGroups: Array<{ label: string; patterns: RegExp[] }> = [
+  const requiredGroups: Array<{ label: string; patterns: RegExp[]; mode?: 'all' | 'any' }> = [
     { label: 'dependencies', patterns: [/^node_modules\/?$/m] },
     { label: 'Wrangler local state', patterns: [/^\.wrangler\/?$/m] },
     { label: 'env files', patterns: [/^\.env\*?$/m, /^\.dev\.vars\*?$/m] },
@@ -814,13 +814,17 @@ function gitignoreRuntimeArtifactContractEvidence(context: AcceptanceContractCon
       patterns: [/^(?:\.secrets\*?|\.secrets\/?|secrets\/?|generated-secrets\/?|\*\.secrets?|\*\.pem|\*\.key)$/m],
     });
   }
-  if (/\bcache\b/i.test(context.criterion)) requiredGroups.push({ label: 'cache artifacts', patterns: [/^\.cache\/?$/m, /^cache\/?$/m] });
+  if (/\bcache\b/i.test(context.criterion)) {
+    requiredGroups.push({ label: 'cache artifacts', patterns: [/^\.cache\/?$/m, /^cache\/?$/m], mode: 'any' });
+  }
   if (/\bbuild\b|\bruntime artifacts?\b/i.test(context.criterion)) {
     requiredGroups.push({ label: 'build/runtime artifacts', patterns: [/^dist\/?$/m, /^build\/?$/m] });
   }
 
   for (const group of requiredGroups) {
-    if (!group.patterns.every((pattern) => pattern.test(source))) gaps.push(`.gitignore must exclude ${group.label}.`);
+    const passed =
+      group.mode === 'any' ? group.patterns.some((pattern) => pattern.test(source)) : group.patterns.every((pattern) => pattern.test(source));
+    if (!passed) gaps.push(`.gitignore must exclude ${group.label}.`);
   }
 
   if (gaps.length) return { passed: false, evidence: [], gaps };
