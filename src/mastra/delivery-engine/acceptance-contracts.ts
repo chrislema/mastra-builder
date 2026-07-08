@@ -372,6 +372,96 @@ function workerValidationWithoutFrontendBuildContractEvidence(context: Acceptanc
   };
 }
 
+function dependencyNames(packageJson: Record<string, unknown> | undefined) {
+  if (!packageJson) return [];
+  const names = new Set<string>();
+  for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    const bucket = recordValue(packageJson[key]);
+    if (!bucket) continue;
+    for (const name of Object.keys(bucket)) names.add(name);
+  }
+  return [...names];
+}
+
+const forbiddenFrontendScaffoldPackages = new Set([
+  '@astrojs/cloudflare',
+  '@sveltejs/kit',
+  '@vitejs/plugin-react',
+  '@vitejs/plugin-vue',
+  'astro',
+  'next',
+  'parcel',
+  'react',
+  'react-dom',
+  'react-scripts',
+  'rollup',
+  'svelte',
+  'vite',
+  'vue',
+  'webpack',
+]);
+
+function firstBuildSliceRunnableByWranglerContractEvidence(context: AcceptanceContractContext) {
+  const target = ensureTaskRepo(context);
+  if (!target || !taskOwns(context, 'package.json') || !taskOwns(context, 'wrangler.jsonc')) return undefined;
+
+  const root = resolve(target.repoPath);
+  const packageJson = packageRecord(target.repoPath);
+  const scripts = recordValue(packageJson?.scripts) ?? {};
+  const dependencies = dependencyNames(packageJson);
+  const config = wranglerJsonConfig(target.repoPath);
+  const gaps: string[] = [];
+
+  if (typeof scripts.dev !== 'string' || !/\bwrangler\s+dev\b/.test(scripts.dev) || !/--env\s+staging\b/.test(scripts.dev)) {
+    gaps.push('package.json scripts.dev must run wrangler dev --env staging for local scaffold validation.');
+  }
+  if (typeof scripts.typecheck !== 'string' || !/\btsc\s+--noEmit\b/.test(scripts.typecheck)) {
+    gaps.push('package.json scripts.typecheck must run TypeScript without requiring a frontend build step.');
+  }
+  const frontendBuildScripts = Object.entries(scripts)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    .filter(([, command]) => /\b(vite|next|react-scripts|webpack|rollup|parcel|astro|svelte-kit)\b/i.test(command));
+  if (frontendBuildScripts.length) {
+    gaps.push(`package.json must not require frontend framework build scripts in T01: ${frontendBuildScripts.map(([name]) => name).join(', ')}.`);
+  }
+
+  const forbiddenDependencies = dependencies.filter((name) => forbiddenFrontendScaffoldPackages.has(name));
+  if (forbiddenDependencies.length) {
+    gaps.push(`package.json must not include React/Vite/frontend framework dependencies in T01: ${forbiddenDependencies.join(', ')}.`);
+  }
+
+  if (!config) {
+    gaps.push('wrangler.jsonc must be valid JSONC for scaffold validation.');
+  } else {
+    if (config.main !== 'src/index.ts') gaps.push('wrangler.jsonc main must point to src/index.ts for the first Worker slice.');
+    const pagesKeys = ['pages', 'pages_build_output_dir', 'pages_build', 'functions', 'pages_functions'];
+    const presentPagesKeys = pagesKeys.filter((key) => Object.prototype.hasOwnProperty.call(config, key));
+    if (presentPagesKeys.length) gaps.push(`wrangler.jsonc must not configure Pages in T01: ${presentPagesKeys.join(', ')}.`);
+    if (Array.isArray(config.d1_databases) && config.d1_databases.length) {
+      gaps.push('wrangler.jsonc must not require D1 databases or migrations in the first scaffold slice.');
+    }
+  }
+
+  for (const forbiddenPath of ['migrations', 'functions']) {
+    if (existsSync(join(root, forbiddenPath))) gaps.push(`${forbiddenPath}/ must not be required by the first Worker scaffold slice.`);
+  }
+  for (const publicFile of ['public/index.html', 'public/styles.css', 'public/app.js']) {
+    if (taskBoundarySurfaces(target.repoPath, target.task).includes(publicFile)) {
+      gaps.push(`${publicFile} must not be owned by the first engineer scaffold slice.`);
+    }
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [
+      'structured package.json/wrangler evidence verified T01 is runnable by Wrangler without database migrations, Pages, React/Vite, or public UI files',
+    ],
+    gaps: [],
+  };
+}
+
 function workerConfigEnvironmentContractEvidence(context: AcceptanceContractContext) {
   const target = ensureTaskRepo(context);
   if (!target || !taskOwns(context, 'wrangler.jsonc')) return undefined;
@@ -778,6 +868,16 @@ export const workerScaffoldAcceptanceContracts: AcceptanceContractDefinition[] =
     matches: ({ criterion }) =>
       /\bWrangler\b/i.test(criterion) && /\b(?:local|dry-run)\b/i.test(criterion) && /\bfrontend build step\b/i.test(criterion),
     evaluate: workerValidationWithoutFrontendBuildContractEvidence,
+  },
+  {
+    id: 'worker.scaffold.firstSliceRunnable',
+    title: 'First Worker slice is Wrangler-runnable',
+    surfaces: ['package.json', 'wrangler.jsonc', 'src/index.ts'],
+    matches: ({ criterion }) =>
+      /\bfirst build slice\b/i.test(criterion) &&
+      /\bstructurally runnable by Wrangler\b/i.test(criterion) &&
+      /\bwithout requiring\b/i.test(criterion),
+    evaluate: firstBuildSliceRunnableByWranglerContractEvidence,
   },
   {
     id: 'worker.config.adminTokenSecret',

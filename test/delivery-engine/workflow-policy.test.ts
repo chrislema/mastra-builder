@@ -3117,6 +3117,80 @@ test('Wrangler validation without frontend build contract rejects build-gated va
   assert.match(contract?.gaps.join('\n') ?? '', /frontend build step/);
 });
 
+test('acceptance contracts verify first build slice is Wrangler-runnable without deferred systems', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-first-slice-runnable-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+          'generate-types': 'wrangler types',
+          typecheck: 'npm run generate-types && tsc --noEmit',
+        },
+        dependencies: {
+          hono: 'latest',
+        },
+        devDependencies: {
+          wrangler: 'latest',
+          typescript: 'latest',
+          '@types/node': 'latest',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        main: 'src/index.ts',
+        compatibility_date: '2026-07-08',
+        compatibility_flags: ['nodejs_compat'],
+        ai: { binding: 'AI' },
+        env: {
+          staging: { ai: { binding: 'AI' } },
+          production: { ai: { binding: 'AI' } },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      'const app = new Hono<{ Bindings: Env }>();',
+      'app.get("/api/health", (c) => c.json({ ok: true, service: "benchmark" }));',
+      'export default { fetch(request, env, ctx) { return app.fetch(request, env, ctx); } } satisfies ExportedHandler<Env>;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.ts'],
+      acceptance_criteria: [
+        'The first build slice is structurally runnable by Wrangler without requiring database migrations, Pages, React/Vite, or public UI files.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /runnable by Wrangler without database migrations/);
+});
+
 test('acceptance contracts verify Workers AI binding in staging and production environments', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-ai-env-binding-'));
   writeFileSync(
