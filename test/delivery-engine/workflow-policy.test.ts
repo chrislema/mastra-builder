@@ -1017,6 +1017,28 @@ test('task plan role hygiene rejects engineer-owned public surfaces without a de
   assert.match(result.reason, /public\/index\.html|forbidden glob/);
 });
 
+test('task plan role normalization reassigns frontend-only public tasks to designer', () => {
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['public/app.js'],
+      acceptance_criteria: [
+        'public/app.js maintains browser state and renders untrusted output safely.',
+      ],
+    },
+  ]);
+  plan.tasks[0].owner = 'engineer';
+
+  const normalized = normalizeTaskPlanRoleBoundaries(plan);
+
+  assert.equal(normalized.tasks[0].owner, 'designer');
+  assert.deepEqual(normalized.tasks[0].owned_surfaces, ['public/app.js']);
+  assert.deepEqual(normalized.tasks[0].acceptance_criteria, [
+    'public/app.js maintains browser state and renders untrusted output safely.',
+  ]);
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
 test('task plan role hygiene allows engineer-owned Worker smoke tests under test', () => {
   const plan = taskPlan([
     {

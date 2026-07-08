@@ -281,3 +281,44 @@ For each run, record:
 - Stop decision: fix `implementationFilesTouched` so out-of-plan auto-repairs do
   not pollute implementation notes, add focused tests, then run cheap checks
   before another paid delivery pass.
+
+### 2026-07-08 11:59 CDT - CLI Resume Run 5 Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved; pick up from existing generated files and
+  `.delivery` state instead of clearing the project.
+- Forward-progress question: after commit `c4b994c` excluded stale
+  out-of-plan `auto_repair` writes from implementation-note `files_touched`,
+  does the preserved benchmark clear `T02-test-harness` and move to the next
+  task instead of repeating the note-scope judge failure?
+- Cheap/static verification already tried before this run:
+  - `node --import tsx --test test/delivery-engine/workflow-policy.test.ts`
+    passed with the new auto-repair accounting regression tests.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+- Guardrail: if this run stalls, classify the failure from the report first.
+  Do not add broad string matching in `workflow.ts`.
+- Workflow run ID: `ffadadff-e46e-4629-aaf1-1c9d9d17fad8`
+- Delivery run ID: `run-mrcbp970-f490cf97`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/ffadadff-e46e-4629-aaf1-1c9d9d17fad8.json`
+- Result: `deliveryStatus` was `stuck`; workflow control path completed and
+  wrote a report.
+- Farthest verified task: none in build for this run. The run stopped during
+  deterministic planner revision gates before the build cursor.
+- Confirmed/non-confirmed: this run did not reach `T02-test-harness`, so commit
+  `c4b994c` has not yet been validated by a full delivery pass.
+- New blocker: planner revision assigned `T07` to owner `engineer` while owning
+  `public/app.js`, which violates the current role boundary:
+  `engineer may not write public/app.js`.
+- Failure class: harness plan-normalization gap. A frontend-only task whose
+  concrete owned surfaces are all public assets should be normalized to
+  `designer` before deterministic role hygiene. Mixed scaffold/runtime tasks
+  should remain strict and fail if they combine engineer-owned and public
+  designer-owned surfaces incorrectly.
+- Stop decision: add a focused role-boundary normalization test and normalize
+  all-public engineer tasks to designer, then run cheap checks before another
+  paid delivery pass.

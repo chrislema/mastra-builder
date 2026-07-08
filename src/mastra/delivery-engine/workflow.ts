@@ -965,8 +965,20 @@ export function normalizeTaskPlanRoleBoundaries(taskPlan: TaskPlan): TaskPlan {
   const tasks = taskPlan.tasks.map((task) => {
     if (task.owner !== 'engineer') return task;
 
+    const boundaryPaths = taskOwnedBoundaryPaths(task);
+    if (
+      boundaryPaths.length > 0 &&
+      boundaryPaths.every((path) => !engineerCanOwnSurface(path) && designerCanOwnSurface(path))
+    ) {
+      changed = true;
+      return {
+        ...task,
+        owner: 'designer' as const,
+      };
+    }
+
     const misplacedPaths = new Set(
-      taskOwnedBoundaryPaths(task).filter(
+      boundaryPaths.filter(
         (path) => !engineerCanOwnSurface(path) && designerCanOwnSurface(path) && designerOwnedPaths.has(path),
       ),
     );
