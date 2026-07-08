@@ -3778,6 +3778,8 @@ test('acceptance contracts verify Benchmark model catalog structurally', () => {
         'src/models.ts exports a plain typed catalog array with Workers AI, Anthropic, z.ai Anthropic-compatible, and OpenAI-compatible entries.',
         'Each catalog entry includes id, label, vendor, provider, model, and only the optional secretKey/baseUrl fields needed for that provider.',
         'The catalog includes keyless Workers AI models and keyed models referencing ANTHROPIC_API_KEY, OPENAI_API_KEY, or ZAI_API_KEY as appropriate.',
+        'Adding a model is represented as a one-object catalog diff with no route changes required.',
+        'Provider identifiers are limited to the planned provider families: workers-ai, anthropic, and openai-compatible.',
       ],
     },
   ]).tasks;
@@ -4540,6 +4542,41 @@ test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness stru
   );
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /ADMIN_TOKEN is documented as a secret/);
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /protected APIs stay unavailable/);
+});
+
+test('acceptance contracts verify provider API key expectations in Wrangler config structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-provider-secret-config-'));
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    [
+      '{',
+      '  "name": "benchmark",',
+      '  "main": "src/index.ts",',
+      '  // Expected Cloudflare secrets: ANTHROPIC_API_KEY, OPENAI_API_KEY, ZAI_API_KEY.',
+      '  // Configure with wrangler secret put <name> --env staging and --env production.',
+      '  "env": {',
+      '    "staging": { "vars": { "APP_ENV": "staging" } },',
+      '    "production": { "vars": { "APP_ENV": "production" } }',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['wrangler.jsonc'],
+      acceptance_criteria: [
+        'wrangler.jsonc declares expected secret names or environment expectations for ANTHROPIC_API_KEY, OPENAI_API_KEY, and ZAI_API_KEY without embedding secret values.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({ repoPath, task, verification: { performed: [], missing: [] } });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /provider API key names are documented without committed secret vars/);
 });
 
 test('acceptance contracts verify TypeScript Hono Worker scaffold structurally', () => {

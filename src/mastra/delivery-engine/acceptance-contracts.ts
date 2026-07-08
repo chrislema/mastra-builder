@@ -817,6 +817,58 @@ function configScopeHasAdminTokenVar(scope: Record<string, unknown> | undefined)
   return Boolean(vars && Object.prototype.hasOwnProperty.call(vars, 'ADMIN_TOKEN'));
 }
 
+function workerConfigProviderSecretExpectationContractEvidence(context: AcceptanceContractContext) {
+  const target = ensureTaskRepo(context);
+  if (!target || !taskOwns(context, 'wrangler.jsonc')) return undefined;
+
+  const configPath = join(resolve(target.repoPath), 'wrangler.jsonc');
+  if (!existsSync(configPath)) return undefined;
+
+  const source = readFileSync(configPath, 'utf8');
+  const config = parseJsoncObject(source);
+  if (!config) {
+    return {
+      passed: false,
+      evidence: [],
+      gaps: ['wrangler.jsonc is not valid JSONC, so provider secret expectations could not be verified.'],
+    };
+  }
+
+  const requiredSecrets = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ZAI_API_KEY'].filter((secret) =>
+    new RegExp(`\\b${secret}\\b`).test(context.criterion),
+  );
+  const gaps: string[] = [];
+
+  for (const secret of requiredSecrets) {
+    if (!new RegExp(`\\b${secret}\\b`).test(source)) {
+      gaps.push(`wrangler.jsonc must document ${secret} as an expected Cloudflare secret or environment expectation.`);
+    }
+  }
+
+  const scopes: Array<[string, Record<string, unknown> | undefined]> = [['top-level', config]];
+  for (const environmentName of workerDeploymentEnvironments) {
+    scopes.push([`env.${environmentName}`, workerJsonEnvironmentRecord(config, environmentName)]);
+  }
+
+  for (const [scopeName, scope] of scopes) {
+    const vars = recordValue(scope?.vars);
+    if (!vars) continue;
+    for (const secret of requiredSecrets) {
+      if (Object.prototype.hasOwnProperty.call(vars, secret)) {
+        gaps.push(`wrangler.jsonc ${scopeName}.vars must not commit ${secret}; use wrangler secret put instead.`);
+      }
+    }
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured wrangler.jsonc evidence verified provider API key names are documented without committed secret vars'],
+    gaps: [],
+  };
+}
+
 function workerConfigAdminTokenSecretContractEvidence(context: AcceptanceContractContext) {
   const target = ensureTaskRepo(context);
   if (!target || !taskOwns(context, 'wrangler.jsonc')) return undefined;
@@ -1072,6 +1124,16 @@ export const workerScaffoldAcceptanceContracts: AcceptanceContractDefinition[] =
     surfaces: ['wrangler.jsonc'],
     matches: ({ criterion }) => /\bwrangler\.jsonc\b/i.test(criterion) && /\bADMIN_TOKEN\b/.test(criterion) && /\b(secret|commit|embed|var)\b/i.test(criterion),
     evaluate: workerConfigAdminTokenSecretContractEvidence,
+  },
+  {
+    id: 'worker.config.providerSecretExpectations',
+    title: 'Provider API key secret expectations',
+    surfaces: ['wrangler.jsonc'],
+    matches: ({ criterion }) =>
+      /\bwrangler\.jsonc\b/i.test(criterion) &&
+      /\b(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|ZAI_API_KEY)\b/.test(criterion) &&
+      /\b(?:secret names?|environment expectations?|embed(?:ding)?|secret values?)\b/i.test(criterion),
+    evaluate: workerConfigProviderSecretExpectationContractEvidence,
   },
   {
     id: 'worker.config.environments',
@@ -1673,7 +1735,7 @@ function modelCatalogContractEvidence({
 }) {
   if (!repoPath || !task) return undefined;
   if (
-    !/\bsrc\/models\.ts\b|\bmodel catalog\b|\bcatalog(?:\s+(?:array|entries?|includes))?\b|\bconfigured status\b|\bconfiguration detection\b|\bAPI-visible model metadata\b/i.test(
+    !/\bsrc\/models\.ts\b|\bmodel catalog\b|\bcatalog(?:\s+(?:array|entries?|includes))?\b|\bprovider identifiers\b|\bprovider families\b|\bconfigured status\b|\bconfiguration detection\b|\bAPI-visible model metadata\b/i.test(
       criterion,
     )
   ) {
@@ -1687,6 +1749,7 @@ function modelCatalogContractEvidence({
   const source = readFileSync(fullPath, 'utf8');
   const gaps: string[] = [];
   let inspected = false;
+  const providerValues = Array.from(source.matchAll(/\bprovider\s*:\s*['"]([^'"]+)['"]/g)).map((match) => match[1]);
 
   if (/\b(?:catalog array|Workers AI|Anthropic|z\.ai|OpenAI-compatible|openai-compatible)\b/i.test(criterion)) {
     inspected = true;
@@ -1703,6 +1766,32 @@ function modelCatalogContractEvidence({
     }
     if (!/baseUrl\s*:\s*['"]https:\/\/api\.openai\.com\/v1['"]/.test(source)) {
       gaps.push('src/models.ts must include OpenAI-compatible baseUrl https://api.openai.com/v1.');
+    }
+  }
+
+  if (/\bAdding a model\b|\bone-object catalog diff\b|\bno route changes required\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bexport\s+const\s+\w*CATALOG\w*\s*=|\bexport\s+const\s+\w*MODELS\w*\s*=/i.test(source)) {
+      gaps.push('src/models.ts must export a model catalog array that can accept new model entries.');
+    }
+    const ownedSurfaces = taskBoundarySurfaces(repoPath, task);
+    const routeSurfaces = ownedSurfaces.filter(
+      (surface) => surface.startsWith('src/routes/') || /^src\/index\.(?:js|ts)$/.test(surface),
+    );
+    if (routeSurfaces.length) {
+      gaps.push(`model catalog additions must not require route surface ownership: ${routeSurfaces.join(', ')}.`);
+    }
+  }
+
+  if (/\bProvider identifiers\b|\bprovider families\b|\blimited to\b/i.test(criterion)) {
+    inspected = true;
+    const allowedProviders = new Set(['workers-ai', 'anthropic', 'openai-compatible']);
+    const unexpectedProviders = providerValues.filter((provider) => !allowedProviders.has(provider));
+    for (const provider of ['workers-ai', 'anthropic', 'openai-compatible']) {
+      if (!providerValues.includes(provider)) gaps.push(`src/models.ts must include provider family ${provider}.`);
+    }
+    if (unexpectedProviders.length) {
+      gaps.push(`src/models.ts includes unsupported provider families: ${Array.from(new Set(unexpectedProviders)).join(', ')}.`);
     }
   }
 

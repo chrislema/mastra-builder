@@ -46,19 +46,20 @@ After stopping generic file evidence from verifying behavior-shaped criteria,
 keeping behavior-only evidence gaps out of deterministic implementation retries,
 copying API route, frontend, provider, contract, and validation criteria onto
 explicit evidence tasks, preserving those criteria on implementation tasks as
-first-class contracts, and counting exact downstream evidence-task coverage
-before treating generic file evidence as a smell:
+first-class contracts, counting exact downstream evidence-task coverage before
+treating generic file evidence as a smell, and replacing the last generic
+Worker config/model catalog evidence with narrow structural contract checks:
 
 - Acceptance contracts: 341
-- Structured evidence: 33
+- Structured evidence: 35
 - Command/test evidence: 46
-- Generic file evidence: 26
-- Unverified contracts: 236
+- Generic file evidence: 23
+- Unverified contracts: 237
 - Behavior-shaped criteria: 155
 - Behavior criteria verified by generic file evidence: 0
 - Behavior criteria still unverified: 0
 - Pending behavior evidence: 127
-- Total audit smells: 3
+- Total audit smells: 0
 
 `Unverified contracts` remains a gap counter for unfinished or not-yet-proven
 work. It is intentionally broader than `Total audit smells`. A smell is now a
@@ -75,15 +76,16 @@ proof is now routed toward generated tests instead of source-file overlap.
 Implementation tasks keep the contracts as working memory; evidence tasks copy
 those criteria and make missing executable proof visible as pending evidence.
 
-Largest clusters:
+Remaining gaps, not current smells:
 
-- `T01`: `wrangler.jsonc` secret-name/environment expectation evidence is still
-  generic file evidence.
-- `T03`: model catalog structural criteria are still generic file evidence:
-  one-object catalog additions and provider-family limits.
-- All API route, frontend, provider, contract, and validation behavior smells
-  are now routed into explicit evidence tasks. Their unverified rows are gap
-  counters, not current audit smells.
+- Generic file evidence remains counted as a broad evidence category, but exact
+  downstream evidence-task coverage or narrow structural checkers prevent it
+  from becoming a smell.
+- API route, frontend, provider, contract, and validation behavior is routed
+  into explicit evidence tasks. Their unverified rows are gap counters, not
+  current audit smells.
+- Remaining unverified contracts should be treated as future evidence coverage
+  work, not as justification for reintroducing brittle workflow parsing.
 
 ## Active Cleanup Queue
 
