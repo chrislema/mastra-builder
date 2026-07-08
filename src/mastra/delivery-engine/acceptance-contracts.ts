@@ -863,7 +863,8 @@ export const workerScaffoldAcceptanceContracts: AcceptanceContractDefinition[] =
     title: 'Minimal Worker entrypoint',
     surfaces: ['src/index.ts', 'src/index.js'],
     matches: ({ criterion }) =>
-      /\bsrc\/index\.(js|ts)\b/i.test(criterion) && /\bminimal Worker module entrypoint\b|\bloaded by Wrangler\b|\bbasic response\b/i.test(criterion),
+      /\bsrc\/index\.(js|ts)\b/i.test(criterion) &&
+      /\bvalid Worker module entrypoint\b|\bminimal Worker module entrypoint\b|\bloaded by Wrangler\b|\bbasic response\b/i.test(criterion),
     evaluate: workerMinimalEntrypointContractEvidence,
   },
 ];

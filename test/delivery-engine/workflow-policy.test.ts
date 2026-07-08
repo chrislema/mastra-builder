@@ -3535,6 +3535,44 @@ test('acceptance contracts verify minimal Hono Worker entrypoint structurally', 
   assert.match(contracts[0].evidence.join('\n'), /minimal Worker entrypoint with a basic response/);
 });
 
+test('acceptance contracts verify valid Worker module entrypoint wording structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-valid-entrypoint-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      '',
+      'const app = new Hono<{ Bindings: Env }>();',
+      'app.get("/api/health", (c) => c.json({ ok: true, service: "benchmark" }));',
+      '',
+      'export default {',
+      '  fetch(request, env, ctx) {',
+      '    return app.fetch(request, env, ctx);',
+      '  },',
+      '} satisfies ExportedHandler<Env>;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['src/index.ts'],
+      acceptance_criteria: ['src/index.ts exists as a valid Worker module entrypoint.'],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /minimal Worker entrypoint with a basic response/);
+});
+
 test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-scaffold-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
