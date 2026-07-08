@@ -17,6 +17,7 @@ export type SmellAuditContract = {
   evidenceKind: SmellAuditEvidenceKind;
   behaviorCriterion: boolean;
   evidenceTask: boolean;
+  coveredByEvidenceTask?: string;
   smell:
     | 'behavior_by_file_evidence'
     | 'behavior_unverified'
@@ -91,6 +92,20 @@ export function auditDeliveryTaskPlan({
   verification?: { performed: string[]; missing: string[] };
 }): SmellAuditReport {
   const normalizedPlan = normalizeTaskPlanCloudflareWorkerContracts(taskPlan);
+  const pendingEvidenceBySourceTaskAndCriterion = new Map<string, string>();
+  for (const evidenceTask of normalizedPlan.tasks.filter(taskIsEvidenceTask)) {
+    const behaviorCriteria = new Set(
+      [...evidenceTask.acceptance_criteria, ...(evidenceTask.source_acceptance_criteria ?? [])].filter(
+        isBehaviorCriterion,
+      ),
+    );
+    for (const sourceTaskId of evidenceTask.depends_on) {
+      for (const criterion of behaviorCriteria) {
+        pendingEvidenceBySourceTaskAndCriterion.set(`${sourceTaskId}\0${criterion}`, evidenceTask.id);
+      }
+    }
+  }
+
   const contracts: SmellAuditContract[] = [];
   const taskRows = new Map<
     string,
@@ -122,7 +137,12 @@ export function auditDeliveryTaskPlan({
     for (const contract of acceptanceContractsForTask({ repoPath, task, verification })) {
       const evidenceKind = acceptanceContractEvidenceKind(contract);
       const behaviorCriterion = isBehaviorCriterion(contract.criterion);
-      const pendingBehaviorEvidence = behaviorCriterion && evidenceKind === 'unverified' && evidenceTask;
+      const coveredByEvidenceTask =
+        behaviorCriterion && evidenceKind === 'unverified' && !evidenceTask
+          ? pendingEvidenceBySourceTaskAndCriterion.get(`${task.id}\0${contract.criterion}`)
+          : undefined;
+      const pendingBehaviorEvidence =
+        behaviorCriterion && evidenceKind === 'unverified' && (evidenceTask || coveredByEvidenceTask !== undefined);
       const smell =
         pendingBehaviorEvidence
           ? undefined
@@ -152,6 +172,7 @@ export function auditDeliveryTaskPlan({
         evidenceKind,
         behaviorCriterion,
         evidenceTask,
+        coveredByEvidenceTask,
         smell,
         evidence: contract.evidence,
         gaps: contract.gaps,
@@ -173,7 +194,10 @@ export function auditDeliveryTaskPlan({
     behaviorByFileEvidence: contracts.filter((contract) => contract.smell === 'behavior_by_file_evidence').length,
     behaviorUnverified: contracts.filter((contract) => contract.smell === 'behavior_unverified').length,
     pendingBehaviorEvidence: contracts.filter(
-      (contract) => contract.behaviorCriterion && contract.evidenceKind === 'unverified' && contract.evidenceTask,
+      (contract) =>
+        contract.behaviorCriterion &&
+        contract.evidenceKind === 'unverified' &&
+        (contract.evidenceTask || contract.coveredByEvidenceTask !== undefined),
     ).length,
     smellCount: smells.length,
   };
@@ -230,7 +254,7 @@ export function formatSmellAuditReport(report: SmellAuditReport) {
     `Behavior criteria: ${report.summary.behaviorCriteria}`,
     `Behavior by file evidence: ${report.summary.behaviorByFileEvidence}`,
     `Behavior unverified: ${report.summary.behaviorUnverified}`,
-    `Pending behavior evidence on test tasks: ${report.summary.pendingBehaviorEvidence}`,
+    `Pending behavior evidence: ${report.summary.pendingBehaviorEvidence}`,
     `Total smells: ${report.summary.smellCount}`,
     '',
     'Task rows with smells or gaps:',

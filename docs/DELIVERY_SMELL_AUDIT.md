@@ -44,33 +44,38 @@ tests were available as performed evidence:
 
 After stopping generic file evidence from verifying behavior-shaped criteria,
 keeping behavior-only evidence gaps out of deterministic implementation retries,
-and routing API route behavior criteria onto explicit route-test tasks:
+copying API route and frontend behavior criteria onto explicit evidence tasks,
+and preserving those criteria on the implementation tasks as first-class
+contracts:
 
-- Acceptance contracts: 176
-- Structured evidence: 32
-- Command/test evidence: 24
-- Generic file evidence: 24
-- Unverified contracts: 96
-- Behavior-shaped criteria: 79
+- Acceptance contracts: 231
+- Structured evidence: 33
+- Command/test evidence: 36
+- Generic file evidence: 25
+- Unverified contracts: 137
+- Behavior-shaped criteria: 124
 - Behavior criteria verified by generic file evidence: 0
-- Behavior criteria still unverified: 43
-- Pending behavior evidence on test tasks: 15
-- Total audit smells: 105
+- Behavior criteria still unverified: 17
+- Pending behavior evidence: 81
+- Total audit smells: 81
 
 This is an intentional intermediate state: behavior is no longer falsely marked
 verified by token overlap, behavior-only proof gaps no longer cause
-deterministic implementation retry loops, and API route behavior proof is now
-routed toward generated tests instead of source-file overlap. The harness still
-needs to route the remaining behavior proof to generated tests, command
-evidence, judges, or release gates.
+deterministic implementation retry loops, and route/frontend behavior proof is
+now routed toward generated tests instead of source-file overlap. Implementation
+tasks keep the behavior contracts as working memory; evidence tasks copy those
+criteria and make missing executable proof visible as pending evidence. The
+harness still needs to route the remaining behavior proof to generated tests,
+command evidence, judges, or release gates.
 
 Largest clusters:
 
 - `T05`: API route behavior now has an explicit `T05-api-route-behavior-tests`
   task; remaining route/provider batch behavior still needs better ownership or
   command evidence.
-- `T06`, `T07`, `T08`, `T09`: frontend/runtime behavior still leans on generic
-  file evidence or unverified criteria.
+- `T06`, `T07`, `T08`, `T09`: frontend/runtime behavior now has explicit
+  `*-frontend-behavior-tests` tasks; remaining smells are mostly structural
+  generic-file evidence or non-behavior unverified UI/documentation contracts.
 - `T04-provider-behavior-tests`: good direction, but still needs fuller command
   evidence for missing-key and Workers AI binding behavior.
 
@@ -87,10 +92,12 @@ Largest clusters:
    block deterministic retries, behavior-only gaps do not.
 4. Replace the highest-volume behavior criteria with test-task or command
    evidence patterns, starting with API route behavior and frontend state
-   behavior. API route behavior routing is partially complete: the normalizer now
-   creates `test/api-routes.test.{ts,js}` tasks and the audit classifies missing
-   behavior evidence on explicit test tasks as pending evidence instead of a
-   smell.
+   behavior. API route and frontend behavior routing are partially complete: the
+   normalizer now creates `test/api-routes.test.{ts,js}` and
+   `test/frontend-behavior.test.{ts,js}` tasks, copies behavior contracts into
+   those evidence tasks, preserves the contracts on implementation tasks, and
+   classifies missing behavior evidence as pending evidence instead of a smell
+   when a downstream evidence task carries the same contract.
 5. Review the `without*Criteria` normalizers in `workflow.ts`; keep only typed
    ownership/scope normalization that cannot be expressed in task schemas,
    source-scoped contracts, or tests.

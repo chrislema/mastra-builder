@@ -2500,13 +2500,11 @@ function withProviderAdapterBehaviorTestTasks(tasks: Task[]) {
     }
 
     next = next.map((task) => {
-      if (task.id === providerTask.id) {
-        const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !providerAdapterBehaviorCriterion(criterion));
-        if (acceptance_criteria.length === task.acceptance_criteria.length) return task;
-        changed = true;
-        return { ...task, acceptance_criteria };
+      if (task.id === testId) {
+        const updated = appendTaskAcceptanceCriteria(task, behaviorCriteria);
+        if (updated !== task) changed = true;
+        return updated;
       }
-
       if (task.id === testId || !task.depends_on.includes(providerTask.id) || task.depends_on.includes(testId)) return task;
       if (!taskCanDependOnTaskList(next, task.id, testId)) return task;
       changed = true;
@@ -2587,28 +2585,93 @@ function withApiRouteBehaviorTestTasks(tasks: Task[]) {
     }
 
     next = next.map((task) => {
-      if (task.id === routeTask.id) {
-        const acceptance_criteria = task.acceptance_criteria.filter(
-          (criterion) => !isApiRouteBehaviorAcceptanceCriterion(criterion),
-        );
-        const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
-          (criterion) => !isApiRouteBehaviorAcceptanceCriterion(criterion),
-        );
-        if (
-          acceptance_criteria.length === task.acceptance_criteria.length &&
-          (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
-        ) {
-          return task;
-        }
-        changed = true;
-        return {
-          ...task,
-          acceptance_criteria,
-          ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
-        };
+      if (task.id === testId) {
+        const updated = appendTaskAcceptanceCriteria(task, behaviorCriteria);
+        if (updated !== task) changed = true;
+        return updated;
       }
-
       if (task.id === testId || !task.depends_on.includes(routeTask.id) || task.depends_on.includes(testId)) return task;
+      if (!taskCanDependOnTaskList(next, task.id, testId)) return task;
+      changed = true;
+      return appendDependencies(task, [testId]);
+    });
+  }
+
+  return { tasks: next, changed };
+}
+
+function taskOwnsFrontendBehaviorSurface(task: Task) {
+  return taskOwnedBoundaryPaths(task).some((path) => /^public\/.+\.(?:html|css|js|mjs)$/i.test(path));
+}
+
+function taskLooksLikeFrontendBehaviorTest(task: Task, frontendTaskId: string) {
+  return (
+    task.owner === 'engineer' &&
+    task.depends_on.includes(frontendTaskId) &&
+    taskOwnedBoundaryPaths(task).some((path) => /^test\/.*(?:frontend|ui|dom|browser).*\.test\.[cm]?[jt]s$/i.test(path)) &&
+    /\b(?:frontend behavior|ui behavior|dom|browser|public\/app\.js|run controls?|result cards?)\b/i.test(
+      [task.deliverable, ...task.acceptance_criteria, ...task.owned_surfaces].join('\n'),
+    )
+  );
+}
+
+function frontendBehaviorTestTask(frontendTask: Task, testId: string, criteria: string[]): Task {
+  const extension = taskTestSurfaceExtension(frontendTask);
+  const testSurface = `test/frontend-behavior.test.${extension}`;
+  return {
+    id: testId,
+    owner: 'engineer',
+    deliverable:
+      'Add frontend behavior tests that exercise the vanilla public UI with DOM fixtures, fetch mocks, state changes, run controls, result rendering, sorting, and recovery messages.',
+    depends_on: [frontendTask.id],
+    acceptance_criteria: Array.from(
+      new Set([
+        `${testSurface} exercises the vanilla public UI with DOM fixtures and mocked fetch/FileReader behavior instead of a frontend framework build.`,
+        `${testSurface} proves UI behavior contracts for state changes, run controls, result cards, sorting/highlighting, and visible recovery messages that exist in the source task.`,
+        'npm test passes and includes frontend behavior coverage.',
+        ...criteria,
+      ]),
+    ),
+    owned_surfaces: [testSurface],
+  };
+}
+
+function withFrontendBehaviorTestTasks(tasks: Task[]) {
+  let changed = false;
+  let next = [...tasks];
+
+  for (const frontendTask of tasks) {
+    if (!taskOwnsFrontendBehaviorSurface(frontendTask)) continue;
+    const behaviorCriteria = Array.from(
+      new Set(
+        [...frontendTask.acceptance_criteria, ...(frontendTask.source_acceptance_criteria ?? [])].filter(
+          isBehaviorLikeAcceptanceCriterion,
+        ),
+      ),
+    );
+    if (!behaviorCriteria.length) continue;
+
+    const existingTestTask = next.find((task) => taskLooksLikeFrontendBehaviorTest(task, frontendTask.id));
+    const testId = existingTestTask?.id ?? uniqueTaskIdFromTasks(next, `${frontendTask.id}-frontend-behavior-tests`);
+
+    if (!existingTestTask) {
+      const frontendIndex = next.findIndex((task) => task.id === frontendTask.id);
+      const insertionIndex = frontendIndex < 0 ? next.length : frontendIndex + 1;
+      next = [
+        ...next.slice(0, insertionIndex),
+        frontendBehaviorTestTask(frontendTask, testId, behaviorCriteria),
+        ...next.slice(insertionIndex),
+      ];
+      changed = true;
+    }
+
+    next = next.map((task) => {
+      if (task.id === testId) {
+        const updated = appendTaskAcceptanceCriteria(task, behaviorCriteria);
+        if (updated !== task) changed = true;
+        return updated;
+      }
+      if (task.id === testId || !task.depends_on.includes(frontendTask.id) || task.depends_on.includes(testId)) return task;
       if (!taskCanDependOnTaskList(next, task.id, testId)) return task;
       changed = true;
       return appendDependencies(task, [testId]);
@@ -2829,6 +2892,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, s
   if (withApiRouteBehaviorTests.changed) {
     changed = true;
     tasks = withApiRouteBehaviorTests.tasks;
+  }
+
+  const withFrontendBehaviorTests = withFrontendBehaviorTestTasks(tasks);
+  if (withFrontendBehaviorTests.changed) {
+    changed = true;
+    tasks = withFrontendBehaviorTests.tasks;
   }
 
   const withDependencies = withCloudflareWorkerDependencyContracts(tasks);

@@ -1254,6 +1254,18 @@ function providerAdapterBehaviorCriterion(criterion: string) {
   );
 }
 
+function taskOwnsFrontendBehaviorEvidenceSurface(task?: AcceptanceContractTask) {
+  return Boolean(
+    task?.owned_surfaces
+      .map(normalizeDeliveryPathReference)
+      .some(
+        (path) =>
+          /^public\/.+\.(?:html|css|js|mjs)$/i.test(path) ||
+          /^test\/.*(?:frontend|ui|dom|browser).*\.test\.[cm]?[jt]s$/i.test(path),
+      ),
+  );
+}
+
 function repoFileContents(repoPath: string, paths: Array<string | undefined>) {
   return paths
     .filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
@@ -1274,7 +1286,8 @@ function acceptanceEvidenceFiles(repoPath?: string, task?: AcceptanceContractTas
   return repoFileContents(repoPath, taskBoundarySurfaces(repoPath, task));
 }
 
-function acceptanceCriterionCommandEvidence(criterion: string, performed: string[]) {
+function acceptanceCriterionCommandEvidence(context: AcceptanceContractContext) {
+  const { criterion, performed, task } = context;
   const text = criterion.toLowerCase();
   const evidence = performed.join('\n').toLowerCase();
 
@@ -1295,6 +1308,16 @@ function acceptanceCriterionCommandEvidence(criterion: string, performed: string
     )
   ) {
     return 'api route behavior test evidence covered route status and JSON contract criteria';
+  }
+  if (
+    isBehaviorLikeAcceptanceCriterion(criterion) &&
+    taskOwnsFrontendBehaviorEvidenceSurface(task) &&
+    /\bnpm run test passed\b|\bvitest\b/.test(evidence) &&
+    /\b(?:test\/.*(?:frontend|ui|dom|browser).*\.test\.[cm]?[jt]s|frontend behavior|ui behavior|dom fixture|jsdom|public\/app\.js)\b/.test(
+      evidence,
+    )
+  ) {
+    return 'frontend behavior test evidence covered vanilla UI interaction and render criteria';
   }
   if (/\b(typecheck|tsc|typescript)\b/.test(text) && /\b(typecheck|tsc)\b/.test(evidence)) {
     return 'verification command covered TypeScript/typecheck criterion';
@@ -1994,7 +2017,7 @@ function workerWorkflowEntrypointContractEvidence({
 }
 
 export function evaluateAcceptanceCriterion(context: AcceptanceContractContext): AcceptanceContractEvidence {
-  const commandEvidence = acceptanceCriterionCommandEvidence(context.criterion, context.performed);
+  const commandEvidence = acceptanceCriterionCommandEvidence(context);
   if (commandEvidence) return { passed: true, evidence: [commandEvidence], gaps: [] };
 
   const workerScaffoldContractEvidence = evaluateWorkerScaffoldAcceptanceContract(context);

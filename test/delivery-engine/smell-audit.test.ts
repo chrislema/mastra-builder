@@ -72,6 +72,44 @@ test('smell audit treats unverified behavior on explicit test tasks as pending e
   assert.equal(report.summary.smellCount, 0);
 });
 
+test('smell audit treats implementation behavior copied to a dependent evidence task as pending evidence', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-smell-dependent-evidence-'));
+  const criterion = 'All and Clear actions update selected models and the displayed selected count.';
+  const taskPlan: TaskPlan = {
+    artifact_type: 'task-plan',
+    scope: 'dependent evidence fixture',
+    tasks: [
+      {
+        id: 'T06',
+        owner: 'designer',
+        deliverable: 'Frontend state',
+        depends_on: [],
+        owned_surfaces: ['public/app.js'],
+        acceptance_criteria: [criterion],
+      },
+      {
+        id: 'T06-frontend-behavior-tests',
+        owner: 'engineer',
+        deliverable: 'Frontend behavior tests',
+        depends_on: ['T06'],
+        owned_surfaces: ['test/frontend-behavior.test.js'],
+        acceptance_criteria: [criterion],
+      },
+    ],
+    technology_decisions: [],
+    open_decisions: [],
+    risks: [],
+  };
+
+  const report = auditDeliveryTaskPlan({ repoPath, taskPlan });
+  const implementationContract = report.smells.find((smell) => smell.task === 'T06');
+
+  assert.equal(report.summary.behaviorUnverified, 0);
+  assert.equal(report.summary.pendingBehaviorEvidence, 2);
+  assert.equal(implementationContract, undefined);
+  assert.equal(report.summary.smellCount, 0);
+});
+
 test('smell audit treats provider behavior test output as command evidence', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-smell-command-evidence-'));
   const report = auditDeliveryTaskPlan({

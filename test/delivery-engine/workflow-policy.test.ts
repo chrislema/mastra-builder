@@ -1531,7 +1531,7 @@ test('task plan normalization does not inject workflow or auth contracts into st
   assert.match(byId.T02.acceptance_criteria.join('\n'), /do not define persisted run lifecycle states/);
 });
 
-test('task plan normalization moves provider failure behavior criteria to a smoke-test task', () => {
+test('task plan normalization copies provider failure behavior criteria to a smoke-test task', () => {
   const plan = taskPlan([
     {
       id: 'T01',
@@ -1568,7 +1568,7 @@ test('task plan normalization moves provider failure behavior criteria to a smok
   assert.equal(testTask.owner, 'engineer');
   assert.deepEqual(testTask.depends_on, ['T04']);
   assert.deepEqual(testTask.owned_surfaces, ['test/provider-adapters.test.ts']);
-  assert.doesNotMatch(providerTask.acceptance_criteria.join('\n'), /provider_error|timeout_or_network_error|missing_binding/);
+  assert.match(providerTask.acceptance_criteria.join('\n'), /provider_error|timeout_or_network_error|missing_binding/);
   assert.match(testTask.acceptance_criteria.join('\n'), /provider_error/);
   assert.match(testTask.acceptance_criteria.join('\n'), /timeout_or_network_error/);
   assert.match(testTask.acceptance_criteria.join('\n'), /missing_binding/);
@@ -1576,7 +1576,7 @@ test('task plan normalization moves provider failure behavior criteria to a smok
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
-test('task plan normalization moves API route behavior criteria to a smoke-test task', () => {
+test('task plan normalization copies API route behavior criteria to a smoke-test task', () => {
   const plan = taskPlan([
     {
       id: 'T01',
@@ -1617,12 +1617,49 @@ test('task plan normalization moves API route behavior criteria to a smoke-test 
   assert.deepEqual(testTask.depends_on, ['T05']);
   assert.deepEqual(testTask.owned_surfaces, ['test/api-routes.test.ts']);
   assert.match(routeTask.acceptance_criteria.join('\n'), /exports the Worker API route module/);
-  assert.doesNotMatch(routeTask.acceptance_criteria.join('\n'), /GET \/api\/health|POST \/api\/run/);
+  assert.match(routeTask.acceptance_criteria.join('\n'), /GET \/api\/health|POST \/api\/run/);
   assert.match(testTask.acceptance_criteria.join('\n'), /GET \/api\/health/);
   assert.match(testTask.acceptance_criteria.join('\n'), /GET \/api\/models/);
   assert.match(testTask.acceptance_criteria.join('\n'), /POST \/api\/run/);
-  assert.doesNotMatch([...(routeTask.source_acceptance_criteria ?? [])].join('\n'), /GET \/api\/models/);
+  assert.match([...(routeTask.source_acceptance_criteria ?? [])].join('\n'), /GET \/api\/models/);
   assert.ok(byId.T06.depends_on.includes('T05-api-route-behavior-tests'));
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('task plan normalization copies frontend behavior criteria to a UI behavior test task', () => {
+  const plan = taskPlan([
+    {
+      id: 'T06',
+      owner: 'designer',
+      depends_on: [],
+      owned_surfaces: ['public/index.html', 'public/styles.css', 'public/app.js'],
+      acceptance_criteria: [
+        'public/index.html defines the static shell.',
+        'Before any run, the Results region shows an empty state with the phrase "One prompt. Every model."',
+        'All and Clear actions update selected models and the displayed selected count.',
+      ],
+    },
+    {
+      id: 'T07',
+      owner: 'designer',
+      depends_on: ['T06'],
+      owned_surfaces: ['public/app.js'],
+      acceptance_criteria: ['Run controls render result cards.'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const frontendTask = byId.T06;
+  const testTask = byId['T06-frontend-behavior-tests'];
+
+  assert.ok(testTask);
+  assert.equal(testTask.owner, 'engineer');
+  assert.deepEqual(testTask.depends_on, ['T06']);
+  assert.deepEqual(testTask.owned_surfaces, ['test/frontend-behavior.test.js']);
+  assert.match(frontendTask.acceptance_criteria.join('\n'), /One prompt\. Every model|All and Clear/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /One prompt\. Every model|All and Clear/);
+  assert.ok(byId.T07.depends_on.includes('T06-frontend-behavior-tests'));
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
@@ -4158,6 +4195,37 @@ test('API route behavior contracts use route-focused test evidence instead of ge
 
   assert.equal(routeTestContracts[0].status, 'verified');
   assert.match(routeTestContracts[0].evidence.join('\n'), /api route behavior test evidence/);
+});
+
+test('frontend behavior contracts use frontend-focused test evidence instead of generic test success', () => {
+  const [task] = taskPlan([
+    {
+      id: 'T06-frontend-behavior-tests',
+      owner: 'engineer',
+      depends_on: ['T06'],
+      owned_surfaces: ['test/frontend-behavior.test.js'],
+      acceptance_criteria: ['All and Clear actions update selected models and the displayed selected count.'],
+    },
+  ]).tasks;
+
+  const genericTestContracts = acceptanceContractsForTask({
+    task,
+    verification: { performed: ['npm run test passed: validation rejects empty model lists'], missing: [] },
+  });
+  assert.equal(genericTestContracts[0].status, 'unverified');
+
+  const frontendTestContracts = acceptanceContractsForTask({
+    task,
+    verification: {
+      performed: [
+        'npm run test passed: test/frontend-behavior.test.js > UI behavior updates selected models and rendered counts',
+      ],
+      missing: [],
+    },
+  });
+
+  assert.equal(frontendTestContracts[0].status, 'verified');
+  assert.match(frontendTestContracts[0].evidence.join('\n'), /frontend behavior test evidence/);
 });
 
 test('provider adapter contract rejects hard-coded provider secret env reads', () => {
