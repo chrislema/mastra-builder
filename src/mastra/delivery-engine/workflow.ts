@@ -5957,6 +5957,28 @@ function deploymentDeterministicResults({
   ];
 }
 
+function deploymentGateFailureNextSteps({
+  report,
+  failedChecks,
+}: {
+  report: DeploymentReport;
+  failedChecks: DeterministicGateResult[];
+}) {
+  const deterministicRemediation = failedChecks.map((check) => {
+    const id = check.id ?? check.check ?? 'deployment_gate';
+    return `Fix deterministic deployment gate ${id}: ${check.reason}`;
+  });
+  const reportRemediation = report.issues.map((issue) => `${issue.description}: ${issue.action}`);
+
+  return [
+    ...deterministicRemediation,
+    ...reportRemediation,
+    ...(report.result === 'failure' && !reportRemediation.length
+      ? [`Deployment report result was failure; next action is ${report.next_action}.`]
+      : []),
+  ];
+}
+
 function latestArtifactPath(artifacts: string[], needle: string, fallback: string) {
   return [...artifacts].reverse().find((path) => path.includes(needle) && !path.includes('/judgments/')) ?? fallback;
 }
@@ -9685,9 +9707,9 @@ const createDeploymentReportStep = createStep({
   },
 });
 
-const createDeploymentJudgmentStep = createStep({
-  id: 'judge-deployment-report',
-  description: 'Run deployment deterministic gates and rubric judgment, then finish the delivery run.',
+const createDeploymentCompletionGateStep = createStep({
+  id: 'gate-deployment-report',
+  description: 'Run deterministic deployment completion gates, then finish the delivery run.',
   inputSchema: deploymentReportStageSchema,
   outputSchema: workflowOutputSchema,
   scorers: deliveryDeploymentStepScorers,
@@ -9731,9 +9753,9 @@ const createDeploymentJudgmentStep = createStep({
     }
 
     if (inputData.status !== 'release_ready') return baseOutput();
-    if (!inputData.releaseGate) throw new Error('release gate stage did not provide a gate for deployment judgment');
+    if (!inputData.releaseGate) throw new Error('release gate stage did not provide a gate for deployment completion');
     if (!inputData.deploymentReport || !inputData.deploymentReportPath) {
-      throw new Error('deployment report stage did not provide a deployment report for judgment');
+      throw new Error('deployment report stage did not provide a deployment report for completion');
     }
 
     const artifacts = [...inputData.artifacts];
@@ -9748,24 +9770,28 @@ const createDeploymentJudgmentStep = createStep({
     });
     checks.push(...checkSummaries(deterministicResults, 'deployment'));
 
-    const deploymentJudge = await judgeDeliveryArtifact({
-      mastra,
+    const failedDeploymentChecks = deterministicResults.filter((result) => !result.passed);
+    const complete = inputData.deploymentReport.result === 'success' && failedDeploymentChecks.length === 0;
+    await appendDeliveryEventState({
       repoPath: inputData.repoPath,
-      runId: inputData.runId,
-      rubricName: 'deployment-report',
-      subjectName: inputData.deploymentReportPath,
-      subject: {
-        report: inputData.deploymentReport,
-        release_gate: inputData.releaseGate,
-        evidence_events: deliveryEvents.filter((event) => event.stage === stage),
+      mastra,
+      event: {
+        type: 'deployment_gate_result',
+        stage,
+        gate: 'deployment',
+        artifact_type: 'deployment-report',
+        path: inputData.deploymentReportPath,
+        result: inputData.deploymentReport.result,
+        passed: complete,
+        checks: deterministicResults.map((result) => ({
+          id: result.id,
+          check: result.check,
+          passed: result.passed,
+          reason: result.reason,
+        })),
       },
-      deterministicResults,
-      slug: 'deployment-report',
-    });
-    artifacts.push(deploymentJudge.judgeOutputPath, deploymentJudge.judgmentPath);
-    judgments.push(deploymentJudge.ref);
+    }).catch(() => undefined);
 
-    const complete = inputData.deploymentReport.result === 'success' && deploymentJudge.judgment.passed;
     await finishRun(complete ? 'complete' : 'failed');
 
     return {
@@ -9776,21 +9802,24 @@ const createDeploymentJudgmentStep = createStep({
       runId: inputData.runId,
       summary: complete
         ? `Deployment complete: ${inputData.deploymentReport.environment} ${inputData.deploymentReport.revision}`
-        : 'Deployment failed judgment or reported failure.',
+        : 'Deployment failed deterministic completion gates or reported failure.',
       artifacts,
       checks,
       judgments,
       questions: [],
       nextSteps: complete
         ? deploymentReportSuccessNextSteps(inputData.deploymentReport, inputData.repoPath)
-        : deploymentJudge.judgment.remediation,
+        : deploymentGateFailureNextSteps({
+            report: inputData.deploymentReport,
+            failedChecks: failedDeploymentChecks,
+          }),
     };
   },
 });
 
 export const deliveryDeploymentWorkflow = createWorkflow({
   id: 'delivery-deployment',
-  description: 'Run local or approved production deployment, judge the deployment report, and finish the run.',
+  description: 'Run local or approved production deployment, gate deployment evidence, and finish the run.',
   inputSchema: deliveryStageOutputSchema,
   outputSchema: workflowOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
@@ -9800,7 +9829,7 @@ export const deliveryDeploymentWorkflow = createWorkflow({
 })
   .then(createDeploymentReportStep)
   .then(syncDeploymentReportStateStep)
-  .then(createDeploymentJudgmentStep)
+  .then(createDeploymentCompletionGateStep)
   .then(syncFinalDeliveryStateStep)
   .commit();
 

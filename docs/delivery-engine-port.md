@@ -241,7 +241,7 @@ Work:
 - Support mock deploy first.
 - Record deploy and live_verify events.
 - Produce deployment-report artifact.
-- Judge deployment-report.
+- Gate deployment completion from deterministic release/deploy/live-verification evidence.
 - Finish run as complete, failed, or stuck.
 
 Done when:

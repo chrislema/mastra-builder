@@ -84,6 +84,20 @@ test('release gate is synthesized deterministically from evidence', () => {
   assert.doesNotMatch(releaseGateAttempt, /rubricName: 'release-gate'/);
 });
 
+test('deployment completion is gated deterministically from evidence', () => {
+  const source = workflowSource();
+  const deploymentGate = source.slice(
+    source.indexOf("id: 'gate-deployment-report'"),
+    source.indexOf('export const deliveryDeploymentWorkflow'),
+  );
+
+  assert.match(deploymentGate, /type: 'deployment_gate_result'/);
+  assert.match(deploymentGate, /deploymentDeterministicResults/);
+  assert.match(deploymentGate, /failedDeploymentChecks\.length === 0/);
+  assert.doesNotMatch(deploymentGate, /deploymentJudge/);
+  assert.doesNotMatch(deploymentGate, /rubricName: 'deployment-report'/);
+});
+
 test('delivery stage workflows close delivery state on workflow errors', () => {
   for (const workflow of [
     deliveryWorkflow,
