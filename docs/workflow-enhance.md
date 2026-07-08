@@ -191,6 +191,8 @@ Verification:
 
 ### Phase 3: Planning And Task-Plan Policy
 
+Status: in progress.
+
 Goal: move planner normalization and task graph policy into a planning module.
 
 Extract to:
@@ -213,6 +215,12 @@ Move:
 - planner revision response parsing.
 - topological task ordering if not already delegated.
 - root call `normalizeTaskPlanForDelivery`.
+
+Completed extraction:
+
+- `planning/readout-policy.ts` for safe readout ambiguity normalization,
+  open-decision hygiene, true-blocker classification, and planner question
+  suspend policy.
 
 Keep in planning workflow:
 

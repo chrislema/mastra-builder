@@ -75,6 +75,8 @@ Do not redo these:
   `agent-runtime/diagnostics.ts`
 - Judge provider fallback and artifact judging:
   `agent-runtime/judge-runtime.ts`
+- Planning readout and open-decision policy:
+  `planning/readout-policy.ts`
 
 ## Cleanup Rules
 
