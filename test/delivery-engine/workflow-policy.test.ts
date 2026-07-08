@@ -104,6 +104,7 @@ import {
   wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
 import { fileOwnership } from '../../src/mastra/delivery-engine/checks.ts';
+import { verificationFailureSummaryFromCommandError } from '../../src/mastra/delivery-engine/implementation-retry-policy.ts';
 import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
 
 const currentCompatibilityDate = () => new Date().toISOString().slice(0, 10);
@@ -7614,6 +7615,31 @@ src/ai/profilePrompts.ts(304,51): error TS18046: 'value' is of type 'unknown'.
       (diagnostic) => `${diagnostic.path}:${diagnostic.line}:${diagnostic.column} ${diagnostic.code}`,
     ),
     ['src/ai/profilePrompts.ts:304:37 TS18046', 'src/ai/profilePrompts.ts:304:51 TS18046'],
+  );
+});
+
+test('verification failure summaries preserve TypeScript diagnostics after verbose Wrangler output', () => {
+  const verboseWranglerOutput = [
+    'Generating project types...',
+    'interface __BaseEnv_Env {',
+    ...Array.from({ length: 80 }, (_, index) => `  GENERATED_BINDING_${index}: string;`),
+    '}',
+    'Runtime types generated.',
+    'src/providers.ts(3,34): error TS2305: Module \'"./models"\' has no exported member \'ModelSecretEnv\'.',
+  ].join('\n');
+
+  const summary = verificationFailureSummaryFromCommandError(
+    {
+      message: 'Command failed: npm run typecheck',
+      stdout: verboseWranglerOutput,
+    },
+    600,
+  );
+
+  assert.match(summary, /TypeScript diagnostics:/);
+  assert.match(
+    summary,
+    /src\/providers\.ts\(3,34\): error TS2305: Module '"\.\/models"' has no exported member 'ModelSecretEnv'\./,
   );
 });
 

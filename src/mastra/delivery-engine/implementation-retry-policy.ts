@@ -104,6 +104,10 @@ export function remediationHasVerificationFailure(remediation: string[]) {
   );
 }
 
+function compactText(text: string, limit: number) {
+  return text.length > limit ? `${text.slice(0, limit)}... (${text.length} chars total)` : text;
+}
+
 export type TypeScriptDiagnostic = {
   path: string;
   line: number;
@@ -132,6 +136,38 @@ export function typeScriptDiagnosticsFromText(text: string) {
   }
 
   return diagnostics;
+}
+
+export function verificationFailureSummaryFromCommandError(error: unknown, limit = 1000) {
+  let text: string;
+  if (error && typeof error === 'object') {
+    const record = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
+    const parts = [
+      typeof record.message === 'string' ? record.message : undefined,
+      typeof record.stdout === 'string' && record.stdout.trim() ? `stdout:\n${record.stdout}` : undefined,
+      typeof record.stderr === 'string' && record.stderr.trim() ? `stderr:\n${record.stderr}` : undefined,
+    ].filter(Boolean);
+    text = parts.length ? parts.join('\n') : String(error);
+  } else {
+    text = String(error);
+  }
+
+  const diagnostics = typeScriptDiagnosticsFromText(text);
+  if (!diagnostics.length) return compactText(text, limit);
+
+  const diagnosticLines = diagnostics
+    .slice(0, 12)
+    .map((diagnostic) => `${diagnostic.path}(${diagnostic.line},${diagnostic.column}): error ${diagnostic.code}: ${diagnostic.message}`);
+  if (diagnostics.length > diagnosticLines.length) {
+    diagnosticLines.push(`... ${diagnostics.length - diagnosticLines.length} more TypeScript diagnostic(s)`);
+  }
+
+  return [
+    'TypeScript diagnostics:',
+    ...diagnosticLines,
+    '',
+    `Command failure summary: ${compactText(text, Math.max(200, limit - diagnosticLines.join('\n').length))}`,
+  ].join('\n');
 }
 
 export function typeScriptDiagnosticsFromRemediation(remediation: string[]) {

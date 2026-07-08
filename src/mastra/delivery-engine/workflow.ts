@@ -146,6 +146,7 @@ import {
   staleWorkspaceVerificationRemediation as staleWorkspaceVerificationRemediationFromTasks,
   typeScriptDiagnosticsFromRemediation as typeScriptDiagnosticsFromRemediationBase,
   typeScriptDiagnosticsFromText as typeScriptDiagnosticsFromTextBase,
+  verificationFailureSummaryFromCommandError,
   type TypeScriptDiagnostic,
 } from './implementation-retry-policy';
 import {
@@ -5005,20 +5006,7 @@ async function applyBuildVerificationRepair({
 }
 
 function commandFailureSummary(error: unknown, limit = 1000) {
-  if (error && typeof error === 'object') {
-    const record = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
-    const parts = [
-      typeof record.message === 'string' ? record.message : undefined,
-      typeof record.stdout === 'string' && record.stdout.trim() ? `stdout:\n${record.stdout}` : undefined,
-      typeof record.stderr === 'string' && record.stderr.trim() ? `stderr:\n${record.stderr}` : undefined,
-    ].filter(Boolean);
-    if (parts.length) {
-      const text = parts.join('\n');
-      return text.length > limit ? `${text.slice(0, limit)}... (${text.length} chars total)` : text;
-    }
-  }
-
-  return compactDiagnostic(error, limit);
+  return verificationFailureSummaryFromCommandError(error, limit);
 }
 
 function synthesizeImplementationNote({
