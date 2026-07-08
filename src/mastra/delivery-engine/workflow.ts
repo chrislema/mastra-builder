@@ -100,30 +100,22 @@ import {
   preserveTaskPlanAcceptanceContracts,
   taskPlanAcceptanceContractRegression,
 } from './planning/acceptance-contract-preservation';
-import {
-  generatedSliceDependencyHygiene,
-  normalizeTaskPlanGeneratedSliceDependencies,
-} from './planning/generated-slice-policy';
+import { generatedSliceDependencyHygiene } from './planning/generated-slice-policy';
 import { taskPlanDeterministicResults } from './planning/task-plan-gates';
 import { pagesFunctionsExceptionHygiene } from './planning/pages-policy';
 import { ownedSurfaceHygiene } from './planning/owned-surface-policy';
-import { normalizeTaskPlanRoleBoundaries, taskOwnedSurfaceRoleHygiene } from './planning/role-boundary-policy';
+import { taskOwnedSurfaceRoleHygiene } from './planning/role-boundary-policy';
 import { routeBoundaryConsistencyHygiene } from './planning/route-boundary-policy';
-import { normalizeTaskPlanLargeStorageTasks } from './planning/large-task-policy';
-import { configSchemaTaskSplitHygiene, normalizeTaskPlanConfigSchemaTasks } from './planning/config-schema-policy';
-import { normalizeTaskPlanOperatorDocumentation, operatorDocumentationHygiene } from './planning/operator-documentation-policy';
+import { configSchemaTaskSplitHygiene } from './planning/config-schema-policy';
+import { operatorDocumentationHygiene } from './planning/operator-documentation-policy';
 import {
-  normalizeTaskPlanProfileContractDependencies,
   profileContractDependencyHygiene,
   profileContractProducerSurfaces,
 } from './planning/profile-contract-policy';
-import {
-  normalizeTaskPlanCloudflareWorkerContracts,
-  taskVerificationAcceptanceContractCriteria,
-} from './planning/cloudflare-worker-contracts-policy';
+import { taskVerificationAcceptanceContractCriteria } from './planning/cloudflare-worker-contracts-policy';
+import { normalizeTaskPlanForDelivery } from './planning/task-plan-normalizer';
 import {
   legacyProjectScaffoldHygiene,
-  normalizeTaskPlanScaffoldDependencies,
   ownsTypeScriptInputSurface,
   projectScaffoldHygiene,
   workerSourceSurfaceIsConcrete,
@@ -333,6 +325,7 @@ export {
 export { taskPlanDeterministicResults } from './planning/task-plan-gates';
 export { routeBoundaryConsistencyHygiene } from './planning/route-boundary-policy';
 export { normalizeTaskPlanCloudflareWorkerContracts } from './planning/cloudflare-worker-contracts-policy';
+export { normalizeTaskPlanForDelivery } from './planning/task-plan-normalizer';
 
 const execFileAsync = promisify(execFile);
 
@@ -456,24 +449,6 @@ function taskOwnsStatePersistenceSurface(task?: Task) {
       path.startsWith('src/workflows/') ||
       /\bdurable|do-state|state-store\b/i.test(path),
   );
-}
-
-function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
-  const sourcePolicy = sourcePolicyFromRepo(repoPath);
-  return annotateTaskPlanWithTypedMetadata(normalizeTaskPlanOperatorDocumentation(
-    normalizeTaskPlanCloudflareWorkerContracts(
-      normalizeTaskPlanGeneratedSliceDependencies(
-        normalizeTaskPlanLargeStorageTasks(
-          normalizeTaskPlanConfigSchemaTasks(
-            normalizeTaskPlanRoleBoundaries(
-              normalizeTaskPlanProfileContractDependencies(normalizeTaskPlanScaffoldDependencies(repoPath, taskPlan)),
-            ),
-          ),
-        ),
-      ),
-      sourcePolicy,
-    ),
-  ));
 }
 
 const buildRoleForTask = (task: Task) => (task.owner === 'designer' ? 'designer' : 'engineer') as 'designer' | 'engineer';

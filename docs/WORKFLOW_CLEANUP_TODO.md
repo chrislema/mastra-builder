@@ -122,6 +122,8 @@ Do not redo these:
   `planning/task-criteria-policy.ts`
 - Cloudflare Worker contract normalization and task verification criteria:
   `planning/cloudflare-worker-contracts-policy.ts`
+- Root task-plan normalization composition:
+  `planning/task-plan-normalizer.ts`
 
 ## Cleanup Rules
 

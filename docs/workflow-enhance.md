@@ -264,6 +264,8 @@ Completed extraction:
   append semantics.
 - `planning/cloudflare-worker-contracts-policy.ts` for the full Cloudflare
   Worker contract normalizer and task verification acceptance criteria.
+- `planning/task-plan-normalizer.ts` for the root task-plan normalization
+  composition used by planning and revision steps.
 
 Keep in planning workflow:
 
