@@ -2896,7 +2896,7 @@ test('implementation notes list acceptance criteria that workflow verification d
   ]);
 });
 
-test('acceptance contracts use task-boundary file evidence', () => {
+test('acceptance contracts do not verify behavior with generic file evidence', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-acceptance-contract-evidence-'));
   mkdirSync(join(repoPath, 'src/routes'), { recursive: true });
   writeFileSync(
@@ -2924,8 +2924,9 @@ test('acceptance contracts use task-boundary file evidence', () => {
     verification: { performed: ['./node_modules/.bin/wrangler deploy --dry-run --env production passed'], missing: [] },
   });
 
-  assert.equal(contracts[0].status, 'verified');
-  assert.match(contracts[0].evidence.join('\n'), /file evidence covered/);
+  assert.equal(contracts[0].status, 'unverified');
+  assert.match(contracts[0].gaps.join('\n'), /Acceptance criterion not verified/);
+  assert.doesNotMatch(contracts[0].evidence.join('\n'), /file evidence covered/);
 });
 
 test('acceptance contracts verify Worker static asset fallback through helper', () => {

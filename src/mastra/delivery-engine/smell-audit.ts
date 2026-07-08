@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { isBehaviorLikeAcceptanceCriterion } from './acceptance-evidence-policy';
 import { acceptanceContractsForTask, normalizeTaskPlanCloudflareWorkerContracts } from './workflow';
 import { taskPlanSchema, type TaskPlan } from './workflow-schemas';
 
@@ -52,11 +53,8 @@ export type SmellAuditReport = {
   smells: SmellAuditContract[];
 };
 
-const behaviorCriterionPattern =
-  /\b(adds?|removes?|updates?|rejects?|returns?|throws?|normalizes?|redacts?|validates?|resolves?|classif(?:y|ies)|does not|without|before|after|fallback|fails?|crash(?:es)?|calls?|posts?|runs?|persists?|hydrates?|excludes?|enforces?)\b/i;
-
 export function isBehaviorCriterion(criterion: string) {
-  return behaviorCriterionPattern.test(criterion);
+  return isBehaviorLikeAcceptanceCriterion(criterion);
 }
 
 export function acceptanceContractEvidenceKind(contract: AcceptanceContract): SmellAuditEvidenceKind {

@@ -17,7 +17,7 @@ function minimalTaskPlan(task: TaskPlan['tasks'][number]): TaskPlan {
   };
 }
 
-test('smell audit flags behavior criteria verified only by generic file evidence', () => {
+test('smell audit reports behavior criteria as unverified instead of file-evidence verified', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-smell-file-evidence-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   writeFileSync(
@@ -46,9 +46,10 @@ test('smell audit flags behavior criteria verified only by generic file evidence
     }),
   });
 
-  assert.equal(report.summary.genericFileEvidence, 1);
-  assert.equal(report.summary.behaviorByFileEvidence, 1);
-  assert.equal(report.smells[0].smell, 'behavior_by_file_evidence');
+  assert.equal(report.summary.genericFileEvidence, 0);
+  assert.equal(report.summary.behaviorByFileEvidence, 0);
+  assert.equal(report.summary.behaviorUnverified, 1);
+  assert.equal(report.smells[0].smell, 'behavior_unverified');
 });
 
 test('smell audit treats provider behavior test output as command evidence', () => {

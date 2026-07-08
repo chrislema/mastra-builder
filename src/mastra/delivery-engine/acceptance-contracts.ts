@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
+import { isBehaviorLikeAcceptanceCriterion } from './acceptance-evidence-policy';
 import { normalizeDeliveryPathReference } from './checks';
 
 export interface AcceptanceContractTask {
@@ -1311,6 +1312,8 @@ function acceptanceCriterionFileEvidence({
   repoPath?: string;
   task?: AcceptanceContractTask;
 }) {
+  if (isBehaviorLikeAcceptanceCriterion(criterion)) return undefined;
+
   const files = acceptanceEvidenceFiles(repoPath, task);
   if (!files.length) return undefined;
 
