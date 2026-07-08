@@ -190,6 +190,12 @@ function taskBoundarySurfaces(repoPath: string, task: AcceptanceContractTask) {
       moduleSourceExtensions.map((extension) => `src/index.${extension}`),
     );
     if (directory === 'src/routes' && workerEntry) surfaces.add(workerEntry);
+
+    const workflowEntry = firstExistingRepoPath(
+      repoPath,
+      moduleSourceExtensions.map((extension) => `src/workflows/weekly.${extension}`),
+    );
+    if (directory === 'src/workflows/steps' && workflowEntry) surfaces.add(workflowEntry);
   }
 
   return [...surfaces];
