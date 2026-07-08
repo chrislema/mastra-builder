@@ -288,6 +288,8 @@ Verification:
 
 ### Phase 4: Implementation Task Execution
 
+Status: in progress.
+
 Goal: make build task execution a focused service rather than a long workflow
 step body.
 
@@ -312,6 +314,12 @@ Move:
 - build resume plan.
 - touched-file/event analysis.
 - focused repair context paths.
+
+Completed extraction:
+
+- `implementation/task-boundaries.ts` for task boundary surfaces, generated
+  Wrangler type ownership, Worker config/package/binding hygiene guards,
+  installed package freshness, and source boundary filtering.
 
 Keep in build-task workflow:
 

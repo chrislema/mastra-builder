@@ -117,10 +117,23 @@ import { normalizeTaskPlanForDelivery } from './planning/task-plan-normalizer';
 import { parsePlannerRevisionResponse, planGateRevisionRemediation } from './planning/task-plan-revision';
 import {
   legacyProjectScaffoldHygiene,
-  ownsTypeScriptInputSurface,
   projectScaffoldHygiene,
-  workerSourceSurfaceIsConcrete,
 } from './planning/scaffold-policy';
+import {
+  currentWorkerCompatibilityDate,
+  generatedTaskSurfacePaths,
+  missingInstalledPackageNames,
+  taskBoundarySurfaces,
+  taskOwnsPackageManifest,
+  taskSourceBoundarySurfaces,
+  workerConfigHygieneGaps,
+  workerConfigTaskPacketPolicy,
+  workerConfigTaskPacketPolicyForTask,
+  workerEnvBindingAlignmentGaps,
+  workerPackageScaffoldGaps,
+  workersAiBindingGaps,
+  wranglerConfigHasWorkersAiBinding,
+} from './implementation/task-boundaries';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
 import { taskPacketRailsForTask } from './task-packet-rails';
 import {
@@ -225,8 +238,6 @@ import {
   normalizedOwnedSurfaces,
   taskOwnedBoundaryPaths,
   taskOwnsD1MigrationFile,
-  taskOwnsExactSurface as ownsExactSurface,
-  taskOwnsWorkerConfigFile,
 } from './task-plan-surface-policy';
 import { topoOrderTasks } from './task-plan-dependencies';
 import {
@@ -253,17 +264,8 @@ import {
   planGateRevisionPrompt,
 } from './planner-prompt-policy';
 import {
-  missingInstalledPackageNames as workerMissingInstalledPackageNames,
   packageDependencyNames,
-  repoUsesTypeScriptWorkerSource as workerRepoUsesTypeScriptWorkerSource,
-  workerConfigHygieneGaps as workerConfigHygieneGapsWithGuards,
   workerConfigPath as releaseGateWorkerConfigPath,
-  workerConfigTaskPacketPolicy as workerConfigTaskPacketPolicyBase,
-  workerEnvBindingAlignmentGaps as workerEnvBindingAlignmentGapsBase,
-  workerPackageScaffoldGaps as workerPackageScaffoldGapsWithGuards,
-  workersAiBindingGaps as workersAiBindingGapsWithGuards,
-  wranglerConfigHasWorkersAiBinding as wranglerConfigHasWorkersAiBindingBase,
-  type WorkerHygieneTaskGuards,
 } from './worker-hygiene';
 
 export {
@@ -328,6 +330,19 @@ export { routeBoundaryConsistencyHygiene } from './planning/route-boundary-polic
 export { normalizeTaskPlanCloudflareWorkerContracts } from './planning/cloudflare-worker-contracts-policy';
 export { normalizeTaskPlanForDelivery } from './planning/task-plan-normalizer';
 export { parsePlannerRevisionResponse, planGateRevisionRemediation } from './planning/task-plan-revision';
+export {
+  generatedTaskSurfacePaths,
+  missingInstalledPackageNames,
+  taskBoundarySurfaces,
+  taskSourceBoundarySurfaces,
+  workerConfigHygieneGaps,
+  workerConfigTaskPacketPolicy,
+  workerConfigTaskPacketPolicyForTask,
+  workerEnvBindingAlignmentGaps,
+  workerPackageScaffoldGaps,
+  workersAiBindingGaps,
+  wranglerConfigHasWorkersAiBinding,
+} from './implementation/task-boundaries';
 
 const execFileAsync = promisify(execFile);
 
@@ -577,6 +592,12 @@ const implementationWriteTools = new Set<string>([
   WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT,
 ]);
 
+const moduleSourceExtensions = ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs'] as const;
+
+function firstExistingRepoPath(repoPath: string, candidates: string[]) {
+  return candidates.find((candidate) => existsSync(join(resolve(repoPath), candidate)));
+}
+
 function existingOwnedFiles(repoPath: string, task: Task) {
   return taskBoundarySurfaces(repoPath, task).filter((surface) => {
     if (surface.includes('*')) return false;
@@ -808,16 +829,6 @@ export function profileKindContractGaps(repoPath: string, task: Task) {
   return gaps;
 }
 
-function taskBoundaryCanConfigureWorkersAi(repoPath: string, task: Task) {
-  return taskBoundarySurfaces(repoPath, task)
-    .map(concreteOwnedSurfacePath)
-    .filter((path): path is string => Boolean(path))
-    .some(
-      (path) =>
-        ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'].includes(path) || workerSourceSurfaceIsConcrete(path),
-    );
-}
-
 function workerSourceSearchRoots(repoPath: string) {
   const root = resolve(repoPath);
   return [
@@ -881,58 +892,8 @@ function workerSourceContainsRouteLiteral(repoPath: string, route: string) {
   return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeContainsRouteLiteral(sourceRoot, route, scanned));
 }
 
-export function workerConfigTaskPacketPolicy() {
-  return workerConfigTaskPacketPolicyBase();
-}
-
-function currentWorkerCompatibilityDate() {
-  return workerConfigTaskPacketPolicy().compatibility_date;
-}
-
-export function workerConfigTaskPacketPolicyForTask(task: Task) {
-  return taskOwnsWorkerConfigFile(task) ? workerConfigTaskPacketPolicy() : null;
-}
-
-export function generatedTaskSurfacePaths(task: Task) {
-  const policy = workerConfigTaskPacketPolicyForTask(task);
-  const output = policy?.generated_types.output;
-  return output ? [output] : [];
-}
-
 function isGeneratedTaskSurfacePath(task: Task, path: string) {
   return generatedTaskSurfacePaths(task).includes(path);
-}
-
-function repoUsesTypeScriptWorkerSource(repoPath: string, task?: Task) {
-  return (
-    (task !== undefined && (ownsTypeScriptInputSurface(task) || ownsExactSurface(task, 'tsconfig.json'))) ||
-    workerRepoUsesTypeScriptWorkerSource(repoPath)
-  );
-}
-
-function workerHygieneTaskGuards(): WorkerHygieneTaskGuards {
-  return {
-    taskCanConfigureWorkerConfig: taskBoundaryCanConfigureWorkerConfig,
-    taskCanConfigureWorkersAi: taskBoundaryCanConfigureWorkersAi,
-    taskOwnsPackageManifest,
-    repoUsesTypeScriptWorkerSource,
-  };
-}
-
-export function workerEnvBindingAlignmentGaps(repoPath: string) {
-  return workerEnvBindingAlignmentGapsBase(repoPath);
-}
-
-export function workerConfigHygieneGaps(repoPath: string, task?: Task) {
-  return workerConfigHygieneGapsWithGuards(repoPath, task, workerHygieneTaskGuards());
-}
-
-export function wranglerConfigHasWorkersAiBinding(repoPath: string) {
-  return wranglerConfigHasWorkersAiBindingBase(repoPath);
-}
-
-export function workersAiBindingGaps(repoPath: string, task?: Task) {
-  return workersAiBindingGapsWithGuards(repoPath, task, workerHygieneTaskGuards());
 }
 
 export function profileKindTaskPacketPolicy(sourcePolicy: SourcePolicy) {
@@ -949,13 +910,6 @@ export function profileKindTaskPacketPolicyForTask(task: Task, sourcePolicy = so
     sourcePolicy.requiredProfileKinds.length
     ? profileKindTaskPacketPolicy(sourcePolicy)
     : null;
-}
-
-function taskBoundaryCanConfigureWorkerConfig(repoPath: string, task: Task) {
-  return taskBoundarySurfaces(repoPath, task)
-    .map(concreteOwnedSurfacePath)
-    .filter((path): path is string => Boolean(path))
-    .some((path) => ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'].includes(path));
 }
 
 export function missingOwnedSurfacePaths(repoPath: string, task: Task) {
@@ -1051,55 +1005,6 @@ export function unreplacedPreflightStubPaths(repoPath: string, task: Task) {
       if (!existsSync(fullPath)) return false;
       return readFileSync(fullPath, 'utf8').includes(deliveryPreflightStubMarker);
     });
-}
-
-const moduleSourceExtensions = ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs'] as const;
-
-function firstExistingRepoPath(repoPath: string, candidates: string[]) {
-  return candidates.find((candidate) => existsSync(join(resolve(repoPath), candidate)));
-}
-
-export function taskBoundarySurfaces(repoPath: string, task: Task) {
-  const surfaces = new Set(effectiveOwnedSurfaces(task));
-  for (const surface of effectiveOwnedSurfaces(task)) {
-    const path = concreteOwnedSurfacePath(surface);
-    if (!path || !path.includes('/')) continue;
-    const parts = path.split('/');
-    parts.pop();
-    const directory = parts.join('/');
-    if (!directory) continue;
-    const barrel = firstExistingRepoPath(
-      repoPath,
-      moduleSourceExtensions.map((extension) => `${directory}/index.${extension}`),
-    );
-    if (barrel) surfaces.add(barrel);
-
-    const workerEntry = firstExistingRepoPath(
-      repoPath,
-      moduleSourceExtensions.map((extension) => `src/index.${extension}`),
-    );
-    if (directory === 'src/routes' && workerEntry) {
-      surfaces.add(workerEntry);
-    }
-
-    const workflowEntry = firstExistingRepoPath(
-      repoPath,
-      moduleSourceExtensions.map((extension) => `src/workflows/weekly.${extension}`),
-    );
-    if (directory === 'src/workflows/steps' && workflowEntry) {
-      surfaces.add(workflowEntry);
-    }
-  }
-
-  return [...surfaces];
-}
-
-export function taskSourceBoundarySurfaces(repoPath: string, task: Task) {
-  const generated = new Set(generatedTaskSurfacePaths(task));
-  return taskBoundarySurfaces(repoPath, task).filter((surface) => {
-    const path = concreteOwnedSurfacePath(surface);
-    return !path || !generated.has(path);
-  });
 }
 
 function sqlHasCheckConstraintForColumn(sql: string, column: string) {
@@ -1354,21 +1259,6 @@ export function implementationEnginePolicyMismatch({
   return [
     `ENGINE_POLICY_MISMATCH ${task.id}: workspace policy rejected path(s) that normalize inside ${role}/${task.id} boundaries: ${uniquePaths.join(', ')}. This is a delivery engine boundary bug; do not spend model retries on it.`,
   ];
-}
-
-function taskOwnsPackageManifest(task: Task) {
-  return effectiveOwnedSurfaces(task).some((surface) => {
-    const path = concreteOwnedSurfacePath(surface);
-    return path === 'package.json' || path === 'package-lock.json';
-  });
-}
-
-export function missingInstalledPackageNames(repoPath: string) {
-  return workerMissingInstalledPackageNames(repoPath);
-}
-
-export function workerPackageScaffoldGaps(repoPath: string, task?: Task) {
-  return workerPackageScaffoldGapsWithGuards(repoPath, task, workerHygieneTaskGuards());
 }
 
 export type { TypeScriptDiagnostic };
