@@ -224,6 +224,8 @@ Completed extraction:
 - `planning/pages-policy.ts` for Pages Functions exception hygiene, backed by
   `task-plan-surface-policy.ts` effective owned-surface resolution.
 - `planning/owned-surface-policy.ts` for concrete owned-surface hygiene.
+- `planning/role-boundary-policy.ts` for task owner surface hygiene and
+  planner role-boundary normalization.
 
 Keep in planning workflow:
 

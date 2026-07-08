@@ -81,6 +81,8 @@ Do not redo these:
   `planning/pages-policy.ts`
 - Owned-surface concreteness policy:
   `planning/owned-surface-policy.ts`
+- Task owner role-boundary policy:
+  `planning/role-boundary-policy.ts`
 
 ## Cleanup Rules
 
