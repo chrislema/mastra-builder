@@ -22,7 +22,6 @@ export type SmellAuditContract = {
     | 'behavior_by_file_evidence'
     | 'behavior_unverified'
     | 'generic_file_evidence'
-    | 'unverified'
     | undefined;
   evidence: string[];
   gaps: string[];
@@ -152,9 +151,7 @@ export function auditDeliveryTaskPlan({
             ? 'behavior_unverified'
             : evidenceKind === 'generic_file_evidence'
               ? 'generic_file_evidence'
-              : evidenceKind === 'unverified'
-                ? 'unverified'
-                : undefined;
+              : undefined;
 
       row.contracts += 1;
       if (evidenceKind === 'generic_file_evidence') row.genericFileEvidence += 1;

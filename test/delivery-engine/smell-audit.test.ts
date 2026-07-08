@@ -72,6 +72,26 @@ test('smell audit treats unverified behavior on explicit test tasks as pending e
   assert.equal(report.summary.smellCount, 0);
 });
 
+test('smell audit reports structural unverified gaps without counting them as smells', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-smell-structural-gap-'));
+  const report = auditDeliveryTaskPlan({
+    repoPath,
+    taskPlan: minimalTaskPlan({
+      id: 'T10',
+      owner: 'engineer',
+      deliverable: 'Operator docs',
+      depends_on: [],
+      owned_surfaces: ['README.md'],
+      acceptance_criteria: ['README.md lists required Cloudflare bindings and local validation commands.'],
+    }),
+  });
+
+  assert.equal(report.summary.unverified, 1);
+  assert.equal(report.summary.behaviorUnverified, 0);
+  assert.equal(report.summary.smellCount, 0);
+  assert.equal(report.taskRows[0].unverified, 1);
+});
+
 test('smell audit treats implementation behavior copied to a dependent evidence task as pending evidence', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-smell-dependent-evidence-'));
   const criterion = 'All and Clear actions update selected models and the displayed selected count.';

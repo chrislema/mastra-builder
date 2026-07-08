@@ -60,7 +60,13 @@ copied onto the provider evidence task by provider surface ownership:
 - Behavior criteria verified by generic file evidence: 0
 - Behavior criteria still unverified: 3
 - Pending behavior evidence: 129
-- Total audit smells: 67
+- Total audit smells: 28
+
+`Unverified contracts` remains a gap counter for unfinished or not-yet-proven
+work. It is intentionally broader than `Total audit smells`. A smell is now a
+brittle evidence pattern: behavior proven by generic file evidence, behavior
+with no routed evidence path, or generic source-token file evidence. Plain
+structural gaps stay visible in task rows without inflating the smell count.
 
 This is an intentional intermediate state: behavior is no longer falsely marked
 verified by token overlap, behavior-only proof gaps no longer cause
@@ -80,7 +86,8 @@ Largest clusters:
   tasks.
 - `T06`, `T07`, `T08`, `T09`: frontend/runtime behavior now has explicit
   `*-frontend-behavior-tests` tasks; remaining smells are mostly structural
-  generic-file evidence or non-behavior unverified UI/documentation contracts.
+  generic-file evidence. Non-behavior unverified UI/documentation contracts are
+  tracked as gaps, not smells.
 - `T04-provider-behavior-tests`: provider-adapter behavior now routes to the
   provider evidence task by provider surface ownership. Remaining provider smells
   are structural generic-file or non-behavior unverified contracts.
