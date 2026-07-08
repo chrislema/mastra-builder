@@ -131,6 +131,16 @@ import {
   normalizeTaskPlanGeneratedSliceDependencies as normalizeGeneratedSliceDependencies,
 } from './task-plan-generated-slices';
 import {
+  appendDependencies,
+  insertTaskAfterDependencies,
+  moveTaskAfterDependencies,
+  taskCanDependOnTaskList,
+  taskCanSafelyDependOn,
+  taskDependsOn,
+  taskListDependsOn,
+  withoutCyclicDependencies as withoutCyclicTaskDependencies,
+} from './task-plan-dependencies';
+import {
   releaseGateTranscriptFixtureAvailable as transcriptFixtureAvailable,
   releaseGateTranscriptFixtureSchemaGaps as transcriptFixtureSchemaGaps,
   releaseGateTranscriptVersionAuditSql,
@@ -780,21 +790,6 @@ export function normalizeTaskPlanScaffoldDependencies(repoPath: string, taskPlan
   });
 
   return changed ? { ...taskPlan, tasks } : taskPlan;
-}
-
-function taskDependsOn(taskPlan: TaskPlan, taskId: string, dependencyId: string, seen = new Set<string>()): boolean {
-  if (taskId === dependencyId) return true;
-  if (seen.has(taskId)) return false;
-  seen.add(taskId);
-
-  const task = taskPlan.tasks.find((candidate) => candidate.id === taskId);
-  if (!task) return false;
-  if (task.depends_on.includes(dependencyId)) return true;
-  return task.depends_on.some((parentId) => taskDependsOn(taskPlan, parentId, dependencyId, seen));
-}
-
-function taskCanSafelyDependOn(taskPlan: TaskPlan, taskId: string, dependencyId: string) {
-  return taskId !== dependencyId && !taskDependsOn(taskPlan, dependencyId, taskId);
 }
 
 const profileContractProducerSurfaces = [
@@ -1854,25 +1849,6 @@ function withoutSchedulerWorkflowExecutionCriteria(task: Task) {
   };
 }
 
-function insertTaskAfterDependencies(tasks: Task[], task: Task) {
-  const dependencyIndexes = task.depends_on
-    .map((dependency) => tasks.findIndex((candidate) => candidate.id === dependency))
-    .filter((index) => index >= 0);
-  const insertAfter = dependencyIndexes.length ? Math.max(...dependencyIndexes) : -1;
-  return [...tasks.slice(0, insertAfter + 1), task, ...tasks.slice(insertAfter + 1)];
-}
-
-function moveTaskAfterDependencies(tasks: Task[], taskId: string) {
-  const index = tasks.findIndex((task) => task.id === taskId);
-  if (index < 0) return { tasks, changed: false };
-
-  const task = tasks[index];
-  const remaining = tasks.filter((_, candidateIndex) => candidateIndex !== index);
-  const next = insertTaskAfterDependencies(remaining, task);
-  const changed = next.some((task, candidateIndex) => task.id !== tasks[candidateIndex]?.id);
-  return { tasks: next, changed };
-}
-
 function taskHasRouteIntegrationContract(task: Task) {
   return (
     taskOwnsRouterSurface(task) &&
@@ -2278,44 +2254,6 @@ function taskDependsOnAny(task: Task, ids: Set<string>) {
   return task.depends_on.some((dependency) => ids.has(dependency));
 }
 
-function taskListDependsOn(tasks: Task[], taskId: string, dependencyId: string, seen = new Set<string>()): boolean {
-  if (taskId === dependencyId) return true;
-  if (seen.has(taskId)) return false;
-  seen.add(taskId);
-
-  const task = tasks.find((candidate) => candidate.id === taskId);
-  if (!task) return false;
-  if (task.depends_on.includes(dependencyId)) return true;
-  return task.depends_on.some((parentId) => taskListDependsOn(tasks, parentId, dependencyId, seen));
-}
-
-function taskCanDependOnTaskList(tasks: Task[], taskId: string, dependencyId: string) {
-  return taskId !== dependencyId && !taskListDependsOn(tasks, dependencyId, taskId);
-}
-
-function withoutCyclicDependencies(tasks: Task[]) {
-  let changed = false;
-  const next = tasks.map((task) => {
-    if (taskHasRouteIntegrationContract(task) || taskOwnsSessionRoute(task)) return task;
-    const depends_on = task.depends_on.filter((dependency) => {
-      if (!taskListDependsOn(tasks, dependency, task.id)) return true;
-      changed = true;
-      return false;
-    });
-    return depends_on.length === task.depends_on.length ? task : { ...task, depends_on };
-  });
-
-  return { tasks: next, changed };
-}
-
-function appendDependencies(task: Task, dependencies: string[]) {
-  const depends_on = Array.from(new Set([...task.depends_on, ...dependencies.filter((dependency) => dependency !== task.id)]));
-  return depends_on.length === task.depends_on.length &&
-    depends_on.every((dependency, index) => dependency === task.depends_on[index])
-    ? task
-    : { ...task, depends_on };
-}
-
 function withPreEntrypointGeneratedSliceDependencies(taskPlan: TaskPlan, tasks: Task[]) {
   const plan = { ...taskPlan, tasks };
   let changed = false;
@@ -2353,7 +2291,9 @@ function withPreEntrypointGeneratedSliceDependencies(taskPlan: TaskPlan, tasks: 
 }
 
 function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
-  const sanitized = withoutCyclicDependencies(tasks);
+  const sanitized = withoutCyclicTaskDependencies(tasks, {
+    preserveTask: (task) => taskHasRouteIntegrationContract(task) || taskOwnsSessionRoute(task),
+  });
   tasks = sanitized.tasks;
   const routerTaskIds = new Set(routerBoundaryProviderTasks(tasks).map((task) => preEntrypointBoundaryDependencyId(tasks, task)));
   const sessionTaskIds = new Set(tasks.filter(taskOwnsSessionRoute).map((task) => preEntrypointBoundaryDependencyId(tasks, task)));

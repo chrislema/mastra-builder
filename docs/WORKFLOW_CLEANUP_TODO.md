@@ -99,6 +99,10 @@ Completed cleanup checkpoints:
   - Move route integration and browser session route criteria text into
     `task-plan-source-contracts.ts`, keeping route ordering and task insertion
     logic in `workflow.ts`.
+  - Extract shared task dependency and ordering utilities into
+    `task-plan-dependencies.ts`, including safe-dependency checks,
+    dependency appends, dependency-based insertion/move, and cyclic dependency
+    cleanup used by route/session/final-entrypoint ordering.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
