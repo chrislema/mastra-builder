@@ -92,6 +92,10 @@ Completed cleanup checkpoints:
   - Move the larger auth/profile/run/workflow/router task-plan criteria builder
     into `task-plan-source-contracts.ts`, leaving `workflow.ts` to provide typed
     task facts and append the resulting criteria.
+  - Extract generated-slice family detection, final-slice resolution,
+    acceptance-criterion classification, dependency normalization, and
+    dependency hygiene into `task-plan-generated-slices.ts`, with `workflow.ts`
+    providing only route-aware dependency policy callbacks.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
