@@ -1,7 +1,20 @@
 const behaviorCriterionPattern =
   /\b(adds?|removes?|updates?|rejects?|returns?|throws?|normalizes?|redacts?|validates?|resolves?|classif(?:y|ies)|creates?|receives?|executes?|fetch(?:es|ing)?|extract(?:s|ing)?|generat(?:es|ing)?|stor(?:es|ing)|scores?|does not|without|before|after|fallback|fails?|crash(?:es)?|calls?|posts?|persists?|hydrates?|excludes?|enforces?)\b|\bruns?\s+(?:all|the|provider|requested|tests?|locally|before|after|with|without|through|on|in|against)\b/i;
 
+function isDocumentationCriterion(criterion: string) {
+  return /^\s*(?:README\.md|docs\/|operator documentation)\b[\s\S]*\b(?:documents|explains|states|lists|mentions)\b/i.test(
+    criterion,
+  );
+}
+
+function isDeclarativeConfigCriterion(criterion: string) {
+  return /^\s*(?:wrangler\.(?:jsonc?|toml)|package\.json|tsconfig\.json)\b[\s\S]*\b(?:declares|defines|documents|lists)\b/i.test(
+    criterion,
+  );
+}
+
 export function isBehaviorLikeAcceptanceCriterion(criterion: string) {
+  if (isDocumentationCriterion(criterion) || isDeclarativeConfigCriterion(criterion)) return false;
   return behaviorCriterionPattern.test(criterion);
 }
 

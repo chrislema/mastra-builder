@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { isBehaviorLikeAcceptanceCriterion } from '../../src/mastra/delivery-engine/acceptance-evidence-policy';
 import { auditDeliveryTaskPlan, formatSmellAuditReport } from '../../src/mastra/delivery-engine/smell-audit';
 import type { TaskPlan } from '../../src/mastra/delivery-engine/workflow-schemas';
 
@@ -16,6 +17,27 @@ function minimalTaskPlan(task: TaskPlan['tasks'][number]): TaskPlan {
     risks: [],
   };
 }
+
+test('behavior classifier excludes documentation and declarative config criteria', () => {
+  assert.equal(
+    isBehaviorLikeAcceptanceCriterion(
+      'README.md documents that POST /api/run uses a single-model request contract with models containing exactly one id.',
+    ),
+    false,
+  );
+  assert.equal(
+    isBehaviorLikeAcceptanceCriterion(
+      'wrangler.jsonc declares expected secret names or environment expectations for ANTHROPIC_API_KEY without embedding secret values.',
+    ),
+    false,
+  );
+  assert.equal(
+    isBehaviorLikeAcceptanceCriterion(
+      'POST /api/run returns HTTP 400 for malformed JSON with a normalized validation_error response.',
+    ),
+    true,
+  );
+});
 
 test('smell audit reports behavior criteria as unverified instead of file-evidence verified', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-smell-file-evidence-'));

@@ -51,22 +51,24 @@ route behavior into the same route evidence task, and copying contract/validatio
 behavior onto explicit domain evidence tasks. Provider-adapter behavior is also
 copied onto the provider evidence task by provider surface ownership:
 
-- Acceptance contracts: 271
+- Acceptance contracts: 269
 - Structured evidence: 33
 - Command/test evidence: 42
-- Generic file evidence: 25
-- Unverified contracts: 171
-- Behavior-shaped criteria: 160
+- Generic file evidence: 26
+- Unverified contracts: 168
+- Behavior-shaped criteria: 155
 - Behavior criteria verified by generic file evidence: 0
-- Behavior criteria still unverified: 3
-- Pending behavior evidence: 129
-- Total audit smells: 28
+- Behavior criteria still unverified: 0
+- Pending behavior evidence: 127
+- Total audit smells: 26
 
 `Unverified contracts` remains a gap counter for unfinished or not-yet-proven
 work. It is intentionally broader than `Total audit smells`. A smell is now a
 brittle evidence pattern: behavior proven by generic file evidence, behavior
 with no routed evidence path, or generic source-token file evidence. Plain
 structural gaps stay visible in task rows without inflating the smell count.
+Documentation and declarative config criteria are classified as structural, not
+runtime behavior.
 
 This is an intentional intermediate state: behavior is no longer falsely marked
 verified by token overlap, behavior-only proof gaps no longer cause
