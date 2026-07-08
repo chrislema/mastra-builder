@@ -20,6 +20,7 @@ export const roleBoundaries = {
       'yarn.lock',
       'bun.lockb',
       'tsconfig*.json',
+      'worker-configuration.d.ts',
       '*.config.*',
       'functions/_middleware.js',
       'functions/api/_middleware.js',

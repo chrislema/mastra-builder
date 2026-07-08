@@ -37,7 +37,7 @@ export const workerScaffoldAcceptanceCriteria = {
   packageTypecheckJs:
     'package.json exists and defines scripts.typecheck exactly as "node scripts/check-js.js".',
   noFrontendBuild:
-    'Wrangler local and production dry-run validation runs without requiring a frontend build step.',
+    'package.json and wrangler.jsonc provide the scripts and configuration needed for later Wrangler local and production dry-run validation without requiring a frontend build step.',
   firstSliceRunnable:
     'The first build slice is structurally runnable by Wrangler without requiring database migrations, Pages, React/Vite, or public UI files.',
   wranglerEnvironments:

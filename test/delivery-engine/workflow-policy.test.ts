@@ -101,6 +101,7 @@ import {
   workerPackageScaffoldGaps,
   wranglerConfigHasWorkersAiBinding,
 } from '../../src/mastra/delivery-engine/workflow.ts';
+import { fileOwnership } from '../../src/mastra/delivery-engine/checks.ts';
 import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
 
 const currentCompatibilityDate = () => new Date().toISOString().slice(0, 10);
@@ -508,6 +509,13 @@ test('bare Worker project plans require package scaffold before runtime surfaces
     },
   ]);
   assert.deepEqual(projectScaffoldHygiene(repoPath, goodPlan), { passed: true, reason: 'ok' });
+});
+
+test('engineer ownership allows Wrangler generated Worker type surface', () => {
+  assert.deepEqual(fileOwnership({ role: 'engineer', paths: ['worker-configuration.d.ts'] }), {
+    passed: true,
+    reason: 'ok',
+  });
 });
 
 test('bare Worker project plans normalize root scaffold surfaces and static assets', () => {
