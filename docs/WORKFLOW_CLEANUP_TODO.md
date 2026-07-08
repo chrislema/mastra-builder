@@ -174,6 +174,9 @@ Do not redo these:
   `deployment/local-report.ts`
 - Deployment deterministic completion checks and failure next-step synthesis:
   `deployment/deployment-gate.ts`
+- Native release-gate stage workflow, retry loop, evidence synthesis, and
+  release readiness state sync:
+  `workflows/release-gate.workflow.ts`
 
 ## Cleanup Rules
 

@@ -14,6 +14,8 @@ import {
 import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaffold-workflow.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
+const releaseGateWorkflowSource = () =>
+  readFileSync('src/mastra/delivery-engine/workflows/release-gate.workflow.ts', 'utf8');
 const implementationAttemptPromptSource = () =>
   readFileSync('src/mastra/delivery-engine/implementation/attempt-prompt.ts', 'utf8');
 const taskPacketRailsSource = () => readFileSync('src/mastra/delivery-engine/task-packet-rails.ts', 'utf8');
@@ -90,7 +92,7 @@ test('delivery workflow records structured gate and task packet observability ev
 });
 
 test('release gate is synthesized deterministically from evidence', () => {
-  const source = workflowSource();
+  const source = releaseGateWorkflowSource();
   const releaseGateAttempt = source.slice(
     source.indexOf("id: 'release-gate-attempt'"),
     source.indexOf("const finalizeReleaseGateLoopStep"),

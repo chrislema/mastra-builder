@@ -467,6 +467,8 @@ Verification:
 
 ### Phase 7: Stage Workflow Modules
 
+Status: in progress.
+
 Goal: move native workflow definitions out of the root workflow file.
 
 Create:
@@ -489,6 +491,12 @@ Move:
 - `deliveryReleaseGateWorkflow`
 - `deliveryDeploymentWorkflow`
 - `deliveryWorkflow`
+
+Completed extraction:
+
+- `workflows/release-gate.workflow.ts` for the native release-gate retry loop,
+  evidence synthesis, deterministic release readiness gates, and release state
+  sync.
 
 Keep `workflow.ts` temporarily as a compatibility barrel:
 
