@@ -267,6 +267,8 @@ framework beside Mastra.
   surfaces, scaffold-owned read-only surfaces, runtime/evidence/surface/task
   classes, source contracts, dependency surfaces, verification command class,
   and model budget caps. The same rails feed Studio-visible task packet events.
+  Release gates are now synthesized deterministically from collected evidence
+  instead of asking the tester model to produce or judge the gate.
 - Phase 7: not started under this reset; the one paid benchmark run remains an
   explicit approval step after cheap checks are green.
 

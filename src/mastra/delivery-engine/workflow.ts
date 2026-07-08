@@ -90,7 +90,6 @@ import {
   reviewLoopStateSchema,
   reviewReportSchema,
   taskPlanSchema,
-  testerOutputSchema,
   workflowOutputSchema,
   type CheckSummary,
   type DeliveryWorkflowState,
@@ -131,6 +130,7 @@ import {
   type ReleaseGateEvidenceCommand,
   type ReleaseGateEvidenceResult,
 } from './release-gate-command-plan';
+import { synthesizeReleaseGateFromEvidence } from './release-gate-synthesis';
 import {
   buildVerificationCommandPlan as buildVerificationCommandPlanBase,
   buildVerificationCommandPlans as buildVerificationCommandPlansBase,
@@ -9292,7 +9292,6 @@ const executeReleaseGateAttemptStep = createStep({
     }
     if (!inputData.taskPlan) throw new Error('release gate loop did not provide a task plan');
 
-    const tester = requiredAgent(mastra, 'tester');
     const artifacts = [...inputData.artifacts];
     const checks = [...inputData.checks];
     const judgments = [...inputData.judgments];
@@ -9328,72 +9327,20 @@ const executeReleaseGateAttemptStep = createStep({
     });
     artifacts.push(evidencePath);
 
-    const evidenceEvents = await readDeliveryEventsState({ repoPath: inputData.repoPath, mastra });
-    const gateResponse = await runWithDeliveryStageTimeout({
+    const gate = synthesizeReleaseGateFromEvidence({ evidence, evidencePath });
+    await appendDeliveryEventState({
       repoPath: inputData.repoPath,
       mastra,
-      stage,
-      timeoutMs: deliveryAgentTimeouts.build,
-      operation: (abortSignal) =>
-        tester.generate(
-          `Synthesize a release gate for pre-deployment from the evidence below.
-
-Do not call tools. Do not claim evidence that is not listed here.
-Use decision "pass" only when all critical areas are verified or not_applicable and blockers is empty.
-Use decision "fail" when any critical area is missing, any required evidence command failed, or any acceptance-critical behavior is unproven.
-For event_type "pre_deployment", tiers must be "passed" when supported by evidence or "not_required" with a reason when no tier-specific harness exists. Use "failed" only for an evidence command that actually failed.
-
-Known task plan:
-${JSON.stringify(inputData.taskPlan, null, 2)}
-
-Known implementation judgment refs:
-${JSON.stringify(judgments.slice(-12), null, 2)}
-
-Delivery artifacts:
-${JSON.stringify(artifacts.slice(-24), null, 2)}
-
-Evidence artifact path: ${evidencePath}
-Evidence:
-${JSON.stringify(evidence, null, 2)}
-
-Stage events:
-${JSON.stringify(evidenceEvents.filter((event) => event.stage === stage).slice(-30), null, 2)}
-
-${inputData.remediation.length ? `This is a bounce. Fix exactly these release-gate findings:\n${inputData.remediation.map((item) => `- ${item}`).join('\n')}\n` : ''}
-Return a release-gate object with event_type "pre_deployment". Every critical area must be verified with cited evidence, missing and therefore blocking, or not_applicable with a reason. Fail closed on unproven critical behavior.`,
-          {
-            ...structuredNoToolOptions,
-            abortSignal,
-            memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: 'tester' }),
-            requestContext: createDeliveryControlRequestContext(inputData.repoPath),
-            structuredOutput: {
-              schema: testerOutputSchema,
-              ...deliveryStructuredOutputOptions,
-              instructions: 'Return only { "gate": <release-gate> }.',
-            },
-          },
-        ),
+      event: {
+        type: 'release_gate_synthesized',
+        stage,
+        ok: gate.decision === 'pass',
+        artifact_type: 'release-gate',
+        path: gatePath,
+        decision: gate.decision,
+        blockers: gate.blockers,
+      },
     });
-
-    let gate: ReleaseGate;
-    try {
-      gate = parseDeliveryStructuredOutput(testerOutputSchema, gateResponse, 'tester release gate').gate;
-    } catch (error) {
-      gate = releaseGateForInvalidTesterOutput(error);
-      await appendDeliveryEventState({
-        repoPath: inputData.repoPath,
-        mastra,
-        event: {
-          type: 'structured_output_invalid',
-          stage,
-          role: 'tester',
-          ok: false,
-          artifact_type: 'release-gate',
-          path: gatePath,
-          error: compactDiagnostic(error, 900),
-        },
-      });
-    }
 
     writeDeliveryArtifact({
       repoPath: inputData.repoPath,
@@ -9424,45 +9371,12 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
     });
     checks.push(...checkSummaries(deterministicResults, `release-gate.a${attemptNumber}`));
 
-    const gateJudge = await judgeDeliveryArtifact({
-      mastra,
-      repoPath: inputData.repoPath,
-      runId: inputData.runId,
-      rubricName: 'release-gate',
-      subjectName: gatePath,
-      subject: {
-        gate,
-        evidence_events: deliveryEvents.filter((event) => event.stage === stage),
-      },
-      deterministicResults,
-      slug: `release-gate-a${attemptNumber}`,
-    });
-    artifacts.push(gateJudge.judgeOutputPath, gateJudge.judgmentPath);
-    judgments.push(gateJudge.ref);
-
-    if (gateJudge.judgment.passed) {
-      if (gate.decision !== 'pass') {
-        return {
-          repoPath: inputData.repoPath,
-          maxRetries: inputData.maxRetries,
-          deployMode: inputData.deployMode,
-          reviewMode: inputData.reviewMode,
-          taskPlan: inputData.taskPlan,
-          releaseGate: gate,
-          status: 'gate_failed' as const,
-          runId: inputData.runId,
-          summary: 'Release gate failed; deployment is stopped.',
-          artifacts,
-          checks,
-          judgments,
-          questions: [],
-          nextSteps: gate.blockers.length ? gate.blockers : ['Fix release-gate blockers and rerun test stage.'],
-          attempt,
-          terminal: true,
-          remediation: [],
-        };
-      }
-
+    const failedDeterministicResults = deterministicResults.filter((result) => !result.passed);
+    const remediation = [
+      ...gate.blockers,
+      ...failedDeterministicResults.map((result) => `DETERMINISTIC ${result.id ?? result.check} failed: ${result.reason}`),
+    ];
+    if (gate.decision === 'pass' && failedDeterministicResults.length === 0) {
       return {
         repoPath: inputData.repoPath,
         maxRetries: inputData.maxRetries,
@@ -9484,7 +9398,6 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
       };
     }
 
-    const remediation = gateJudge.judgment.remediation;
     if (attempt < inputData.maxRetries) {
       return {
         repoPath: inputData.repoPath,
@@ -9514,14 +9427,14 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
       reviewMode: inputData.reviewMode,
       taskPlan: inputData.taskPlan,
       releaseGate: gate,
-      status: 'stuck' as const,
+      status: 'gate_failed' as const,
       runId: inputData.runId,
-      summary: 'Release gate did not pass judgment within retry budget.',
+      summary: 'Release gate failed; deployment is stopped.',
       artifacts,
       checks,
       judgments,
       questions: [],
-      nextSteps: remediation.length ? remediation : ['Inspect release gate evidence and rerun tester stage.'],
+      nextSteps: remediation.length ? remediation : ['Fix release-gate blockers and rerun test stage.'],
       attempt,
       terminal: true,
       remediation,

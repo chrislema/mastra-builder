@@ -55,7 +55,7 @@ test('workflow agent calls use run-scoped Mastra memory', () => {
   const memoryCount = source.match(/memory: deliveryRunMemory/g)?.length ?? 0;
 
   assert.equal(requestContextCount, 1);
-  assert.equal(controlRequestContextCount, 6);
+  assert.equal(controlRequestContextCount, 5);
   assert.equal(memoryCount, requestContextCount + controlRequestContextCount);
   assert.match(source, /memory: deliveryRunMemory\(\{ repoPath, runId, role: 'judge' \}\)/);
   assert.match(source, /memory: deliveryRunMemory\(\{ repoPath: inputData\.repoPath, runId: inputData\.runId, role: task\.owner \}\)/);
@@ -70,6 +70,18 @@ test('delivery workflow records structured gate and task packet observability ev
   assert.match(source, /verification_command_class: rails\.verification_command_class/);
   assert.match(source, /allowed_surfaces: rails\.allowed_surfaces/);
   assert.match(source, /task_rails: taskRails/);
+});
+
+test('release gate is synthesized deterministically from evidence', () => {
+  const source = workflowSource();
+  const releaseGateAttempt = source.slice(
+    source.indexOf("id: 'release-gate-attempt'"),
+    source.indexOf("const finalizeReleaseGateLoopStep"),
+  );
+
+  assert.match(releaseGateAttempt, /synthesizeReleaseGateFromEvidence/);
+  assert.doesNotMatch(releaseGateAttempt, /tester\.generate/);
+  assert.doesNotMatch(releaseGateAttempt, /rubricName: 'release-gate'/);
 });
 
 test('delivery stage workflows close delivery state on workflow errors', () => {
