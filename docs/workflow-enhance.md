@@ -257,6 +257,11 @@ Completed extraction:
 - `planning/route-criteria-policy.ts` for route endpoint criteria ownership,
   scheduler/workflow criteria drift cleanup, and final Worker entrypoint
   criteria sanitization.
+- `planning/route-task-policy.ts` for auth/session route tasks, route
+  integration tasks, final Worker entrypoint tasks, profile summary tasks, and
+  Cloudflare route dependency rewiring.
+- `planning/task-criteria-policy.ts` for shared task acceptance criteria
+  append semantics.
 
 Keep in planning workflow:
 

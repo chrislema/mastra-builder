@@ -115,6 +115,11 @@ Do not redo these:
   validation contracts: `planning/behavior-evidence-task-policy.ts`
 - Route, scheduler, and final Worker entrypoint criteria cleanup:
   `planning/route-criteria-policy.ts`
+- Route task orchestration for auth/session, route integration, final
+  entrypoint, profile summary, and dependency rewiring:
+  `planning/route-task-policy.ts`
+- Shared task acceptance criteria append helper:
+  `planning/task-criteria-policy.ts`
 
 ## Cleanup Rules
 
