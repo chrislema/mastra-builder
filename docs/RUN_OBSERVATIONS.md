@@ -83,3 +83,38 @@ For each run, record:
   deterministic AC14-AC18 blocker should no longer stop the next resumed run.
 - Next forward-progress question: run the preserved benchmark folder and confirm
   it proceeds beyond `T03` to the next real build or review blocker.
+
+### 2026-07-08 - CLI Resume Run Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved; do not clear existing generated files or
+  `.delivery` state.
+- Forward-progress question: does the resumed CLI run get past the previous
+  `T03` deterministic AC14-AC18 blocker now that split provider/error module
+  evidence is recognized?
+- Cheap/static verification already tried before this run:
+  - Focused workflow policy test passed.
+  - Static benchmark `T03` contract probe verified AC01-AC18.
+  - Typecheck and Mastra build passed.
+- Workflow run ID: `aca6e9fe-db47-416e-b024-67d625e49a6d`
+- Delivery run ID: `run-mrbopzmw-7647bb97`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/aca6e9fe-db47-416e-b024-67d625e49a6d.json`
+- Result: `deliveryStatus` was `stuck`.
+- Reused stages: `T01`, `T02`, `T05`.
+- Newly completed stage: `T03` passed after retry and judged `0.85`.
+- Farthest verified task: `T03` complete; the prior T03 AC14-AC18 blocker is
+  fixed.
+- New blocker: `T06` stuck on `T06-AC07`, "Removing a file updates state and
+  token estimates."
+- Failure class: likely missing executable behavior evidence. The generated
+  `public/app.js` contains `removeReferenceFileAndUpdateTokenEstimates`,
+  mutates `state.referenceFiles`, calls token estimate rendering, and wires a
+  `[data-remove-file]` click handler. Do not fix this by adding more static
+  string/pattern recognition.
+- Next fix direction: move frontend state criteria like file removal/token
+  estimates to generated-project behavior tests that run the code, such as a
+  DOM/browser test that adds a reference file, removes it, and asserts chips,
+  state, token estimate, and run payload behavior.
