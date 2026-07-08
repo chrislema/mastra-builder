@@ -27,6 +27,13 @@ For each run, record:
 - Cheap/static verification already tried.
 - Next fix, rerun, or stop decision.
 
+## Environment Notes
+
+- `npm run build` for the Mastra harness needs network access because Mastra's
+  build process installs dependencies after bundling. Sandbox-only attempts
+  regularly fail with `ENOTFOUND registry.npmjs.org`; rerun with network access
+  before treating build failure as a code issue.
+
 ## Active Benchmark Thread
 
 ### 2026-07-08 - Benchmark Resume Baseline

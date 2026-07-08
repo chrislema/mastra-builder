@@ -63,6 +63,17 @@ next fix or stop decision.
 If a context compaction happens mid-loop, read this file before touching the
 workflow or running the sample again.
 
+## Build Verification Rule
+
+`npm run build` for this Mastra project reaches a dependency install phase even
+after successful bundling. In the Codex sandbox, that install regularly fails
+with DNS/network errors such as `ENOTFOUND registry.npmjs.org`.
+
+Treat sandbox-only build failures at the Mastra dependency install phase as an
+environment/network limitation, not as a code regression. The real build
+verification path requires network access. When build verification matters,
+rerun `npm run build` with approved network access before diagnosing code.
+
 ## Contract Rule
 
 Contracts are still the right idea, but only in the right form.
