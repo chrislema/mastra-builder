@@ -3613,6 +3613,67 @@ test('acceptance contracts verify Benchmark model catalog structurally', () => {
   assert.match(contracts.map((contract) => contract.evidence.join('\n')).join('\n'), /structured src\/models\.ts evidence/);
 });
 
+test('acceptance contracts verify Env-typed model configuration detection structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-model-config-contract-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/models.ts'),
+    [
+      'import type { Env } from "./contracts";',
+      '',
+      'export const MODEL_PROVIDERS = ["workers-ai", "anthropic", "openai-compatible"] as const;',
+      'export type ModelProvider = (typeof MODEL_PROVIDERS)[number];',
+      'export type ProviderSecretKey = "ANTHROPIC_API_KEY" | "OPENAI_API_KEY" | "ZAI_API_KEY";',
+      'export type ModelCatalogEntry = { id: string; label: string; vendor: string; provider: ModelProvider; model: string; secretKey?: ProviderSecretKey; baseUrl?: string };',
+      'export type PublicModel = Pick<ModelCatalogEntry, "id" | "label" | "vendor" | "provider"> & { configured: boolean };',
+      'export type ModelConfigurationEnv = Env;',
+      'export const MODEL_CATALOG = [',
+      '  { id: "workers-ai-qwen", label: "Qwen", vendor: "Cloudflare Workers AI", provider: "workers-ai", model: "@cf/qwen/qwen3" },',
+      '  { id: "claude-sonnet", label: "Claude", vendor: "Anthropic", provider: "anthropic", model: "claude-sonnet", secretKey: "ANTHROPIC_API_KEY" },',
+      '  { id: "zai-glm", label: "GLM", vendor: "z.ai", provider: "anthropic", model: "glm", secretKey: "ZAI_API_KEY", baseUrl: "https://api.z.ai/api/anthropic" },',
+      '  { id: "openai-gpt", label: "GPT", vendor: "OpenAI", provider: "openai-compatible", model: "gpt-5", secretKey: "OPENAI_API_KEY", baseUrl: "https://api.openai.com/v1" },',
+      '] as const satisfies readonly ModelCatalogEntry[];',
+      'export function deriveConfiguredStatus(model: ModelCatalogEntry, env: ModelConfigurationEnv): boolean {',
+      '  if (model.secretKey === undefined) return model.provider === "workers-ai";',
+      '  const secretValue = getConfiguredSecret(model.secretKey, env);',
+      '  return typeof secretValue === "string" && secretValue.trim().length > 0;',
+      '}',
+      'function getConfiguredSecret(secretKey: ProviderSecretKey, env: ModelConfigurationEnv): string | undefined {',
+      '  switch (secretKey) {',
+      '    case "ANTHROPIC_API_KEY": return env.ANTHROPIC_API_KEY;',
+      '    case "OPENAI_API_KEY": return env.OPENAI_API_KEY;',
+      '    case "ZAI_API_KEY": return env.ZAI_API_KEY;',
+      '  }',
+      '}',
+      'export const isModelConfigured = deriveConfiguredStatus;',
+      'export function toPublicModel(model: ModelCatalogEntry, env: Env): PublicModel {',
+      '  return { id: model.id, label: model.label, vendor: model.vendor, provider: model.provider, configured: isModelConfigured(model, env) };',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T03',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/models.ts'],
+      acceptance_criteria: [
+        'Configured status can be derived as true for keyless Workers AI models and true for keyed models only when the named secret exists on the Worker env.',
+        'Model configuration detection accepts only the Env type exported from src/contracts.ts and does not read secrets through ad hoc untyped env property names.',
+        'Configuration detection never returns secret values in API-visible model metadata.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contracts.every((contract) => contract.status === 'verified'), true);
+});
+
 test('acceptance contracts verify provider adapter secret handling structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-provider-adapter-contract-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

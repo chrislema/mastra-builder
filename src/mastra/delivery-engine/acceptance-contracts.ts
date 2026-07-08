@@ -1597,7 +1597,11 @@ function modelCatalogContractEvidence({
   task?: AcceptanceContractTask;
 }) {
   if (!repoPath || !task) return undefined;
-  if (!/\bsrc\/models\.ts\b|\bmodel catalog\b|\bcatalog(?:\s+(?:array|entries?|includes))?\b/i.test(criterion)) {
+  if (
+    !/\bsrc\/models\.ts\b|\bmodel catalog\b|\bcatalog(?:\s+(?:array|entries?|includes))?\b|\bconfigured status\b|\bconfiguration detection\b|\bAPI-visible model metadata\b/i.test(
+      criterion,
+    )
+  ) {
     return undefined;
   }
   if (!taskBoundarySurfaces(repoPath, task).includes('src/models.ts')) return undefined;
@@ -1642,6 +1646,46 @@ function modelCatalogContractEvidence({
       if (!new RegExp(`secretKey\\s*:\\s*['"]${secret}['"]`).test(source)) {
         gaps.push(`src/models.ts must reference ${secret} for keyed catalog entries.`);
       }
+    }
+  }
+
+  if (/\bconfigured status\b|\bnamed secret exists\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\b(?:deriveConfiguredStatus|isModelConfigured|isConfigured)\b/.test(source)) {
+      gaps.push('src/models.ts must export a configured-status helper.');
+    }
+    if (!/\bmodel\.secretKey\b/.test(source)) {
+      gaps.push('src/models.ts must derive keyed model status from model.secretKey.');
+    }
+    if (!/provider\s*={0,2}\s*['"]workers-ai['"]|\bmodel\.provider\s*={2,3}\s*['"]workers-ai['"]/.test(source)) {
+      gaps.push('src/models.ts must treat keyless Workers AI models as configured.');
+    }
+  }
+
+  if (/\bEnv type exported from src\/contracts\.ts\b|\bad hoc untyped env property names\b/i.test(criterion)) {
+    inspected = true;
+    const importsEnv = /import\s+type\s*\{[^}]*\bEnv\b[^}]*\}\s+from\s*['"]\.\/contracts['"]/.test(source);
+    const usesEnvForDetection =
+      /\b(?:deriveConfiguredStatus|isModelConfigured|isConfigured)\s*\([^)]*\benv\s*:\s*(?:Env|ModelConfigurationEnv)\b/.test(source) ||
+      /\btype\s+ModelConfigurationEnv\s*=\s*Env\b/.test(source);
+    if (!importsEnv || !usesEnvForDetection) {
+      gaps.push('src/models.ts must type configuration detection with Env imported from src/contracts.ts.');
+    }
+    if (/\b(?:Record\s*<\s*string|as\s+any|:\s*any\b|\[\s*key\s*:\s*string\s*\])/.test(source)) {
+      gaps.push('src/models.ts must not use untyped string-key env access for configuration detection.');
+    }
+  }
+
+  if (/\bsecret values\b|\bAPI-visible model metadata\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\b(?:PublicModel|toPublicModel|getPublicModels)\b/.test(source)) {
+      gaps.push('src/models.ts must expose API-visible model metadata through a public model helper/type.');
+    }
+    const publicModelIncludesSecret =
+      /\breturn\s*\{[\s\S]{0,300}\b(?:secretKey|baseUrl)\b/.test(source) ||
+      /\breturn\s*\{[\s\S]{0,300}\bmodel\s*:/.test(source);
+    if (publicModelIncludesSecret) {
+      gaps.push('src/models.ts public model metadata must not include secret values or provider-private fields.');
     }
   }
 
