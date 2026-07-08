@@ -104,7 +104,9 @@ import { ownedSurfaceHygiene } from './planning/owned-surface-policy';
 import { normalizeTaskPlanRoleBoundaries, taskOwnedSurfaceRoleHygiene } from './planning/role-boundary-policy';
 import { normalizeTaskPlanLargeStorageTasks } from './planning/large-task-policy';
 import { configSchemaTaskSplitHygiene, normalizeTaskPlanConfigSchemaTasks } from './planning/config-schema-policy';
+import { normalizeTaskPlanOperatorDocumentation, operatorDocumentationHygiene } from './planning/operator-documentation-policy';
 import { taskAcceptanceContractCriteria, taskSourceTaskId } from './planning/task-contracts';
+import { uniqueTaskId, uniqueTaskIdFromTasks } from './planning/task-ids';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
 import { taskPacketRailsForTask } from './task-packet-rails';
 import {
@@ -345,6 +347,10 @@ export {
   configSchemaTaskSplitHygiene,
   normalizeTaskPlanConfigSchemaTasks,
 } from './planning/config-schema-policy';
+export {
+  normalizeTaskPlanOperatorDocumentation,
+  operatorDocumentationHygiene,
+} from './planning/operator-documentation-policy';
 
 const execFileAsync = promisify(execFile);
 
@@ -1788,15 +1794,6 @@ function taskWorkflowImplementationSurface(task: Task) {
   );
 }
 
-function uniqueTaskIdFromTasks(tasks: Task[], baseId: string) {
-  const existingIds = new Set(tasks.map((task) => task.id));
-  if (!existingIds.has(baseId)) return baseId;
-
-  let suffix = 2;
-  while (existingIds.has(`${baseId}-${suffix}`)) suffix += 1;
-  return `${baseId}-${suffix}`;
-}
-
 function providerAdapterBehaviorTestTask(providerTask: Task, testId: string, criteria: string[]): Task {
   const extension = providerAdapterSurfaceExtension(providerTask);
   const testSurface = `test/provider-adapters.test.${extension}`;
@@ -2361,53 +2358,6 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, s
   }
 
   return changed ? { ...taskPlan, tasks } : taskPlan;
-}
-
-function taskPlanHasOperatorDocumentation(taskPlan: TaskPlan) {
-  return taskPlan.tasks.some((task) => taskOwnedBoundaryPaths(task).includes('README.md'));
-}
-
-function uniqueTaskId(taskPlan: TaskPlan, baseId: string) {
-  const existingIds = new Set(taskPlan.tasks.map((task) => task.id));
-  if (!existingIds.has(baseId)) return baseId;
-
-  let suffix = 2;
-  while (existingIds.has(`${baseId}-${suffix}`)) suffix += 1;
-  return `${baseId}-${suffix}`;
-}
-
-export function normalizeTaskPlanOperatorDocumentation(taskPlan: TaskPlan): TaskPlan {
-  if (taskPlanHasOperatorDocumentation(taskPlan)) return taskPlan;
-
-  const id = uniqueTaskId(taskPlan, 'E99-operator-documentation');
-  return {
-    ...taskPlan,
-    tasks: [
-      ...taskPlan.tasks,
-      {
-        id,
-        owner: 'engineer',
-        deliverable: "Document local Worker validation, required Cloudflare resources, and Chris's human-approved Wrangler deployment flow.",
-        depends_on: taskPlan.tasks.map((task) => task.id),
-        acceptance_criteria: [
-          'README.md documents local development and validation with Wrangler CLI, including npm scripts and expected ports.',
-          'README.md lists required Cloudflare resources, bindings, secrets, and Workers AI binding expectations.',
-          'README.md explains source-control expectations: local git checkpoints are allowed, while pushes/PRs through gh require explicit human direction, and production deploy waits for human approval before running wrangler deploy --env production.',
-        ],
-        owned_surfaces: ['README.md'],
-      },
-    ],
-  };
-}
-
-export function operatorDocumentationHygiene(taskPlan: TaskPlan) {
-  if (taskPlanHasOperatorDocumentation(taskPlan)) return { passed: true, reason: 'ok' };
-
-  return {
-    passed: false,
-    reason:
-      'Task plan does not include README.md operator documentation. Add an engineer-owned README.md task that captures local Wrangler validation, required Cloudflare resources/bindings, local git checkpoints, explicit human direction before gh push/PR actions, and human-approved wrangler deploy --env production.',
-  };
 }
 
 function generatedSliceDependencyPolicy(taskPlan: TaskPlan) {

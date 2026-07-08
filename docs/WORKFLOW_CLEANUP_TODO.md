@@ -89,6 +89,10 @@ Do not redo these:
   `planning/large-task-policy.ts`
 - Worker config and D1 schema task splitting:
   `planning/config-schema-policy.ts`
+- Generated task id helpers:
+  `planning/task-ids.ts`
+- Operator README planning and hygiene:
+  `planning/operator-documentation-policy.ts`
 
 ## Cleanup Rules
 

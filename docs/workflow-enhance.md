@@ -233,6 +233,9 @@ Completed extraction:
 - `planning/config-schema-policy.ts` for splitting Worker config and D1
   migration ownership, with shared Worker/D1 surface predicates in
   `task-plan-surface-policy.ts`.
+- `planning/task-ids.ts` for collision-safe generated task ids.
+- `planning/operator-documentation-policy.ts` for README/operator
+  documentation planning and hygiene.
 
 Keep in planning workflow:
 
