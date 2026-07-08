@@ -27,6 +27,17 @@ export function normalizedOwnedSurfaces(task: Task) {
   return task.owned_surfaces.map((surface) => normalizeDeliveryPathReference(surface)).filter(Boolean);
 }
 
+export function effectiveOwnedSurfaces(task: Task) {
+  const surfaces = new Set(task.owned_surfaces);
+  const taskText = [task.deliverable, ...task.acceptance_criteria].join('\n');
+
+  if (/\bsrc\/\s+directories\b|\bproject structure\b|\bsrc\/\s+directories for\b/i.test(taskText)) {
+    surfaces.add('src/**');
+  }
+
+  return [...surfaces];
+}
+
 export function concreteOwnedSurfacePath(surface: string) {
   const trimmed = normalizeDeliveryPathReference(surface);
   if (!trimmed || trimmed.includes('*') || /^unknown\b/i.test(trimmed)) return undefined;

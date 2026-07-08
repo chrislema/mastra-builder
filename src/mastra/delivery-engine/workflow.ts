@@ -99,6 +99,7 @@ import {
   openDecisionHygiene,
   shouldSuspendForPlannerQuestions,
 } from './planning/readout-policy';
+import { pagesFunctionsExceptionHygiene } from './planning/pages-policy';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
 import { taskPacketRailsForTask } from './task-packet-rails';
 import {
@@ -209,6 +210,7 @@ import {
 } from './task-plan-source-contracts';
 import {
   concreteOwnedSurfacePath,
+  effectiveOwnedSurfaces,
   looksLikeRepoPathReference,
   normalizedOwnedSurfaces,
   taskAcceptanceText,
@@ -324,6 +326,7 @@ export {
   openDecisionHygiene,
   shouldSuspendForPlannerQuestions,
 } from './planning/readout-policy';
+export { pagesFunctionsExceptionHygiene } from './planning/pages-policy';
 
 const execFileAsync = promisify(execFile);
 
@@ -437,26 +440,6 @@ const checkSummaries = (results: DeterministicGateResult[], suffix?: string): Ch
     passed: check.passed,
     reason: check.reason ?? 'deterministic check',
   }));
-
-function taskPlanPagesFunctionSurfaces(taskPlan: TaskPlan) {
-  return taskPlan.tasks.flatMap((task) =>
-    effectiveOwnedSurfaces(task)
-      .map(normalizeDeliveryPathReference)
-      .filter((surface) => surface === 'functions' || surface.startsWith('functions/'))
-      .map((surface) => `${task.id}:${surface}`),
-  );
-}
-
-export function pagesFunctionsExceptionHygiene(taskPlan: TaskPlan, sourcePolicy?: SourcePolicy) {
-  const pagesSurfaces = taskPlanPagesFunctionSurfaces(taskPlan);
-  if (!pagesSurfaces.length) return { passed: true, reason: 'ok' };
-  if (sourcePolicy?.pagesRequired) return { passed: true, reason: 'ok' };
-
-  return {
-    passed: false,
-    reason: `Task plan owns Pages Functions surfaces (${pagesSurfaces.join(', ')}), but vision/spec did not declaratively require Cloudflare Pages. Use standalone Worker routes under src/ or workers/ unless the source docs explicitly say to use Pages.`,
-  };
-}
 
 function ownedSurfaceReferenceIsConcrete(surface: string) {
   const normalized = normalizeDeliveryPathReference(surface);
@@ -4208,17 +4191,6 @@ function deliveryBuildResumeReason(plan: ReturnType<typeof deliveryBuildResumePl
   const resumeAfter = plan.resumeAfterTaskId ?? 'none';
   const nextTask = plan.nextTaskId ?? 'release gate';
   return `Resume cursor: ${plan.reusableTaskIds.length}/${plan.totalTasks} implementation task(s) already have passing artifacts; resume after ${resumeAfter}, next ${nextTask}.`;
-}
-
-function effectiveOwnedSurfaces(task: Task) {
-  const surfaces = new Set(task.owned_surfaces);
-  const taskText = [task.deliverable, ...task.acceptance_criteria].join('\n');
-
-  if (/\bsrc\/\s+directories\b|\bproject structure\b|\bsrc\/\s+directories for\b/i.test(taskText)) {
-    surfaces.add('src/**');
-  }
-
-  return [...surfaces];
 }
 
 export function implementationFilesTouched({

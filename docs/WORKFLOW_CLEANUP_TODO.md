@@ -77,6 +77,8 @@ Do not redo these:
   `agent-runtime/judge-runtime.ts`
 - Planning readout and open-decision policy:
   `planning/readout-policy.ts`
+- Pages Functions exception policy:
+  `planning/pages-policy.ts`
 
 ## Cleanup Rules
 

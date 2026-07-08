@@ -221,6 +221,8 @@ Completed extraction:
 - `planning/readout-policy.ts` for safe readout ambiguity normalization,
   open-decision hygiene, true-blocker classification, and planner question
   suspend policy.
+- `planning/pages-policy.ts` for Pages Functions exception hygiene, backed by
+  `task-plan-surface-policy.ts` effective owned-surface resolution.
 
 Keep in planning workflow:
 
