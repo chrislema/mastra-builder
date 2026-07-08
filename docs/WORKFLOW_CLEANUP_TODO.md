@@ -83,6 +83,10 @@ Do not redo these:
   `planning/owned-surface-policy.ts`
 - Task owner role-boundary policy:
   `planning/role-boundary-policy.ts`
+- Shared task contract helpers:
+  `planning/task-contracts.ts`
+- Oversized implementation task splitting:
+  `planning/large-task-policy.ts`
 
 ## Cleanup Rules
 

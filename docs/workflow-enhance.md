@@ -226,6 +226,10 @@ Completed extraction:
 - `planning/owned-surface-policy.ts` for concrete owned-surface hygiene.
 - `planning/role-boundary-policy.ts` for task owner surface hygiene and
   planner role-boundary normalization.
+- `planning/task-contracts.ts` for shared source task id and acceptance
+  contract criteria helpers.
+- `planning/large-task-policy.ts` for splitting oversized implementation tasks
+  into ordered delivery slices.
 
 Keep in planning workflow:
 
