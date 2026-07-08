@@ -23,12 +23,41 @@ type DeliveryReleaseGateRef = {
   blockers?: string[];
 };
 
+type DeliverySourcePolicyRef = {
+  pagesRequired?: boolean;
+  latestTranscriptRequired?: boolean;
+  externalServiceBindings?: string[];
+};
+
+type DeliveryScaffoldManifestRef = {
+  profileList?: string[];
+  language?: string;
+  main?: string;
+  generatedFiles?: string[];
+  testRuntimeMatrix?: Array<{ name?: string; runtime?: string; include?: string[] }>;
+  bindingMap?: Record<string, string>;
+  packageScripts?: Record<string, string>;
+  validationCommands?: string[];
+};
+
+type DeliveryModelSpendRef = {
+  totalTokens?: number;
+  totalCostUsd?: number;
+  completedTasks?: number;
+  maxTokensPerTask?: number;
+  maxCostPerTaskUsd?: number;
+};
+
 export type DeliveryWorkflowScorerOutput = {
   status?: string;
   runId?: string;
+  deployMode?: string;
   summary?: string;
+  sourcePolicy?: DeliverySourcePolicyRef;
+  scaffoldManifest?: DeliveryScaffoldManifestRef;
   taskPlan?: DeliveryTaskPlanRef;
   releaseGate?: DeliveryReleaseGateRef;
+  modelSpend?: DeliveryModelSpendRef;
   checks?: DeliveryCheckRef[];
   judgments?: DeliveryJudgmentRef[];
   nextSteps?: string[];
@@ -90,6 +119,13 @@ function deliveryAcceptanceContractChecks(output: unknown) {
 
 const rounded = (score: number) => Math.round(score * 1000) / 1000;
 const scoreEveryRun = { type: 'ratio', rate: 1 } satisfies ScoringSamplingConfig;
+const workerFeatureBindingMap: Record<string, string> = {
+  'worker-workers-ai': 'AI',
+  'worker-d1': 'DB',
+  'worker-kv': 'KV',
+  'worker-r2': 'ARTIFACTS',
+  'worker-workflows': 'PROCESSING_WORKFLOW',
+};
 
 function stringList(value: unknown) {
   if (Array.isArray(value)) {
@@ -121,6 +157,30 @@ function hasSignal(actual: string[], expected: string) {
       normalizedExpected.includes(normalizedCandidate)
     );
   });
+}
+
+function scaffoldManifest(output: unknown) {
+  return asDeliveryOutput(output).scaffoldManifest;
+}
+
+function scaffoldProfiles(output: unknown) {
+  return scaffoldManifest(output)?.profileList ?? [];
+}
+
+function taskPlanText(output: DeliveryWorkflowScorerOutput) {
+  return JSON.stringify(output.taskPlan ?? {});
+}
+
+function scaffoldRequiredBindings(output: DeliveryWorkflowScorerOutput) {
+  const required = new Set(['ASSETS']);
+  for (const profile of output.scaffoldManifest?.profileList ?? []) {
+    const binding = workerFeatureBindingMap[profile];
+    if (binding) required.add(binding);
+  }
+  for (const binding of output.sourcePolicy?.externalServiceBindings ?? []) {
+    required.add(binding);
+  }
+  return [...required];
 }
 
 function scoreSignalContract({
@@ -345,6 +405,172 @@ export const deliveryAcceptanceContractCoverageScorer = createScorer<unknown, De
       .join('; ')}.`;
   });
 
+export const deliveryScaffoldProfileFitScorer = createScorer<unknown, DeliveryWorkflowScorerOutput>({
+  id: 'delivery-scaffold-profile-fit',
+  name: 'Delivery Scaffold Profile Fit',
+  description: 'Scores whether the deterministic scaffold profiles fit source policy and Worker-first defaults.',
+})
+  .generateScore(({ run }) => {
+    const output = asDeliveryOutput(run.output);
+    const profiles = scaffoldProfiles(run.output);
+    if (!profiles.length) return 0;
+
+    const issues = [];
+    if (!profiles.some((profile) => profile === 'worker-vanilla-js' || profile === 'worker-typescript')) {
+      issues.push('missing Worker language profile');
+    }
+    if (output.sourcePolicy?.pagesRequired && !profiles.includes('pages-explicit')) {
+      issues.push('missing explicit Pages profile');
+    }
+    if (!output.sourcePolicy?.pagesRequired && profiles.includes('pages-explicit')) {
+      issues.push('Pages profile selected without source policy');
+    }
+    if (output.sourcePolicy?.latestTranscriptRequired && !profiles.includes('worker-d1')) {
+      issues.push('latest transcript policy needs D1 profile');
+    }
+
+    return issues.length ? 0 : 1;
+  })
+  .generateReason(({ run, score }) => {
+    const output = asDeliveryOutput(run.output);
+    const profiles = scaffoldProfiles(run.output);
+    if (!profiles.length) return 'No scaffold manifest profiles were recorded.';
+    if (score === 1) return `Scaffold profiles fit source policy: ${profiles.join(', ')}.`;
+
+    const issues = [];
+    if (!profiles.some((profile) => profile === 'worker-vanilla-js' || profile === 'worker-typescript')) {
+      issues.push('missing Worker language profile');
+    }
+    if (output.sourcePolicy?.pagesRequired && !profiles.includes('pages-explicit')) issues.push('missing pages-explicit');
+    if (!output.sourcePolicy?.pagesRequired && profiles.includes('pages-explicit')) issues.push('unexpected pages-explicit');
+    if (output.sourcePolicy?.latestTranscriptRequired && !profiles.includes('worker-d1')) issues.push('missing worker-d1');
+    return `Scaffold profile fit failed: ${issues.join(', ')}.`;
+  });
+
+export const deliveryTestRuntimeMatrixScorer = createScorer<unknown, DeliveryWorkflowScorerOutput>({
+  id: 'delivery-test-runtime-matrix',
+  name: 'Delivery Test Runtime Matrix',
+  description: 'Scores whether scaffold runtime routing keeps Node, Worker, and jsdom tests separated.',
+})
+  .generateScore(({ run }) => {
+    const matrix = scaffoldManifest(run.output)?.testRuntimeMatrix ?? [];
+    if (!matrix.length) return 0;
+
+    const includesFor = (runtime: string) =>
+      matrix.filter((rule) => rule.runtime === runtime).flatMap((rule) => rule.include ?? []);
+    const node = includesFor('node').join('\n');
+    const worker = includesFor('worker').join('\n');
+    const frontend = includesFor('jsdom').join('\n');
+    const hasBroadWorkerGlob = /test\/\*\*\/\*\.test\.\{?/.test(worker) || /test\/\*\*\/\*\.test\.[tj]s/.test(worker);
+    const checks = [
+      /contracts\.test/.test(node),
+      /validation\.test/.test(node),
+      /api-routes\.test/.test(worker),
+      /worker-smoke\.test/.test(worker),
+      /frontend-\*\.test/.test(frontend) || /ui-\*\.test/.test(frontend),
+      !hasBroadWorkerGlob,
+    ];
+    return rounded(checks.filter(Boolean).length / checks.length);
+  })
+  .generateReason(({ run, score }) => {
+    const matrix = scaffoldManifest(run.output)?.testRuntimeMatrix ?? [];
+    if (!matrix.length) return 'No scaffold runtime matrix was recorded.';
+    if (score === 1) return 'Runtime matrix separates contract/domain, Worker/API, and frontend DOM tests.';
+    return `Runtime matrix scored ${score}; inspect scaffold manifest testRuntimeMatrix for missing includes or broad Worker globs.`;
+  });
+
+export const deliveryScaffoldBindingsCompletenessScorer = createScorer<unknown, DeliveryWorkflowScorerOutput>({
+  id: 'delivery-scaffold-bindings-completeness',
+  name: 'Delivery Scaffold Bindings Completeness',
+  description: 'Scores whether scaffold binding map covers selected Cloudflare profiles and source-declared service bindings.',
+})
+  .generateScore(({ run }) => {
+    const output = asDeliveryOutput(run.output);
+    const bindingMap = output.scaffoldManifest?.bindingMap ?? {};
+    const required = scaffoldRequiredBindings(output);
+    if (!required.length) return 0;
+    return rounded(required.filter((binding) => bindingMap[binding]).length / required.length);
+  })
+  .generateReason(({ run, score }) => {
+    const output = asDeliveryOutput(run.output);
+    const bindingMap = output.scaffoldManifest?.bindingMap ?? {};
+    const required = scaffoldRequiredBindings(output);
+    const missing = required.filter((binding) => !bindingMap[binding]);
+    if (!required.length) return 'No required scaffold bindings could be inferred.';
+    if (!missing.length) return `Scaffold binding map covers required bindings: ${required.join(', ')}.`;
+    return `Scaffold binding completeness scored ${score}; missing ${missing.join(', ')}.`;
+  });
+
+export const deliveryVanillaFrontendComplianceScorer = createScorer<unknown, DeliveryWorkflowScorerOutput>({
+  id: 'delivery-vanilla-frontend-compliance',
+  name: 'Delivery Vanilla Frontend Compliance',
+  description: 'Scores whether generated and planned frontend surfaces stay vanilla HTML, CSS, and JavaScript.',
+})
+  .generateScore(({ run }) => {
+    const output = asDeliveryOutput(run.output);
+    const files = output.scaffoldManifest?.generatedFiles ?? [];
+    const hasVanillaShell = ['public/index.html', 'public/styles.css', 'public/app.js'].every((file) => files.includes(file));
+    const packageScripts = output.scaffoldManifest?.packageScripts ?? {};
+    const text = taskPlanText(output);
+    const introducesFramework = /\b(?:react|vite|next\.js|nextjs|svelte|vue)\b/i.test(text);
+    const buildScript = typeof packageScripts.build === 'string' && packageScripts.build.trim().length > 0;
+    return hasVanillaShell && !introducesFramework && !buildScript ? 1 : 0;
+  })
+  .generateReason(({ run, score }) => {
+    const output = asDeliveryOutput(run.output);
+    if (score === 1) return 'Frontend stays on vanilla public HTML, CSS, and JavaScript with no framework build script.';
+    const issues = [];
+    const files = output.scaffoldManifest?.generatedFiles ?? [];
+    for (const file of ['public/index.html', 'public/styles.css', 'public/app.js']) {
+      if (!files.includes(file)) issues.push(`missing ${file}`);
+    }
+    if (/\b(?:react|vite|next\.js|nextjs|svelte|vue)\b/i.test(taskPlanText(output))) issues.push('framework signal in task plan');
+    if (output.scaffoldManifest?.packageScripts?.build) issues.push('build script present');
+    return `Vanilla frontend compliance failed: ${issues.join(', ') || 'unknown issue'}.`;
+  });
+
+export const deliveryLocalEvidenceReadinessScorer = createScorer<unknown, DeliveryWorkflowScorerOutput>({
+  id: 'delivery-local-evidence-readiness',
+  name: 'Delivery Local Evidence Readiness',
+  description: 'Scores whether local release-gate evidence is ready for the human approval gate.',
+})
+  .generateScore(({ run }) => {
+    const output = asDeliveryOutput(run.output);
+    if (!output.releaseGate) return 0;
+    if (output.releaseGate.decision !== 'pass') return 0;
+    return (output.releaseGate.blockers ?? []).length === 0 ? 1 : 0;
+  })
+  .generateReason(({ run, score }) => {
+    const output = asDeliveryOutput(run.output);
+    if (!output.releaseGate) return 'No release gate evidence was recorded.';
+    if (score === 1) return 'Local evidence release gate passed with no blockers.';
+    return `Local evidence is not ready: decision=${output.releaseGate.decision ?? 'unknown'}, blockers=${(output.releaseGate.blockers ?? []).join(', ') || 'none'}.`;
+  });
+
+export const deliveryModelSpendPerCompletedTaskScorer = createScorer<unknown, DeliveryWorkflowScorerOutput>({
+  id: 'delivery-model-spend-per-completed-task',
+  name: 'Delivery Model Spend Per Completed Task',
+  description: 'Scores model token/cost spend per completed task when spend summaries are available.',
+})
+  .generateScore(({ run }) => {
+    const spend = asDeliveryOutput(run.output).modelSpend;
+    if (!spend?.completedTasks || spend.completedTasks <= 0) return 0;
+    const tokenScore = spend.totalTokens && spend.maxTokensPerTask
+      ? Math.min(1, spend.maxTokensPerTask / (spend.totalTokens / spend.completedTasks))
+      : 1;
+    const costScore = spend.totalCostUsd && spend.maxCostPerTaskUsd
+      ? Math.min(1, spend.maxCostPerTaskUsd / (spend.totalCostUsd / spend.completedTasks))
+      : 1;
+    return rounded(Math.min(tokenScore, costScore));
+  })
+  .generateReason(({ run, score }) => {
+    const spend = asDeliveryOutput(run.output).modelSpend;
+    if (!spend?.completedTasks || spend.completedTasks <= 0) return 'No model spend summary with completed task count was recorded.';
+    const tokensPerTask = spend.totalTokens ? rounded(spend.totalTokens / spend.completedTasks) : undefined;
+    const costPerTask = spend.totalCostUsd ? rounded(spend.totalCostUsd / spend.completedTasks) : undefined;
+    return `Model spend score ${score}; tokens/task=${tokensPerTask ?? 'unknown'}, cost/task=${costPerTask ?? 'unknown'}.`;
+  });
+
 export const cloudflareWorkerFirstTopologyScorer = createScorer<unknown, CloudflareArchitectureScorerOutput>({
   id: 'cloudflare-worker-first-topology',
   name: 'Cloudflare Worker First Topology',
@@ -512,6 +738,12 @@ export const deliveryScorers = {
   deliveryJudgmentPassRateScorer,
   deliveryDeterministicChecksScorer,
   deliveryAcceptanceContractCoverageScorer,
+  deliveryScaffoldProfileFitScorer,
+  deliveryTestRuntimeMatrixScorer,
+  deliveryScaffoldBindingsCompletenessScorer,
+  deliveryVanillaFrontendComplianceScorer,
+  deliveryLocalEvidenceReadinessScorer,
+  deliveryModelSpendPerCompletedTaskScorer,
   cloudflareWorkerFirstTopologyScorer,
   cloudflareStorageFitScorer,
   cloudflareBindingsHygieneScorer,
@@ -537,6 +769,26 @@ const deliveryQualityStepScorers = {
     sampling: scoreEveryRun,
   },
 } satisfies MastraScorers;
+
+export const deliveryScaffoldStepScorers: MastraScorers = {
+  scaffoldProfileFit: {
+    scorer: deliveryScaffoldProfileFitScorer,
+    sampling: scoreEveryRun,
+  },
+  testRuntimeMatrix: {
+    scorer: deliveryTestRuntimeMatrixScorer,
+    sampling: scoreEveryRun,
+  },
+  scaffoldBindings: {
+    scorer: deliveryScaffoldBindingsCompletenessScorer,
+    sampling: scoreEveryRun,
+  },
+  vanillaFrontend: {
+    scorer: deliveryVanillaFrontendComplianceScorer,
+    sampling: scoreEveryRun,
+  },
+  ...deliveryQualityStepScorers,
+};
 
 export const deliveryPlanStepScorers: MastraScorers = {
   planToArchitect: {
@@ -567,12 +819,20 @@ export const deliveryReleaseGateStepScorers: MastraScorers = {
     scorer: deliveryTesterToDeployerHandoffScorer,
     sampling: scoreEveryRun,
   },
+  localEvidenceReadiness: {
+    scorer: deliveryLocalEvidenceReadinessScorer,
+    sampling: scoreEveryRun,
+  },
   ...deliveryQualityStepScorers,
 };
 
 export const deliveryDeploymentStepScorers: MastraScorers = {
   completion: {
     scorer: deliveryWorkflowCompletionScorer,
+    sampling: scoreEveryRun,
+  },
+  modelSpendPerTask: {
+    scorer: deliveryModelSpendPerCompletedTaskScorer,
     sampling: scoreEveryRun,
   },
   ...deliveryQualityStepScorers,

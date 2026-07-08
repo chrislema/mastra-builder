@@ -259,6 +259,10 @@ framework beside Mastra.
 - Phase 4: in progress; `test/fixtures/delivery-projects/` now covers minimal
   JS Worker, TypeScript public UI, Workers AI, D1, KV/R2, explicit Pages, and
   benchmark-shaped source docs through cheap project-factory fixture tests.
+- Phase 5: in progress; scaffold profile, runtime matrix, binding completeness,
+  vanilla frontend, local evidence readiness, and model spend scorers are
+  registered, and workflow events now include deterministic gate results and
+  typed task packet emission.
 
 ### Phase 0: Freeze Expensive Run Loop
 

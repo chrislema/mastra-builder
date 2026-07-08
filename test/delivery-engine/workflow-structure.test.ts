@@ -61,6 +61,15 @@ test('workflow agent calls use run-scoped Mastra memory', () => {
   assert.match(source, /memory: deliveryRunMemory\(\{ repoPath: inputData\.repoPath, runId: inputData\.runId, role: task\.owner \}\)/);
 });
 
+test('delivery workflow records structured gate and task packet observability events', () => {
+  const source = workflowSource();
+  assert.match(source, /type: 'deterministic_gate_result'/);
+  assert.match(source, /gate: 'task-plan'/);
+  assert.match(source, /type: 'task_packets_emitted'/);
+  assert.match(source, /task_kind: task\.metadata\?\.task\?\.kind/);
+  assert.match(source, /runtime_kind: task\.metadata\?\.runtime\?\.kind/);
+});
+
 test('delivery stage workflows close delivery state on workflow errors', () => {
   for (const workflow of [
     deliveryWorkflow,

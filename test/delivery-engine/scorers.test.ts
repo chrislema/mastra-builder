@@ -10,10 +10,16 @@ import {
   deliveryArchitectToBuildHandoffScorer,
   deliveryBuildToTesterHandoffScorer,
   deliveryDeterministicChecksScorer,
+  deliveryLocalEvidenceReadinessScorer,
+  deliveryModelSpendPerCompletedTaskScorer,
   deliveryJudgmentPassRateScorer,
   deliveryPlanToArchitectHandoffScorer,
   deliveryRubricFloorScorer,
+  deliveryScaffoldBindingsCompletenessScorer,
+  deliveryScaffoldProfileFitScorer,
   deliveryTesterToDeployerHandoffScorer,
+  deliveryTestRuntimeMatrixScorer,
+  deliveryVanillaFrontendComplianceScorer,
   deliveryWorkflowCompletionScorer,
 } from '../../src/mastra/delivery-engine/scorers.ts';
 
@@ -50,6 +56,63 @@ const completeOutput = {
     blockers: [],
   },
   nextSteps: ['monitor'],
+};
+
+const scaffoldOutput = {
+  ...completeOutput,
+  status: 'planned',
+  sourcePolicy: {
+    pagesRequired: false,
+    latestTranscriptRequired: true,
+    externalServiceBindings: ['BOOKMARKS'],
+  },
+  scaffoldManifest: {
+    profileList: ['worker-typescript', 'worker-workers-ai', 'worker-d1'],
+    language: 'typescript',
+    main: 'src/index.ts',
+    generatedFiles: [
+      'package.json',
+      'wrangler.jsonc',
+      'vitest.config.ts',
+      'src/index.ts',
+      'src/contracts.ts',
+      'public/index.html',
+      'public/styles.css',
+      'public/app.js',
+      'test/contracts.test.ts',
+      'test/api-routes.test.ts',
+      'test/frontend-shell.test.js',
+    ],
+    testRuntimeMatrix: [
+      {
+        name: 'node',
+        runtime: 'node',
+        include: ['test/contracts.test.ts', 'test/validation.test.ts', 'test/domain.test.ts'],
+      },
+      {
+        name: 'worker',
+        runtime: 'worker',
+        include: ['test/api-routes.test.ts', 'test/provider-adapters.test.ts', 'test/worker-smoke.test.ts'],
+      },
+      {
+        name: 'frontend',
+        runtime: 'jsdom',
+        include: ['test/frontend-*.test.js', 'test/ui-*.test.js'],
+      },
+    ],
+    bindingMap: {
+      ASSETS: 'static assets binding for ./public',
+      AI: 'Workers AI binding',
+      DB: 'D1 database binding',
+      BOOKMARKS: 'external Worker service binding',
+    },
+    packageScripts: {
+      dev: 'wrangler dev --env staging',
+      deploy: 'wrangler deploy --env production',
+      test: 'vitest run',
+    },
+    validationCommands: ['npm run typecheck', 'npm test'],
+  },
 };
 
 test('deliveryWorkflowCompletionScorer scores only complete workflow output as passing', async () => {
@@ -164,6 +227,101 @@ test('deliveryAcceptanceContractCoverageScorer scores contract gates separately'
   });
   assert.equal(missing.score, 0);
   assert.match(missing.reason ?? '', /No acceptance contract checks/);
+});
+
+test('scaffold scorers score profile, runtime, binding, and frontend readiness', async () => {
+  const profileFit = await deliveryScaffoldProfileFitScorer.run({ input: {}, output: scaffoldOutput });
+  assert.equal(profileFit.score, 1);
+  assert.match(profileFit.reason ?? '', /worker-typescript/);
+
+  const runtime = await deliveryTestRuntimeMatrixScorer.run({ input: {}, output: scaffoldOutput });
+  assert.equal(runtime.score, 1);
+  assert.match(runtime.reason ?? '', /Runtime matrix separates/);
+
+  const bindings = await deliveryScaffoldBindingsCompletenessScorer.run({ input: {}, output: scaffoldOutput });
+  assert.equal(bindings.score, 1);
+  assert.match(bindings.reason ?? '', /BOOKMARKS/);
+
+  const frontend = await deliveryVanillaFrontendComplianceScorer.run({ input: {}, output: scaffoldOutput });
+  assert.equal(frontend.score, 1);
+  assert.match(frontend.reason ?? '', /vanilla/);
+});
+
+test('scaffold scorers catch missing bindings, broad Worker globs, and frontend framework drift', async () => {
+  const missingBinding = await deliveryScaffoldBindingsCompletenessScorer.run({
+    input: {},
+    output: {
+      ...scaffoldOutput,
+      scaffoldManifest: {
+        ...scaffoldOutput.scaffoldManifest,
+        bindingMap: { ASSETS: 'static assets binding for ./public', DB: 'D1 database binding' },
+      },
+    },
+  });
+  assert.equal(missingBinding.score, 0.5);
+  assert.match(missingBinding.reason ?? '', /AI/);
+
+  const broadWorkerGlob = await deliveryTestRuntimeMatrixScorer.run({
+    input: {},
+    output: {
+      ...scaffoldOutput,
+      scaffoldManifest: {
+        ...scaffoldOutput.scaffoldManifest,
+        testRuntimeMatrix: [
+          scaffoldOutput.scaffoldManifest.testRuntimeMatrix[0],
+          { name: 'worker', runtime: 'worker', include: ['test/**/*.test.ts'] },
+          scaffoldOutput.scaffoldManifest.testRuntimeMatrix[2],
+        ],
+      },
+    },
+  });
+  assert.ok(broadWorkerGlob.score < 1);
+  assert.match(broadWorkerGlob.reason ?? '', /broad Worker globs/);
+
+  const frameworkDrift = await deliveryVanillaFrontendComplianceScorer.run({
+    input: {},
+    output: {
+      ...scaffoldOutput,
+      taskPlan: {
+        tasks: [{ deliverable: 'Add React dashboard', owned_surfaces: ['src/App.tsx'] }],
+      },
+    },
+  });
+  assert.equal(frameworkDrift.score, 0);
+  assert.match(frameworkDrift.reason ?? '', /framework/);
+});
+
+test('local evidence and model spend scorers expose release readiness and cost per task', async () => {
+  const ready = await deliveryLocalEvidenceReadinessScorer.run({ input: {}, output: completeOutput });
+  assert.equal(ready.score, 1);
+  assert.match(ready.reason ?? '', /passed/);
+
+  const blocked = await deliveryLocalEvidenceReadinessScorer.run({
+    input: {},
+    output: { ...completeOutput, releaseGate: { decision: 'fail', blockers: ['npm test failed'] } },
+  });
+  assert.equal(blocked.score, 0);
+  assert.match(blocked.reason ?? '', /npm test failed/);
+
+  const spend = await deliveryModelSpendPerCompletedTaskScorer.run({
+    input: {},
+    output: {
+      ...completeOutput,
+      modelSpend: {
+        totalTokens: 80_000,
+        completedTasks: 4,
+        maxTokensPerTask: 25_000,
+        totalCostUsd: 8,
+        maxCostPerTaskUsd: 3,
+      },
+    },
+  });
+  assert.equal(spend.score, 1);
+  assert.match(spend.reason ?? '', /tokens\/task=20000/);
+
+  const missing = await deliveryModelSpendPerCompletedTaskScorer.run({ input: {}, output: completeOutput });
+  assert.equal(missing.score, 0);
+  assert.match(missing.reason ?? '', /No model spend summary/);
 });
 
 test('cloudflareWorkerFirstTopologyScorer enforces Worker-first and explicit Pages exceptions', async () => {

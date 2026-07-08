@@ -48,6 +48,7 @@ import {
   deliveryPlanStepScorers,
   deliveryReleaseGateStepScorers,
   deliveryReviewStepScorers,
+  deliveryScaffoldStepScorers,
 } from './scorers';
 import { safePersistDeliveryStateWithMastra } from './observability';
 import { deliveryStructuredOutputOptions } from './models';
@@ -7217,6 +7218,22 @@ const createPlanGateStep = createStep({
         sourcePolicy: inputData.sourcePolicy,
       });
       checks.push(...checkSummaries(deterministicResults, suffix));
+      await appendDeliveryEventState({
+        repoPath: inputData.repoPath,
+        mastra,
+        event: {
+          type: 'deterministic_gate_result',
+          stage: suffix ? `plan-gate:${suffix}` : 'plan-gate',
+          gate: 'task-plan',
+          passed: deterministicResults.every((result) => result.passed),
+          checks: deterministicResults.map((result) => ({
+            id: result.id,
+            check: result.check,
+            passed: result.passed,
+            reason: result.reason,
+          })),
+        },
+      }).catch(() => undefined);
       const taskPlanJudge = await judgeDeliveryArtifact({
         mastra,
         repoPath: inputData.repoPath,
@@ -7360,6 +7377,7 @@ const createScaffoldArtifactsStep = createStep({
   inputSchema: planStageOutputSchema,
   outputSchema: planStageOutputSchema,
   stateSchema: deliveryWorkflowStateSchema,
+  scorers: deliveryScaffoldStepScorers,
   execute: async ({ inputData, mastra, state, setState }) => {
     if (inputData.status !== 'planned') return inputData;
 
@@ -7906,6 +7924,24 @@ const prepareBuildTasksStep = createStep({
         },
       }).catch(() => undefined);
     }
+
+    await appendDeliveryEventState({
+      repoPath: inputData.repoPath,
+      mastra,
+      event: {
+        type: 'task_packets_emitted',
+        stage: 'build',
+        total_tasks: orderedTasks.length,
+        tasks: orderedTasks.map((task) => ({
+          id: task.id,
+          owner: task.owner,
+          task_kind: task.metadata?.task?.kind,
+          surface_kind: task.metadata?.surface?.kind,
+          evidence_kind: task.metadata?.evidence?.kind,
+          runtime_kind: task.metadata?.runtime?.kind,
+        })),
+      },
+    }).catch(() => undefined);
 
     return orderedTasks.map((task, taskIndex) => ({
       repoPath: inputData.repoPath,
