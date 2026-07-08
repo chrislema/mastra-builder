@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { normalizeDeliveryPathReference } from './checks';
 
 export interface AcceptanceContractTask {
@@ -26,6 +26,14 @@ export interface AcceptanceContractDefinition {
   surfaces: readonly string[];
   matches: (context: AcceptanceContractContext) => boolean;
   evaluate: (context: AcceptanceContractContext) => AcceptanceContractEvidence | undefined;
+}
+
+export interface AcceptanceContractRecord {
+  id: string;
+  criterion: string;
+  status: 'verified' | 'unverified';
+  evidence: string[];
+  gaps: string[];
 }
 
 export const workerScaffoldAcceptanceCriteria = {
@@ -185,6 +193,16 @@ function taskBoundarySurfaces(repoPath: string, task: AcceptanceContractTask) {
   }
 
   return [...surfaces];
+}
+
+export function acceptanceContractReferences(criterion: string) {
+  return Array.from(
+    new Set(
+      criterion.match(
+        /(?:^|\s)((?:src|public|migrations|workers|assets)\/[A-Za-z0-9_./-]+|wrangler\.(?:jsonc?|toml)|package\.json|tsconfig\.json|README\.md|\.gitignore|\.env\*?|\.dev\.vars\*?)/g,
+      ) ?? [],
+    ),
+  ).map((match) => match.trim());
 }
 
 function stripJsoncComments(text: string) {
@@ -1125,4 +1143,769 @@ export function workerScaffoldAcceptanceContractIdForCriterion(criterion: string
 
   const context: AcceptanceContractContext = { criterion, performed: [] };
   return workerScaffoldAcceptanceContracts.find((contract) => contract.matches(context))?.id;
+}
+
+const acceptanceCriterionStopWords = new Set([
+  'the',
+  'and',
+  'for',
+  'with',
+  'that',
+  'this',
+  'from',
+  'into',
+  'using',
+  'uses',
+  'use',
+  'when',
+  'then',
+  'than',
+  'only',
+  'each',
+  'every',
+  'after',
+  'before',
+  'through',
+  'without',
+  'within',
+  'must',
+  'should',
+  'can',
+  'will',
+  'does',
+  'not',
+  'are',
+  'is',
+  'be',
+  'by',
+  'or',
+  'as',
+  'to',
+  'in',
+  'on',
+  'of',
+  'a',
+  'an',
+]);
+
+function normalizeAcceptanceEvidenceText(value: string) {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/[^a-z0-9/_:.-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function acceptanceCriterionTokens(criterion: string) {
+  return Array.from(
+    new Set(
+      normalizeAcceptanceEvidenceText(criterion)
+        .split(/\s+/)
+        .map((token) => token.replace(/^["'`]+|["'`,.;:]+$/g, ''))
+        .filter((token) => token.length >= 3)
+        .filter((token) => !acceptanceCriterionStopWords.has(token))
+        .filter((token) => !/^\d+$/.test(token)),
+    ),
+  );
+}
+
+function repoFileContents(repoPath: string, paths: Array<string | undefined>) {
+  return paths
+    .filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
+    .map((path) => {
+      const normalizedPath = normalizeDeliveryPathReference(path);
+      const fullPath = isAbsolute(normalizedPath) ? normalizedPath : join(resolve(repoPath), normalizedPath);
+      if (!existsSync(fullPath)) return undefined;
+      return {
+        path: normalizedPath,
+        content: readFileSync(fullPath, 'utf8'),
+      };
+    })
+    .filter((file): file is { path: string; content: string } => Boolean(file));
+}
+
+function acceptanceEvidenceFiles(repoPath?: string, task?: AcceptanceContractTask) {
+  if (!repoPath || !task) return [];
+  return repoFileContents(repoPath, taskBoundarySurfaces(repoPath, task));
+}
+
+function acceptanceCriterionCommandEvidence(criterion: string, performed: string[]) {
+  const text = criterion.toLowerCase();
+  const evidence = performed.join('\n').toLowerCase();
+
+  if (/\b(typecheck|tsc|typescript)\b/.test(text) && /\b(typecheck|tsc)\b/.test(evidence)) {
+    return 'verification command covered TypeScript/typecheck criterion';
+  }
+  if (/\btest(s|ing)?\b/.test(text) && /\btest\b/.test(evidence)) {
+    return 'verification command covered test criterion';
+  }
+  if (/\bbuild\b/.test(text) && /\bbuild\b/.test(evidence)) {
+    return 'verification command covered build criterion';
+  }
+  if (/\bwrangler dev\b/.test(text) && /\bwrangler dev\b/.test(evidence)) {
+    return 'verification command covered wrangler dev criterion';
+  }
+  if (/\bhealth\b|\/health\b|http 200|status 200/.test(text) && /\bhealth\b|\/health\b|http 200|status 200/.test(evidence)) {
+    return 'verification command covered HTTP health/status criterion';
+  }
+
+  return undefined;
+}
+
+function acceptanceCriterionFileEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  const files = acceptanceEvidenceFiles(repoPath, task);
+  if (!files.length) return undefined;
+
+  const references = acceptanceContractReferences(criterion);
+  const referencedFiles = references.length
+    ? files.filter((file) => references.some((reference) => file.path === reference || file.path.endsWith(reference)))
+    : files;
+  if (references.length && !referencedFiles.length) return undefined;
+
+  const corpus = normalizeAcceptanceEvidenceText(
+    referencedFiles.map((file) => `${file.path}\n${file.content}`).join('\n'),
+  );
+  const tokens = acceptanceCriterionTokens(criterion);
+  if (!tokens.length) return undefined;
+
+  const matched = tokens.filter((token) => corpus.includes(token));
+  const required = tokens.length <= 6 ? Math.max(2, tokens.length - 1) : Math.ceil(tokens.length * 0.58);
+  if (matched.length < required) return undefined;
+
+  return `file evidence covered ${matched.length}/${tokens.length} acceptance tokens in ${referencedFiles
+    .map((file) => file.path)
+    .slice(0, 4)
+    .join(', ')}`;
+}
+
+function workerScaffoldProtectedApiContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bscaffold\b/i.test(criterion) || !/\bprotected endpoints?\b/i.test(criterion)) return undefined;
+  if (!/\bauth\.js\b/i.test(criterion) || !/\bfail closed\b/i.test(criterion)) return undefined;
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  if (!/(api_not_ready|protected API endpoints? are intentionally unavailable|status:\s*50[13]|501)/i.test(source)) {
+    gaps.push(`${indexPath} must keep protected API endpoints unavailable in the scaffold.`);
+  }
+  if (!/ADMIN_TOKEN[\s\S]{0,240}(secret|missing|invalid|fail closed)|fail closed[\s\S]{0,240}ADMIN_TOKEN/i.test(source)) {
+    gaps.push(`${indexPath} must carry forward the later ADMIN_TOKEN fail-closed requirement.`);
+  }
+  if (!/\bauth\.js\b/i.test(source)) {
+    gaps.push(`${indexPath} must point protected API readiness to the later auth.js task.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured scaffold evidence verified protected APIs stay unavailable until auth.js in ${indexPath}`],
+    gaps: [],
+  };
+}
+
+function workerEntrypointExportContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bsrc\/index\.(js|ts)\b/i.test(criterion)) return undefined;
+  if (
+    !/\b(?:Worker module entrypoint|Worker fetch handler|fetch handler|concrete entrypoint|runtime validation|default)\b/i.test(
+      criterion,
+    ) ||
+    !/\bfetch\b/i.test(criterion) ||
+    !/\bWeeklyWorkflow\b/i.test(criterion)
+  ) {
+    return undefined;
+  }
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  const exportsFetch =
+    /export\s+(?:async\s+)?function\s+fetch\s*\(/m.test(source) ||
+    /export\s+default\s+\{[\s\S]*\bfetch\b[\s\S]*\}/m.test(source) ||
+    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{[\s\S]*\bfetch\s*(?:\(|:)[\s\S]*\}[\s\S]*export\s+default\s+\1\s*;/m.test(
+      source,
+    );
+  if (!exportsFetch) {
+    gaps.push(`${indexPath} must export a default Worker object with a fetch handler.`);
+  }
+  if (!/\bexport\s+class\s+WeeklyWorkflow\b/.test(source)) {
+    gaps.push(`${indexPath} must export a WeeklyWorkflow class stub.`);
+  }
+  if (/\bextends\s+WorkflowEntrypoint\b/.test(source) && !/from\s+['"]cloudflare:workers['"]/.test(source)) {
+    gaps.push(`${indexPath} extends WorkflowEntrypoint but does not import it from cloudflare:workers.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured Worker entrypoint evidence verified default fetch handler and WeeklyWorkflow export in ${indexPath}`],
+    gaps: [],
+  };
+}
+
+function workerStaticAssetFallbackContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (
+    !/\b(?:static asset fallback|ASSETS\.fetch|env\.ASSETS|ASSETS binding|Non-API (?:routes?|requests?)|falls through non-API)\b/i.test(
+      criterion,
+    )
+  ) {
+    return undefined;
+  }
+  if (!/\b(?:public\/index\.html|related assets|same Worker|static assets?)\b/i.test(criterion)) return undefined;
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  const callsAssetsFetch =
+    /\benv\.ASSETS\.fetch\s*\(\s*request\s*\)/.test(source) ||
+    /\bc\.env\.ASSETS\.fetch\s*\(\s*c\.req\.raw\s*\)/.test(source);
+  if (!callsAssetsFetch) {
+    gaps.push(`${indexPath} must call env.ASSETS.fetch(request) or c.env.ASSETS.fetch(c.req.raw) for the static asset fallback.`);
+  }
+  const routesApiBeforeFallback =
+    /!\s*[^;\n]*\.startsWith\s*\(\s*['"]\/api\/['"]\s*\)/.test(source) ||
+    /\bapp\.all\s*\(\s*['"]\/api\/\*['"][\s\S]{0,600}\bapp\.notFound\s*\(/.test(source);
+  if (!routesApiBeforeFallback) {
+    gaps.push(`${indexPath} must route non-API requests to the static asset fallback before returning API 404s.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured ${indexPath} evidence verified non-API routes fall through to env.ASSETS.fetch(request)`],
+    gaps: [],
+  };
+}
+
+function workerStaticAssetValidationDeferralContractEvidence({
+  criterion,
+  performed,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  performed: string[];
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (
+    !/\b(?:does not claim full Wrangler runtime validation|full local Wrangler validation point|configured ASSETS directory|sequenced after T06|designer-owned T06|avoiding engineer ownership of public\/ files)\b/i.test(
+      criterion,
+    )
+  ) {
+    return undefined;
+  }
+
+  const surfaces = taskBoundarySurfaces(repoPath, task);
+  const gaps: string[] = [];
+  for (const publicSurface of ['public/index.html', 'public/styles.css', 'public/app.js']) {
+    if (surfaces.includes(publicSurface)) {
+      gaps.push(`${task.id} must not own ${publicSurface} when static asset runtime validation is intentionally deferred.`);
+    }
+  }
+
+  const performedText = performed.join('\n');
+  if (/\bwrangler\s+(?:dev|deploy)\b|\bwrangler\b[\s\S]{0,80}\b(?:dry-run|--dry-run)\b/i.test(performedText)) {
+    gaps.push(`${task.id} must not claim full Wrangler runtime validation before designer-owned public assets exist.`);
+  }
+
+  const hasDeferralEvidence = surfaces
+    .filter((surface) => /^src\/index\.(js|ts)$/.test(surface) || surface === 'wrangler.jsonc' || surface === 'wrangler.toml')
+    .some((surface) => {
+      const fullPath = join(resolve(repoPath), surface);
+      if (!existsSync(fullPath)) return false;
+      const source = readFileSync(fullPath, 'utf8');
+      return /T06|designer-owned|designer owned|public\/index\.html|public\/styles\.css|public\/app\.js|does not claim full Wrangler runtime validation|first full local Worker plus static-assets validation/i.test(
+        source,
+      );
+    });
+  if (!hasDeferralEvidence) {
+    gaps.push(`${task.id} must record static asset runtime validation deferral in a task-owned Worker scaffold file.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured ${task.id} evidence verified static asset runtime validation is deferred until designer-owned public assets exist`],
+    gaps: [],
+  };
+}
+
+function workerTypesContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bsrc\/types\.ts\b/i.test(criterion)) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('src/types.ts')) return undefined;
+
+  const fullPath = join(resolve(repoPath), 'src/types.ts');
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  let inspected = false;
+
+  if (/\bper-model API result shapes\b|\bok true\b|\bok false\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bok\s*:\s*true\b/.test(source)) gaps.push('src/types.ts must define an ok: true model result shape.');
+    if (!/\bok\s*:\s*false\b/.test(source)) gaps.push('src/types.ts must define an ok: false model result shape.');
+    for (const field of ['id', 'label', 'vendor']) {
+      if (!new RegExp(`\\b${field}\\s*:\\s*string\\b`).test(source)) {
+        gaps.push(`src/types.ts must include ${field}: string on per-model API result shapes.`);
+      }
+    }
+    if (!/\blatency(?:Ms|Millis|Milliseconds)?\s*:\s*number\b/i.test(source)) {
+      gaps.push('src/types.ts must include a numeric latency field on per-model API result shapes.');
+    }
+  }
+
+  if (/\bWorker environment bindings\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bAI\s*:\s*[A-Za-z_$][\w$]*/.test(source)) gaps.push('src/types.ts must define an AI binding.');
+    if (!/\bASSETS\s*:\s*[A-Za-z_$][\w$]*/.test(source)) gaps.push('src/types.ts must define an ASSETS binding.');
+    if (!/\b(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|ZAI_API_KEY|ProviderSecret)\b/.test(source)) {
+      gaps.push('src/types.ts must include optional provider secret names.');
+    }
+  }
+
+  const constantExpectations: Array<[string, string]> = [
+    ['MAX_MODELS_PER_RUN', '8'],
+    ['MAX_USER_PROMPT_CHARS', '100000'],
+    ['MAX_REQUEST_BYTES', '262144'],
+    ['PROVIDER_TIMEOUT_MS', '60000'],
+  ];
+  for (const [name, value] of constantExpectations) {
+    if (!new RegExp(`\\b${name}\\b`).test(criterion)) continue;
+    inspected = true;
+    if (!new RegExp(`\\bconst\\s+${name}\\s*=\\s*${value}\\b`).test(source)) {
+      gaps.push(`src/types.ts must set ${name} to ${value}.`);
+    }
+  }
+
+  if (!inspected) return undefined;
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured src/types.ts evidence verified Worker type contracts and exact request boundary constants'],
+    gaps: [],
+  };
+}
+
+function modelCatalogContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bsrc\/models\.ts\b|\bmodel catalog\b|\bcatalog(?:\s+(?:array|entries?|includes))?\b/i.test(criterion)) {
+    return undefined;
+  }
+  if (!taskBoundarySurfaces(repoPath, task).includes('src/models.ts')) return undefined;
+
+  const fullPath = join(resolve(repoPath), 'src/models.ts');
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  let inspected = false;
+
+  if (/\b(?:catalog array|Workers AI|Anthropic|z\.ai|OpenAI-compatible|openai-compatible)\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bexport\s+const\s+\w*CATALOG\w*\s*=|\bexport\s+const\s+\w*MODELS\w*\s*=/i.test(source)) {
+      gaps.push('src/models.ts must export a model catalog array.');
+    }
+    for (const provider of ['workers-ai', 'anthropic', 'openai-compatible']) {
+      if (!new RegExp(`provider\\s*:\\s*['"]${provider}['"]`).test(source)) {
+        gaps.push(`src/models.ts must include a ${provider} catalog entry.`);
+      }
+    }
+    if (!/vendor\s*:\s*['"]z\.ai['"]/i.test(source) || !/baseUrl\s*:\s*['"]https:\/\/api\.z\.ai\/api\/anthropic['"]/.test(source)) {
+      gaps.push('src/models.ts must include z.ai as an Anthropic-compatible catalog entry.');
+    }
+    if (!/baseUrl\s*:\s*['"]https:\/\/api\.openai\.com\/v1['"]/.test(source)) {
+      gaps.push('src/models.ts must include OpenAI-compatible baseUrl https://api.openai.com/v1.');
+    }
+  }
+
+  if (/\bid, label, vendor, provider, model\b/i.test(criterion)) {
+    inspected = true;
+    for (const field of ['id', 'label', 'vendor', 'provider', 'model']) {
+      if (!new RegExp(`\\b${field}\\s*:`).test(source)) {
+        gaps.push(`src/models.ts catalog entries must include ${field}.`);
+      }
+    }
+  }
+
+  if (/\b(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|ZAI_API_KEY|secretKey|keyed models?)\b/i.test(criterion)) {
+    inspected = true;
+    for (const secret of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ZAI_API_KEY']) {
+      if (!new RegExp(`secretKey\\s*:\\s*['"]${secret}['"]`).test(source)) {
+        gaps.push(`src/models.ts must reference ${secret} for keyed catalog entries.`);
+      }
+    }
+  }
+
+  if (!inspected) return undefined;
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured src/models.ts evidence verified Benchmark model catalog provider families and keyed entries'],
+    gaps: [],
+  };
+}
+
+function providerAdapterContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!taskBoundarySurfaces(repoPath, task).includes('src/providers.ts')) return undefined;
+  if (
+    !/\bsrc\/providers\.ts\b|\bproviders?\b|\badapters?\b|\bdispatcher\b|\bMAX_TOKENS\b|\benv\.AI\.run\b|\bProviderError\b|\bsecretKey\b|\bBEARER_TOKEN\b|\bsecret\b/i.test(
+      criterion,
+    )
+  ) {
+    return undefined;
+  }
+
+  const fullPath = join(resolve(repoPath), 'src/providers.ts');
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  let inspected = false;
+
+  if (/\bMAX_TOKENS\b|\boutput cap\b|\b2048\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bMAX_TOKENS\s*=\s*2048\b/.test(source)) {
+      gaps.push('src/providers.ts must define MAX_TOKENS as 2048.');
+    }
+    if (!/\bmax_tokens\s*:\s*MAX_TOKENS\b/.test(source) && !/\bmax_completion_tokens\s*:\s*MAX_TOKENS\b/.test(source)) {
+      gaps.push('src/providers.ts must apply MAX_TOKENS to provider output limits.');
+    }
+  }
+
+  if (/\bworkers-ai\b|\bWorkers AI\b|\benv\.AI\.run\b|\bOpenAI-style choices\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\benv\.AI\.run\s*\(/.test(source)) {
+      gaps.push('src/providers.ts must call env.AI.run for Workers AI models.');
+    }
+    if (!/\bmessages\b[\s\S]{0,160}\bmax_tokens\s*:\s*MAX_TOKENS\b/.test(source)) {
+      gaps.push('src/providers.ts must pass messages and max_tokens: MAX_TOKENS to env.AI.run.');
+    }
+    if (!/typeof\s+\w+\s*={0,2}\s*['"]string['"]|typeof\s+\w+\s*={0,3}\s*['"]string['"]/.test(source)) {
+      gaps.push('src/providers.ts must handle string Workers AI responses.');
+    }
+    if (!/\bchoices\b/.test(source)) {
+      gaps.push('src/providers.ts must handle OpenAI-style choices responses.');
+    }
+  }
+
+  if (/\breasoning_content\b|\breasoning only\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\breasoning_content\b/.test(source)) {
+      gaps.push('src/providers.ts must inspect reasoning_content.');
+    }
+    if (!/\[reasoning only\]/i.test(source)) {
+      gaps.push('src/providers.ts must label reasoning-only output visibly.');
+    }
+  }
+
+  if (/\bnormalizes? successful output\b|\binputTokens\b|\boutputTokens\b/i.test(criterion)) {
+    inspected = true;
+    for (const field of ['text', 'inputTokens', 'outputTokens']) {
+      if (!new RegExp(`\\b${field}\\b`).test(source)) {
+        gaps.push(`src/providers.ts must normalize successful provider output with ${field}.`);
+      }
+    }
+  }
+
+  if (/\bnormalizes? provider failures\b|\bProviderError\b|\bshared provider error\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bnormalizeProviderError\b/.test(source)) {
+      gaps.push('src/providers.ts must centralize provider failure normalization.');
+    }
+    if (!/\bProviderError\b/.test(source)) {
+      gaps.push('src/providers.ts must use the shared ProviderError shape.');
+    }
+    for (const provider of ['workers-ai', 'anthropic', 'openai-compatible']) {
+      if (!new RegExp(`['"]${provider}['"]`).test(source)) {
+        gaps.push(`src/providers.ts must cover ${provider} provider failures.`);
+      }
+    }
+  }
+
+  if (/\bprovider, vendor, model id\b|\boptional HTTP\b|\bstatus\b|\buser-safe\b|\bresult cards\b/i.test(criterion)) {
+    inspected = true;
+    for (const pattern of [
+      ['provider: model.provider', /\bprovider\s*:\s*model\.provider\b/],
+      ['vendor: model.vendor', /\bvendor\s*:\s*model\.vendor\b/],
+      ['modelId: model.id', /\bmodelId\s*:\s*model\.id\b/],
+      ['status', /\bstatus\b/],
+      ['userSafeMessage', /\buserSafeMessage\b/],
+    ] as const) {
+      if (!pattern[1].test(source)) gaps.push(`src/providers.ts must include ${pattern[0]} in normalized provider errors.`);
+    }
+  }
+
+  if (/\bsanitizes?\b|\bBEARER_TOKEN\b|\bauthorization headers?\b|\brequest bodies?\b|\bsecret names?\b|\bAPI keys?\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bsanitizeProviderMessage\b/.test(source)) {
+      gaps.push('src/providers.ts must sanitize provider error messages before returning them.');
+    }
+    if (!/\bSECRET_VALUE_PATTERNS\b/.test(source)) {
+      gaps.push('src/providers.ts must define explicit secret redaction patterns.');
+    }
+    for (const pattern of ['Bearer', 'BEARER_TOKEN', 'authorization', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ZAI_API_KEY', 'body', 'request']) {
+      if (!new RegExp(pattern, 'i').test(source)) {
+        gaps.push(`src/providers.ts secret sanitization must cover ${pattern}.`);
+      }
+    }
+    if (!/\.replace\s*\(\s*pattern\b|\breplaceAll\s*\(/.test(source)) {
+      gaps.push('src/providers.ts must apply secret redaction patterns.');
+    }
+    const returnsSanitizedUserSafeMessage =
+      /\buserSafeMessage\s*:\s*(?:userSafeMessage|sanitizeProviderMessage\s*\()/.test(source) ||
+      /\bconst\s+userSafeMessage\s*=\s*sanitizeProviderMessage\s*\([\s\S]{0,800}return\s*\{[\s\S]{0,400}\buserSafeMessage\b/.test(
+        source,
+      );
+    if (!returnsSanitizedUserSafeMessage) {
+      gaps.push('src/providers.ts must return only the sanitized userSafeMessage.');
+    }
+  }
+
+  if (/\bsecretKey\b|\bcatalog secret\b|\bdoes not read provider secrets\b|\bWorker Env contract\b/i.test(criterion)) {
+    inspected = true;
+    if (!/from\s*['"]\.\/contracts['"]/.test(source) || !/\bEnv\b/.test(source) || !/\bModelCatalogEntry\b/.test(source)) {
+      gaps.push('src/providers.ts must import Env and ModelCatalogEntry from src/contracts.ts.');
+    }
+    if (!/\bmodel\.secretKey\b/.test(source)) {
+      gaps.push('src/providers.ts must use model.secretKey as the catalog-controlled secret name.');
+    }
+    if (!/\benv\s*\[\s*(?:model\.secretKey|secretKey)\s*\]/.test(source)) {
+      gaps.push('src/providers.ts must read provider secrets through env[model.secretKey] or an equivalent secretKey variable.');
+    }
+    if (/\benv\.(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|ZAI_API_KEY)\b/.test(source)) {
+      gaps.push('src/providers.ts must not read provider secrets through hard-coded env secret names.');
+    }
+  }
+
+  if (!inspected) return undefined;
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured src/providers.ts evidence verified provider adapter dispatch, normalization, and catalog-scoped secret handling'],
+    gaps: [],
+  };
+}
+
+function workerWorkflowEntrypointContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: AcceptanceContractTask;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bWeeklyWorkflow\b/i.test(criterion) || !/\bWorkflowEntrypoint\b/i.test(criterion)) return undefined;
+
+  const indexPath = taskBoundarySurfaces(repoPath, task).find((surface) => /^src\/index\.(js|ts)$/.test(surface));
+  if (!indexPath) return undefined;
+
+  const fullPath = join(resolve(repoPath), indexPath);
+  if (!existsSync(fullPath)) return undefined;
+
+  const source = readFileSync(fullPath, 'utf8');
+  const gaps: string[] = [];
+  if (!/import\s*\{[^}]*\bWorkflowEntrypoint\b[^}]*\}\s*from\s*['"]cloudflare:workers['"]/.test(source)) {
+    gaps.push(`${indexPath} must import WorkflowEntrypoint from cloudflare:workers.`);
+  }
+  if (!/export\s+class\s+WeeklyWorkflow\s+extends\s+WorkflowEntrypoint\b/.test(source)) {
+    gaps.push(`${indexPath} must export class WeeklyWorkflow extends WorkflowEntrypoint.`);
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: [`structured WorkflowEntrypoint evidence verified WeeklyWorkflow export in ${indexPath}`],
+    gaps: [],
+  };
+}
+
+export function evaluateAcceptanceCriterion(context: AcceptanceContractContext): AcceptanceContractEvidence {
+  const commandEvidence = acceptanceCriterionCommandEvidence(context.criterion, context.performed);
+  if (commandEvidence) return { passed: true, evidence: [commandEvidence], gaps: [] };
+
+  const workerScaffoldContractEvidence = evaluateWorkerScaffoldAcceptanceContract(context);
+  if (workerScaffoldContractEvidence) return workerScaffoldContractEvidence;
+
+  const scaffoldProtectedApiEvidence = workerScaffoldProtectedApiContractEvidence(context);
+  if (scaffoldProtectedApiEvidence) return scaffoldProtectedApiEvidence;
+
+  const workerEntrypointEvidence = workerEntrypointExportContractEvidence(context);
+  if (workerEntrypointEvidence) return workerEntrypointEvidence;
+
+  const workerStaticAssetFallbackEvidence = workerStaticAssetFallbackContractEvidence(context);
+  if (workerStaticAssetFallbackEvidence) return workerStaticAssetFallbackEvidence;
+
+  const workerStaticAssetValidationDeferralEvidence = workerStaticAssetValidationDeferralContractEvidence(context);
+  if (workerStaticAssetValidationDeferralEvidence) return workerStaticAssetValidationDeferralEvidence;
+
+  const workerTypesEvidence = workerTypesContractEvidence(context);
+  if (workerTypesEvidence) return workerTypesEvidence;
+
+  const modelCatalogEvidence = modelCatalogContractEvidence(context);
+  if (modelCatalogEvidence) return modelCatalogEvidence;
+
+  const providerAdapterEvidence = providerAdapterContractEvidence(context);
+  if (providerAdapterEvidence) return providerAdapterEvidence;
+
+  const workflowEntrypointEvidence = workerWorkflowEntrypointContractEvidence(context);
+  if (workflowEntrypointEvidence) return workflowEntrypointEvidence;
+
+  const fileEvidence = acceptanceCriterionFileEvidence(context);
+  if (fileEvidence) return { passed: true, evidence: [fileEvidence], gaps: [] };
+
+  return {
+    passed: false,
+    evidence: [],
+    gaps: [`Acceptance criterion not verified by automated checks or task-boundary file evidence: ${context.criterion}`],
+  };
+}
+
+export function acceptanceContractsForCriteria({
+  repoPath,
+  task,
+  verification,
+  criteria,
+  contractIdForCriterion,
+}: {
+  repoPath?: string;
+  task: AcceptanceContractTask;
+  verification: { performed: string[]; missing: string[] };
+  criteria: string[];
+  contractIdForCriterion: (criterion: string, index: number) => string;
+}): AcceptanceContractRecord[] {
+  return criteria.map((criterion, index) => {
+    const result = evaluateAcceptanceCriterion({
+      criterion,
+      performed: verification.performed,
+      repoPath,
+      task,
+    });
+    return {
+      id: contractIdForCriterion(criterion, index),
+      criterion,
+      status: result.passed ? 'verified' : 'unverified',
+      evidence: result.evidence,
+      gaps: result.gaps,
+    };
+  });
+}
+
+export function verificationWithAcceptanceContractGaps({
+  repoPath,
+  task,
+  verification,
+  criteria,
+  missingOwnedSurfacePaths,
+}: {
+  repoPath?: string;
+  task: AcceptanceContractTask;
+  verification: { performed: string[]; missing: string[] };
+  criteria: string[];
+  missingOwnedSurfacePaths: string[];
+}) {
+  const missing = new Set(verification.missing);
+  if (repoPath) {
+    for (const path of missingOwnedSurfacePaths) {
+      missing.add(`Owned surface missing after implementation: ${path}`);
+    }
+  }
+  for (const criterion of criteria) {
+    if (!evaluateAcceptanceCriterion({ criterion, performed: verification.performed, repoPath, task }).passed) {
+      missing.add(`Acceptance criterion not verified by automated checks: ${criterion}`);
+    }
+  }
+
+  return {
+    performed: verification.performed,
+    missing: [...missing],
+  };
 }

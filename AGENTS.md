@@ -8,6 +8,8 @@ Load the `mastra` skill BEFORE any Mastra work. Never rely on cached knowledge â
 
 After loading the `mastra` skill, read `docs/OPERATING_DOCTRINE.md` before making goal-driven changes. The active goal is important, but do not let it become myopic: preserve the rubric lens, Mastra-native design, Cloudflare-first scope, and evidence of real forward progress.
 
+For workflow cleanup or delivery-run iteration, also read `docs/WORKFLOW_CLEANUP_TODO.md` before editing.
+
 ## Rules
 
 - Register all agents, tools, workflows, and scorers in `src/mastra/index.ts`
