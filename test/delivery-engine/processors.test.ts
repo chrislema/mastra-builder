@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { RequestContext } from '@mastra/core/request-context';
 import {
+  createDeliveryControlRequestContext,
+  createDeliveryRequestContext,
+} from '../../src/mastra/delivery-engine/context.ts';
+import {
   DeliveryEvidenceClaimGuard,
   DeliveryInstructionOverrideGuard,
   DeliveryRepoPathGuard,
@@ -66,6 +70,41 @@ test('instruction override guard blocks delivery policy bypass attempts', () => 
     guard.processInput({
       messages,
       agent: { id: 'planner' },
+      abort,
+    } as any),
+    messages,
+  );
+});
+
+test('instruction override guard trusts workflow-authored control prompts', () => {
+  const guard = new DeliveryInstructionOverrideGuard();
+  const messages = [
+    message(
+      [
+        'Focused repair mode is active.',
+        '- Fix the remediation below before doing anything else:',
+        '  - DETERMINISTIC worker_package_scaffold_current failed: .gitignore should ignore .dev.vars*, .env* so generated delivery state, local Wrangler state, startup profiles, dependencies, and local secrets stay out of git.',
+        '- .gitignore must exclude node_modules/, .wrangler/, .delivery/, .dev.vars*, .env*, and *.cpuprofile.',
+      ].join('\n'),
+    ),
+  ];
+
+  assert.throws(
+    () =>
+      guard.processInput({
+        messages,
+        requestContext: createDeliveryRequestContext('/tmp/project'),
+        agent: { id: 'engineer' },
+        abort,
+      } as any),
+    /Delivery policy override detected/,
+  );
+
+  assert.equal(
+    guard.processInput({
+      messages,
+      requestContext: createDeliveryControlRequestContext('/tmp/project'),
+      agent: { id: 'engineer' },
       abort,
     } as any),
     messages,

@@ -6267,6 +6267,12 @@ test('Worker package scaffold hygiene requires wildcard local secret ignores', (
 
   writeFileSync(
     join(repoPath, '.gitignore'),
+    ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars', '.dev.vars.*', '.env', '.env.*', '*.cpuprofile', ''].join('\n'),
+  );
+  assert.deepEqual(workerPackageScaffoldGaps(repoPath), []);
+
+  writeFileSync(
+    join(repoPath, '.gitignore'),
     ['node_modules/', '.wrangler/', '.delivery/', '.dev.vars*', '.env*', '*.cpuprofile', ''].join('\n'),
   );
   assert.deepEqual(workerPackageScaffoldGaps(repoPath), []);

@@ -8,7 +8,7 @@ import {
   type ProcessOutputStepArgs,
   type Processor,
 } from '@mastra/core/processors';
-import { deliveryRepoPathFromRequestContext } from './context';
+import { deliveryRepoPathFromRequestContext, requestContextAllowsDeliveryControlPrompt } from './context';
 
 type DeliveryTripwireMetadata = {
   processorId: string;
@@ -91,7 +91,9 @@ export class DeliveryInstructionOverrideGuard
     },
   ];
 
-  processInput({ messages, agent, abort }: ProcessInputArgs<DeliveryTripwireMetadata>) {
+  processInput({ messages, requestContext, agent, abort }: ProcessInputArgs<DeliveryTripwireMetadata>) {
+    if (requestContextAllowsDeliveryControlPrompt(requestContext)) return messages;
+
     const text = textFromMessages(messages);
     const matched = this.rules.find((rule) => rule.pattern.test(text));
 

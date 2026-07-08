@@ -72,6 +72,24 @@ If a contract needs many exceptions, it probably belongs in a typed schema,
 skill, scorer, eval fixture, source document, or generated project test instead
 of the central workflow.
 
+## Guardrail Design Rule
+
+When a workflow failure comes from control text, prompts, or remediation wording,
+do not patch forward with more prompt-text exceptions unless there is no better
+boundary. Prefer structured provenance and typed context:
+
+- Mark workflow-generated agent calls with request context or metadata.
+- Keep source-document prompts and workflow-control prompts distinct; do not use
+  one broad trust marker for both.
+- Let direct/untrusted calls keep strict input guardrails.
+- Keep deterministic file policy in file/content checks, not prompt filters.
+- If a regex tripwire needs an exception for normal harness language, redesign
+  the trust boundary before adding the exception.
+
+This matters because delivery prompts legitimately contain words like "ignore"
+inside `.gitignore` policy, and those should not be confused with user attempts
+to bypass delivery state or release gates.
+
 ## Mastra-Native Bias
 
 Prefer first-class Mastra primitives over custom orchestration whenever they fit:

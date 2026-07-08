@@ -10,6 +10,9 @@ export type DeliveryRequestContext = {
   repoPath: string;
 };
 
+const deliveryPromptContextKey = 'deliveryPrompt';
+const deliveryControlPrompt = 'workflow-control';
+
 function contextValue(requestContext: unknown, key: string) {
   const ctx = requestContext as { get?: (name: string) => unknown; [name: string]: unknown } | undefined;
   if (typeof ctx?.get === 'function') return ctx.get(key);
@@ -23,6 +26,17 @@ export function deliveryRepoPathFromRequestContext(requestContext: unknown) {
   return resolve(parsed.repoPath);
 }
 
+export function requestContextAllowsDeliveryControlPrompt(requestContext: unknown) {
+  return contextValue(requestContext, deliveryPromptContextKey) === deliveryControlPrompt;
+}
+
 export function createDeliveryRequestContext(repoPath: string) {
   return new RequestContext<unknown>([['repoPath', resolve(repoPath)]]);
+}
+
+export function createDeliveryControlRequestContext(repoPath: string) {
+  return new RequestContext<unknown>([
+    ['repoPath', resolve(repoPath)],
+    [deliveryPromptContextKey, deliveryControlPrompt],
+  ]);
 }

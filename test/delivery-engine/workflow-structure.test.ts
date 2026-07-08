@@ -40,10 +40,12 @@ test('delivery workflow is split into native stage workflows', () => {
 test('workflow agent calls use run-scoped Mastra memory', () => {
   const source = workflowSource();
   const requestContextCount = source.match(/requestContext: createDeliveryRequestContext/g)?.length ?? 0;
+  const controlRequestContextCount = source.match(/requestContext: createDeliveryControlRequestContext/g)?.length ?? 0;
   const memoryCount = source.match(/memory: deliveryRunMemory/g)?.length ?? 0;
 
-  assert.equal(requestContextCount, 7);
-  assert.equal(memoryCount, requestContextCount);
+  assert.equal(requestContextCount, 1);
+  assert.equal(controlRequestContextCount, 6);
+  assert.equal(memoryCount, requestContextCount + controlRequestContextCount);
   assert.match(source, /memory: deliveryRunMemory\(\{ repoPath, runId, role: 'judge' \}\)/);
   assert.match(source, /memory: deliveryRunMemory\(\{ repoPath: inputData\.repoPath, runId: inputData\.runId, role: task\.owner \}\)/);
 });

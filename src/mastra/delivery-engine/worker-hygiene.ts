@@ -1240,11 +1240,15 @@ const workerScaffoldRequiredGitignorePatterns = ['node_modules/', '.wrangler/', 
 
 function gitignorePatternPresent(text: string, pattern: string) {
   const directoryPattern = pattern.endsWith('/') ? pattern.slice(0, -1) : pattern;
-  return text
+  const patterns = text
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'))
-    .some((line) => line === pattern || line === directoryPattern);
+    .filter((line) => line && !line.startsWith('#'));
+
+  if (pattern === '.dev.vars*' && patterns.includes('.dev.vars') && patterns.includes('.dev.vars.*')) return true;
+  if (pattern === '.env*' && patterns.includes('.env') && patterns.includes('.env.*')) return true;
+
+  return patterns.some((line) => line === pattern || line === directoryPattern);
 }
 
 function workerScaffoldGitignoreGaps(repoPath: string) {

@@ -29,7 +29,7 @@ import {
   stageSlice,
   type DeliveryEvent,
 } from './checks';
-import { createDeliveryRequestContext } from './context';
+import { createDeliveryControlRequestContext, createDeliveryRequestContext } from './context';
 import { deliveryRunMemory } from './memory';
 import {
   aggregateJudgment,
@@ -6042,7 +6042,7 @@ async function judgeDeliveryArtifact({
             ...structuredNoToolOptions,
             abortSignal,
             memory: deliveryRunMemory({ repoPath, runId, role: 'judge' }),
-            requestContext: createDeliveryRequestContext(repoPath),
+            requestContext: createDeliveryControlRequestContext(repoPath),
             structuredOutput: {
               schema: rubricJudgeOutputSchema,
               ...deliveryStructuredOutputOptions,
@@ -6546,7 +6546,7 @@ async function reviseTaskPlanFromPlanGate({
             ...structuredNoToolOptions,
             abortSignal,
             memory: deliveryRunMemory({ repoPath, runId, role: 'planner' }),
-            requestContext: createDeliveryRequestContext(repoPath),
+            requestContext: createDeliveryControlRequestContext(repoPath),
             structuredOutput: {
               schema: plannerRevisionOutputSchema,
               ...deliveryStructuredOutputOptions,
@@ -6906,7 +6906,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
             ...structuredNoToolOptions,
             abortSignal,
             memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: 'architect' }),
-            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            requestContext: createDeliveryControlRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: reviewReportSchema,
               ...deliveryStructuredOutputOptions,
@@ -7031,7 +7031,7 @@ ${JSON.stringify(taskPlan, null, 2)}`,
             ...structuredNoToolOptions,
             abortSignal,
             memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: 'planner' }),
-            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            requestContext: createDeliveryControlRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: plannerRevisionOutputSchema,
               ...deliveryStructuredOutputOptions,
@@ -7741,7 +7741,7 @@ ${unreplacedStubs.map((item) => `  - ${item}`).join('\n') || '  - none'}
               maxSteps,
               toolCallConcurrency: 1,
               memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: task.owner }),
-              requestContext: createDeliveryRequestContext(inputData.repoPath),
+              requestContext: createDeliveryControlRequestContext(inputData.repoPath),
             },
           ),
       });
@@ -8645,7 +8645,7 @@ Return a release-gate object with event_type "pre_deployment". Every critical ar
             ...structuredNoToolOptions,
             abortSignal,
             memory: deliveryRunMemory({ repoPath: inputData.repoPath, runId: inputData.runId, role: 'tester' }),
-            requestContext: createDeliveryRequestContext(inputData.repoPath),
+            requestContext: createDeliveryControlRequestContext(inputData.repoPath),
             structuredOutput: {
               schema: testerOutputSchema,
               ...deliveryStructuredOutputOptions,
