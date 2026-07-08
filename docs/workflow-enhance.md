@@ -441,6 +441,8 @@ Completed extraction:
 - `deployment/local-report.ts` for deployment artifact lookup, release-gate
   evidence artifact loading, local deployment report synthesis, and deployment
   success next-step reporting.
+- `deployment/deployment-gate.ts` for deployment deterministic completion
+  checks and failed deployment next-step synthesis.
 
 Keep in deployment workflow:
 
