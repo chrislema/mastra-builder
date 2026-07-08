@@ -77,6 +77,10 @@ Completed cleanup checkpoints:
   - Pass source policy into the real task-plan normalizer so profile,
     run/latest/transcript, and route-protection contracts are injected only
     when source documents declare those capabilities.
+  - Extract latest-transcript release-gate fixture checks, fixture SQL, fixture
+    file writing, and version-audit SQL into
+    `release-gate-transcript-fixture.ts`, leaving `workflow.ts` with only the
+    repo-aware context wrapper.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
