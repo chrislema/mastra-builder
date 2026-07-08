@@ -32,34 +32,9 @@ natural T06 failure.
 
 ## Active Cleanup Queue
 
-1. Release-gate command planning.
-   - Move Wrangler command construction, local-vs-npx resolution, Worker dev,
-     dry-run deploy, startup check, generated Worker types check, D1 migration
-     command planning, transcript fixture command planning, and static evidence
-     result assembly out of `workflow.ts`.
-   - Keep `workflow.ts` responsible for release-gate orchestration and process
-     execution.
-
-2. Implementation retry and stale-verification policy.
-   - Move verification failure path extraction, stale downstream repair policy,
-     out-of-plan verification classification, implementation failure
-     classification, timeout salvage, retry-mode selection, and retry tool
-     choice into focused implementation policy modules.
-   - Keep workspace writes, Mastra events, and stage execution orchestration in
-     `workflow.ts`.
-
-3. Planner prompt policy.
-   - Move project policy text, Worker-first assumptions, owned-surface guidance,
-     root scaffold guidance, plan-gate repair prompt fragments, and source
-     policy insertions into small prompt/policy builders.
-   - Keep the planner/architect workflow steps in `workflow.ts`.
-
-4. Build/deployment orchestration helpers.
-   - Move build verification command plans, deployment report construction,
-     human-approval formatting, and deployment next-step summaries into focused
-     modules.
-   - Keep Mastra step definitions, suspend/resume wiring, and state lifecycle
-     in `workflow.ts`.
+No active workflow cleanup clusters are queued. Before adding another one, read
+the operating doctrine and verify the change makes `workflow.ts` smaller,
+clearer, and more Mastra-native without weakening delivery behavior.
 
 ## Already Extracted
 
@@ -76,6 +51,10 @@ Do not redo these:
 - Generated-slice policy: `task-plan-generated-slices.ts`
 - Task dependency/order utilities: `task-plan-dependencies.ts`
 - Worker config/package hygiene: `worker-hygiene.ts`
+- Release-gate command planning: `release-gate-command-plan.ts`
+- Implementation retry and stale-verification policy: `implementation-retry-policy.ts`
+- Planner prompt policy: `planner-prompt-policy.ts`
+- Build verification and deployment report policy: `build-deployment-policy.ts`
 
 ## Cleanup Rules
 
