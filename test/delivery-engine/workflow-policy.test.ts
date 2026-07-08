@@ -613,6 +613,29 @@ test('bare TypeScript Worker root scaffolds normalize to canonical registry-back
   assert.ok(ids.includes('T1:package.scripts.typecheck'));
 });
 
+test('Worker root scaffolds normalize generated Wrangler types as verification output, not source ownership', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-generated-type-ownership-normalized-'));
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'tsconfig.json', 'worker-configuration.d.ts', 'src/index.ts'],
+      acceptance_criteria: [
+        'worker-configuration.d.ts is an engineer-owned generated type surface produced by the scripts.generate-types command and committed as part of the scaffold contract.',
+        'tsconfig.json includes worker-configuration.d.ts as a concrete project file rather than relying on an unowned generated artifact.',
+      ],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const task = normalized.tasks[0];
+  const criteria = task.acceptance_criteria.join('\n');
+
+  assert.deepEqual(task.owned_surfaces, ['package.json', 'wrangler.jsonc', 'tsconfig.json', 'src/index.ts']);
+  assert.doesNotMatch(criteria, /engineer-owned generated type surface/);
+  assert.doesNotMatch(criteria, /concrete project file rather than relying on an unowned generated artifact/);
+});
+
 test('profile contract consumers normalize behind validation task', () => {
   const plan = taskPlan([
     {
@@ -3774,7 +3797,7 @@ test('acceptance contracts verify valid Worker module entrypoint wording structu
       id: 'T01',
       depends_on: [],
       owned_surfaces: ['src/index.ts'],
-      acceptance_criteria: ['src/index.ts exists as a valid Worker module entrypoint.'],
+      acceptance_criteria: ['src/index.ts exists as a valid module Worker entrypoint so Wrangler local validation can start from the first build slice.'],
     },
   ]).tasks;
 
@@ -3786,6 +3809,43 @@ test('acceptance contracts verify valid Worker module entrypoint wording structu
 
   assert.equal(contract?.status, 'verified');
   assert.match(contract?.evidence.join('\n') ?? '', /minimal Worker entrypoint with a basic response/);
+});
+
+test('acceptance contracts verify combined package script exactness structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-combined-package-scripts-'));
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json'],
+      acceptance_criteria: [
+        'package.json exists and defines scripts.dev exactly as "wrangler dev --env staging" and scripts.deploy exactly as "wrangler deploy --env production".',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: [], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /scripts\.dev exactly/);
+  assert.match(contract?.evidence.join('\n') ?? '', /scripts\.deploy exactly/);
 });
 
 test('acceptance contracts verify Worker scaffold and ADMIN_TOKEN readiness structurally', () => {

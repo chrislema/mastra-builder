@@ -885,6 +885,39 @@ function taskAcceptanceContractCriteria(task: Task) {
   return Array.from(new Set([...(task.source_acceptance_criteria ?? []), ...task.acceptance_criteria].filter(Boolean)));
 }
 
+function generatedWorkerTypeOwnershipCriterion(criterion: string) {
+  return (
+    /\bworker-configuration\.d\.ts\b/i.test(criterion) &&
+    /\b(?:engineer-owned|owned generated|committed as part of the scaffold contract|concrete project file rather than relying on an unowned generated artifact)\b/i.test(
+      criterion,
+    )
+  );
+}
+
+function withoutGeneratedWorkerTypeOwnership(task: Task) {
+  const owned_surfaces = task.owned_surfaces.filter(
+    (surface) => normalizeDeliveryPathReference(surface) !== workerConfigTaskPacketPolicy().generated_types.output,
+  );
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !generatedWorkerTypeOwnershipCriterion(criterion));
+  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+    (criterion) => !generatedWorkerTypeOwnershipCriterion(criterion),
+  );
+
+  const unchanged =
+    owned_surfaces.length === task.owned_surfaces.length &&
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0);
+
+  if (unchanged) return task;
+
+  return {
+    ...task,
+    owned_surfaces,
+    acceptance_criteria,
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+  };
+}
+
 function sourceAcceptanceCriterionBelongsToTask(task: Task, criterion: string) {
   if (generatedSliceAcceptanceCriterion(criterion)) return false;
   if (routeEndpointContractCriterion(criterion)) return routeEndpointCriterionBelongsToTask(task, criterion);
@@ -2813,6 +2846,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       task = rootSanitized;
     }
 
+    const generatedTypeSanitized = withoutGeneratedWorkerTypeOwnership(task);
+    if (generatedTypeSanitized !== task) {
+      changed = true;
+      task = generatedTypeSanitized;
+    }
+
     if (taskOwnsPublicAppSurface(task)) {
       const sanitized = withoutPublicUiRawAdminTokenCriteria(task);
       if (sanitized !== task) {
@@ -3196,6 +3235,7 @@ function revisedPlanCarriesCriterion(taskPlan: TaskPlan, criterion: string) {
 
 function conditionalGeneratedPolicyAcceptanceCriterion(criterion: string) {
   return (
+    generatedWorkerTypeOwnershipCriterion(criterion) ||
     /src\/index\.js exports a minimal class named WeeklyWorkflow that extends WorkflowEntrypoint when wrangler\.jsonc defines workflows\.class_name "WeeklyWorkflow"/i.test(
       criterion,
     ) ||
