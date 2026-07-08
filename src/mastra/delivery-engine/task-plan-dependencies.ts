@@ -30,6 +30,36 @@ export function taskCanDependOnTaskList(tasks: Task[], taskId: string, dependenc
   return taskId !== dependencyId && !taskListDependsOn(tasks, dependencyId, taskId);
 }
 
+export function topoOrderTasks(tasks: Task[]) {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const indegree = new Map(tasks.map((task) => [task.id, 0]));
+  for (const task of tasks) {
+    for (const dependency of task.depends_on) {
+      if (byId.has(dependency)) indegree.set(task.id, (indegree.get(task.id) ?? 0) + 1);
+    }
+  }
+
+  const queue = tasks.filter((task) => (indegree.get(task.id) ?? 0) === 0);
+  const ordered: Task[] = [];
+  while (queue.length) {
+    const task = queue.shift();
+    if (!task) continue;
+    ordered.push(task);
+    for (const candidate of tasks) {
+      if (candidate.depends_on.includes(task.id)) {
+        indegree.set(candidate.id, (indegree.get(candidate.id) ?? 0) - 1);
+        if (indegree.get(candidate.id) === 0) queue.push(candidate);
+      }
+    }
+  }
+
+  if (ordered.length !== tasks.length) {
+    throw new Error('task dependency graph is cyclic or incomplete');
+  }
+
+  return ordered;
+}
+
 export function appendDependencies(task: Task, dependencies: string[]) {
   const depends_on = Array.from(new Set([...task.depends_on, ...dependencies.filter((dependency) => dependency !== task.id)]));
   return depends_on.length === task.depends_on.length &&

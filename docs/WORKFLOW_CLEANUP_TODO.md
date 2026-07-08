@@ -105,6 +105,8 @@ Do not redo these:
   `planning/generated-slice-policy.ts`
 - Deterministic task-plan gate assembly:
   `planning/task-plan-gates.ts`
+- Topological task ordering:
+  `task-plan-dependencies.ts`
 
 ## Cleanup Rules
 

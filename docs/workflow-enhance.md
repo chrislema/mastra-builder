@@ -247,6 +247,7 @@ Completed extraction:
 - `planning/generated-slice-policy.ts` for generated-slice dependency
   normalization, final-slice dependency policy, and generated-slice hygiene.
 - `planning/task-plan-gates.ts` for deterministic task-plan gate assembly.
+- `task-plan-dependencies.ts` now owns topological task ordering.
 
 Keep in planning workflow:
 
