@@ -162,6 +162,9 @@ Do not redo these:
   command execution, local Wrangler runtime probes, transcript fixtures, and
   required-evidence pass/fail policy:
   `evidence/release-gate-evidence.ts`
+- Production Wrangler deployment command execution, live verification, and
+  deployment report synthesis:
+  `deployment/production-wrangler.ts`
 
 ## Cleanup Rules
 

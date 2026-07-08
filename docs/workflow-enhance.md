@@ -413,6 +413,8 @@ Verification:
 
 ### Phase 6: Deployment Policy
 
+Status: in progress.
+
 Goal: keep local/production deployment decisions deterministic and isolated.
 
 Extract to:
@@ -430,6 +432,12 @@ Move:
 - production deployment report synthesis.
 - deployment success next steps.
 - deployment gate failure next steps.
+
+Completed extraction:
+
+- `deployment/production-wrangler.ts` for production Wrangler deploy command
+  execution, live URL verification, deploy observability events, and production
+  deployment report synthesis.
 
 Keep in deployment workflow:
 

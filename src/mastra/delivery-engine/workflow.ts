@@ -196,25 +196,18 @@ import {
   type Task,
   type TaskPlan,
 } from './workflow-schemas';
-import {
-  type ReleaseGateProcessCommand,
-} from './release-gate-probes';
 import { synthesizeReleaseGateFromEvidence } from './release-gate-synthesis';
 import {
   deploymentReportSuccessNextSteps as deploymentReportSuccessNextStepsBase,
   localDeploymentReportFromReleaseGateEvidence as localDeploymentReportFromReleaseGateEvidenceBase,
-  productionDeploymentReportFromWranglerResult as productionDeploymentReportFromWranglerResultBase,
-  productionWranglerDeployCommand as productionWranglerDeployCommandBase,
-  wranglerDeployRevision,
-  wranglerDeployUrls,
 } from './build-deployment-policy';
-import { commandFailureSummary, execFileAsync, recordRunCodeStart } from './evidence/command-runner';
 import { runBuildVerification } from './evidence/build-verification';
 import {
   collectReleaseGateEvidence,
   releaseGateRequiredEvidencePassed,
   type ReleaseGateEvidence,
 } from './evidence/release-gate-evidence';
+import { runProductionWranglerDeployment } from './deployment/production-wrangler';
 import { concreteOwnedSurfacePath } from './task-plan-surface-policy';
 import { topoOrderTasks } from './task-plan-dependencies';
 import {
@@ -377,6 +370,10 @@ export {
   releaseGateWorkerStartupCheckCommand,
   releaseGateWorkerTypesCheckCommand,
 } from './evidence/release-gate-evidence';
+export {
+  productionDeploymentReportFromWranglerResult,
+  productionWranglerDeployCommand,
+} from './deployment/production-wrangler';
 
 function parseReviewReportResponse(response: unknown, label: string) {
   try {
@@ -642,202 +639,8 @@ export function localDeploymentReportFromReleaseGateEvidence({
   return localDeploymentReportFromReleaseGateEvidenceBase({ runId, releaseGate, evidence, releaseGatePath, evidencePath });
 }
 
-export function productionWranglerDeployCommand(repoPath: string): ReleaseGateProcessCommand {
-  return productionWranglerDeployCommandBase(repoPath);
-}
-
-async function productionLiveVerification(urls: string[]): Promise<DeploymentReport['verification'][number]> {
-  const url = urls[0];
-  if (!url) {
-    return {
-      check: 'production live URL',
-      expected: 'Wrangler deploy completes and emits a live URL when available.',
-      actual: 'Wrangler deploy completed; no live URL was parsed from output.',
-      passed: true,
-    };
-  }
-
-  try {
-    const response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(10_000) });
-    const body = compactDiagnostic(await response.text(), 300);
-    return {
-      check: `GET ${url}`,
-      expected: 'Production Worker responds with an HTTP status below 500.',
-      actual: `HTTP ${response.status}${body ? `; body ${body}` : ''}`,
-      passed: response.status < 500,
-    };
-  } catch (error) {
-    return {
-      check: `GET ${url}`,
-      expected: 'Production Worker responds with an HTTP status below 500.',
-      actual: compactDiagnostic(error, 500),
-      passed: false,
-    };
-  }
-}
-
-export function productionDeploymentReportFromWranglerResult({
-  runId,
-  releaseGate,
-  evidence,
-  releaseGatePath,
-  evidencePath,
-  deployCommand,
-  deployOk,
-  deployOutput,
-  deployError,
-  liveVerification,
-  revision,
-}: {
-  runId: string;
-  releaseGate: ReleaseGate;
-  evidence?: ReleaseGateEvidence;
-  releaseGatePath: string;
-  evidencePath?: string;
-  deployCommand: string;
-  deployOk: boolean;
-  deployOutput?: string;
-  deployError?: string;
-  liveVerification: DeploymentReport['verification'][number];
-  revision?: string;
-}): DeploymentReport {
-  return productionDeploymentReportFromWranglerResultBase({
-    runId,
-    releaseGate,
-    evidence,
-    releaseGatePath,
-    evidencePath,
-    deployCommand,
-    deployOk,
-    deployOutput,
-    deployError,
-    liveVerification,
-    revision,
-  });
-}
-
 export function deploymentReportSuccessNextSteps(report: DeploymentReport, repoPath: string) {
   return deploymentReportSuccessNextStepsBase(report, repoPath);
-}
-
-async function runProductionWranglerDeployment({
-  repoPath,
-  mastra,
-  stage,
-  runId,
-  releaseGate,
-  releaseGatePath,
-  evidence,
-  evidencePath,
-}: {
-  repoPath: string;
-  mastra: any;
-  stage: string;
-  runId: string;
-  releaseGate: ReleaseGate;
-  releaseGatePath: string;
-  evidence?: ReleaseGateEvidence;
-  evidencePath?: string;
-}) {
-  const command = productionWranglerDeployCommand(repoPath);
-  await recordRunCodeStart({ repoPath, mastra, stage, command: command.command, timeoutMs: 300_000 });
-
-  try {
-    const result = await execFileAsync(command.executable, command.args, {
-      cwd: resolve(repoPath),
-      timeout: 300_000,
-      maxBuffer: 2_000_000,
-      env: {
-        ...process.env,
-        CI: process.env.CI ?? '1',
-        NO_COLOR: '1',
-        WRANGLER_SEND_METRICS: 'false',
-      },
-    });
-    const rawOutput = `${result.stdout}\n${result.stderr}`;
-    const outputSummary = compactDiagnostic(rawOutput.trim() || 'Wrangler deploy completed.', 1_200);
-    const revision = wranglerDeployRevision(rawOutput, runId);
-    const urls = wranglerDeployUrls(rawOutput);
-    await appendDeliveryEventState({
-      repoPath,
-      mastra,
-      event: {
-        type: 'deploy',
-        stage,
-        target: 'production',
-        revision,
-        command: command.command,
-        ok: true,
-        output_summary: outputSummary,
-        urls,
-      },
-    });
-
-    const liveVerification = await productionLiveVerification(urls);
-    await appendDeliveryEventState({
-      repoPath,
-      mastra,
-      event: {
-        type: 'live_verify',
-        stage,
-        target: 'production',
-        revision,
-        command: liveVerification.check,
-        ok: liveVerification.passed !== false,
-        output_summary: liveVerification.actual,
-        urls,
-      },
-    });
-
-    return productionDeploymentReportFromWranglerResult({
-      runId,
-      releaseGate,
-      evidence,
-      releaseGatePath,
-      evidencePath,
-      deployCommand: command.command,
-      deployOk: true,
-      deployOutput: outputSummary,
-      liveVerification,
-      revision,
-    });
-  } catch (error) {
-    const failure = commandFailureSummary(error, 1_200);
-    const revision = `production:${runId}`;
-    await appendDeliveryEventState({
-      repoPath,
-      mastra,
-      event: {
-        type: 'deploy',
-        stage,
-        target: 'production',
-        revision,
-        command: command.command,
-        ok: false,
-        error: failure,
-      },
-    });
-
-    const liveVerification: DeploymentReport['verification'][number] = {
-      check: 'production live verification',
-      expected: 'Production live verification runs after a successful Wrangler deploy.',
-      actual: 'Skipped because the Wrangler deploy command failed.',
-      passed: false,
-    };
-
-    return productionDeploymentReportFromWranglerResult({
-      runId,
-      releaseGate,
-      evidence,
-      releaseGatePath,
-      evidencePath,
-      deployCommand: command.command,
-      deployOk: false,
-      deployError: failure,
-      liveVerification,
-      revision,
-    });
-  }
 }
 
 const initializeRunStep = createStep({
