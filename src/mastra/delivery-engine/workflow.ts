@@ -62,6 +62,7 @@ import {
   normalizeDeliveryWorkflowInput,
 } from './run-input';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
+import { taskPacketRailsForTask } from './task-packet-rails';
 import {
   buildTaskAttemptStateSchema,
   buildTaskResultSchema,
@@ -7902,8 +7903,9 @@ const prepareBuildTasksStep = createStep({
         },
       ];
     }
+    const taskPlan = inputData.taskPlan;
 
-    const resumePlan = deliveryBuildResumePlan(inputData.repoPath, inputData.taskPlan);
+    const resumePlan = deliveryBuildResumePlan(inputData.repoPath, taskPlan);
     const resumeReason = deliveryBuildResumeReason(resumePlan);
     const checks = resumeReason
       ? [...inputData.checks, { check: 'build_resume_cursor', passed: true, reason: resumeReason }]
@@ -7932,14 +7934,27 @@ const prepareBuildTasksStep = createStep({
         type: 'task_packets_emitted',
         stage: 'build',
         total_tasks: orderedTasks.length,
-        tasks: orderedTasks.map((task) => ({
-          id: task.id,
-          owner: task.owner,
-          task_kind: task.metadata?.task?.kind,
-          surface_kind: task.metadata?.surface?.kind,
-          evidence_kind: task.metadata?.evidence?.kind,
-          runtime_kind: task.metadata?.runtime?.kind,
-        })),
+        tasks: orderedTasks.map((task) => {
+          const rails = taskPacketRailsForTask({
+            taskPlan,
+            task,
+            scaffoldManifest: inputData.scaffoldManifest,
+            maxAttempts: inputData.maxRetries + 1,
+          });
+
+          return {
+            id: task.id,
+            owner: task.owner,
+            task_kind: rails.task_kind,
+            surface_kind: rails.surface_kind,
+            evidence_kind: rails.evidence_kind,
+            runtime_kind: rails.runtime_class,
+            verification_command_class: rails.verification_command_class,
+            allowed_surfaces: rails.allowed_surfaces,
+            scaffold_owned_allowed_surfaces: rails.scaffold_owned_allowed_surfaces,
+            model_budget: rails.model_budget,
+          };
+        }),
       },
     }).catch(() => undefined);
 
@@ -8269,17 +8284,30 @@ const executeBuildTaskAttemptStep = createStep({
     const existingPackageDependencies = packageDependencyNames(inputData.repoPath);
     const dependencySurfaces = directDependencySurfacePaths(taskPlan, task);
     const verificationFailureDiagnostics = typeScriptDiagnosticsFromRemediation(inputData.remediation);
+    const acceptanceContracts = taskVerificationAcceptanceContractCriteria(task).map((criterion, index) => ({
+      id: acceptanceContractId(task, index, criterion),
+      criterion,
+      status: 'required' as const,
+    }));
+    const taskRails = taskPacketRailsForTask({
+      taskPlan,
+      task,
+      scaffoldManifest: inputData.scaffoldManifest,
+      boundarySurfaces: sourceBoundarySurfaces,
+      generatedSurfaces,
+      directDependencySurfaces: dependencySurfaces,
+      sourceContracts: task.source_acceptance_criteria,
+      maxAttempts: inputData.maxRetries + 1,
+      maxToolStepsPerAttempt: maxSteps,
+    });
     const focusedRepairFileContext = replaceStubsRecovery || focusedRepairRecovery
       ? repoFileContents(inputData.repoPath, focusedRepairContextPaths(taskPlan, task, sourceBoundarySurfaces))
       : [];
     const taskPacket = {
       scope: taskPlan.scope,
       task,
-      acceptance_contracts: taskVerificationAcceptanceContractCriteria(task).map((criterion, index) => ({
-        id: acceptanceContractId(task, index, criterion),
-        criterion,
-        status: 'required',
-      })),
+      task_rails: taskRails,
+      acceptance_contracts: acceptanceContracts,
       technology_decisions: taskPlan.technology_decisions,
       open_decisions: taskPlan.open_decisions,
       risks: taskPlan.risks,
@@ -8315,9 +8343,12 @@ ${JSON.stringify(taskPacket, null, 2)}
 
 Execution rules:
 - Make the smallest coherent code change for this task.
+- task_packet.task_rails is binding policy: edit only task_rails.allowed_surfaces, treat task_rails.direct_dependency_surfaces as read-only context, and do not edit task_rails.scaffold_owned_readonly_surfaces.
+- task_rails.verification_command_class is the verification class this task is preparing for; do not change runtime config to escape it.
+- Stay within task_rails.model_budget. If the task cannot be completed inside the allowed surfaces, return a blocker instead of expanding scope.
 - Treat task_packet.acceptance_contracts as mandatory contracts. Do not return until every listed AC has concrete code evidence in the task's boundary surfaces, or until you surface a real blocker.
 - Do not replace a product acceptance contract with a weaker "slice completed" claim. If the contract names behavior, implement the behavior or leave the task incomplete.
-- Touch only the boundary surfaces in the task packet unless a dependency blocks the task.
+- Touch only the boundary surfaces in the task packet unless a dependency blocks the task; task_rails.allowed_surfaces is the normalized edit list.
 - generated_surfaces are workflow-generated evidence outputs, not source files. Do not write or edit generated_surfaces directly; configure their source inputs and scripts so workflow verification generates them.
 - If preflight_created_surfaces is non-empty, replace those stubs with the real implementation for this task.
 - If an owned surface is still missing, create it.

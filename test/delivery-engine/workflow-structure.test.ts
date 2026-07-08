@@ -66,8 +66,10 @@ test('delivery workflow records structured gate and task packet observability ev
   assert.match(source, /type: 'deterministic_gate_result'/);
   assert.match(source, /gate: 'task-plan'/);
   assert.match(source, /type: 'task_packets_emitted'/);
-  assert.match(source, /task_kind: task\.metadata\?\.task\?\.kind/);
-  assert.match(source, /runtime_kind: task\.metadata\?\.runtime\?\.kind/);
+  assert.match(source, /taskPacketRailsForTask/);
+  assert.match(source, /verification_command_class: rails\.verification_command_class/);
+  assert.match(source, /allowed_surfaces: rails\.allowed_surfaces/);
+  assert.match(source, /task_rails: taskRails/);
 });
 
 test('delivery stage workflows close delivery state on workflow errors', () => {
