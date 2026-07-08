@@ -165,6 +165,9 @@ Do not redo these:
 - Production Wrangler deployment command execution, live verification, and
   deployment report synthesis:
   `deployment/production-wrangler.ts`
+- Deployment artifact lookup, release-gate evidence artifact loading, local
+  deployment report synthesis, and success next-step reporting:
+  `deployment/local-report.ts`
 
 ## Cleanup Rules
 

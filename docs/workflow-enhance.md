@@ -438,6 +438,9 @@ Completed extraction:
 - `deployment/production-wrangler.ts` for production Wrangler deploy command
   execution, live URL verification, deploy observability events, and production
   deployment report synthesis.
+- `deployment/local-report.ts` for deployment artifact lookup, release-gate
+  evidence artifact loading, local deployment report synthesis, and deployment
+  success next-step reporting.
 
 Keep in deployment workflow:
 
