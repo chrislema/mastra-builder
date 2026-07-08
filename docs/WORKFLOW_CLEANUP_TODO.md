@@ -32,63 +32,45 @@ the workflow naturally failed. Do not treat that run as proof that T06 failed.
 
 ## Current Refactor State
 
-As of this TODO, there is an in-progress refactor:
+Completed cleanup checkpoints:
 
-- `src/mastra/delivery-engine/acceptance-contracts.ts` has been expanded with:
-  - `AcceptanceContractRecord`
-  - `acceptanceContractReferences`
-  - `evaluateAcceptanceCriterion`
-  - `acceptanceContractsForCriteria`
-  - `verificationWithAcceptanceContractGaps`
-  - implementation acceptance evidence helpers moved conceptually out of the
-    workflow
+- `0fdaed7 Extract implementation acceptance evaluation`
+  - `workflow.ts` now delegates implementation acceptance evaluation to
+    `acceptance-contracts.ts`.
+  - The duplicate local acceptance evaluator block was removed from
+    `workflow.ts`.
+  - The exported workflow adapter functions remain for tests and callers.
+  - Verification passed: focused workflow policy test, `npm run typecheck`,
+    `npm test`.
+- `d4716c2 Extract delivery workflow schemas`
+  - Workflow Zod contracts and inferred types now live in
+    `workflow-schemas.ts`.
+  - `workflow.ts` imports schema contracts instead of defining them inline.
+  - Verification passed: `npm run typecheck`, `npm test`.
 
-Not finished yet:
-
-- `src/mastra/delivery-engine/workflow.ts` still contains the old implementation
-  acceptance evaluator block around the release-gate/build helper area.
-- The workflow imports have not yet been switched to the new acceptance-contract
-  helpers.
-- The duplicate old block has not yet been removed from `workflow.ts`.
-- Tests have not yet been run after this extraction.
-
-If resuming after compaction, first run `git status --short` and inspect these
-two files before editing further.
+If resuming after compaction, first run `git status --short`, then continue from
+the next cleanup target below. Do not redo either completed extraction.
 
 ## Cleanup Sequence
 
-1. Finish the acceptance evaluator extraction.
-   - Import `acceptanceContractReferences`,
-     `acceptanceContractsForCriteria`, and
-     `verificationWithAcceptanceContractGaps` from
-     `acceptance-contracts.ts`.
-   - Keep `workflow.ts` responsible for choosing criteria and IDs only:
-     `taskVerificationAcceptanceContractCriteria` and `acceptanceContractId`.
-   - Delete the duplicated old acceptance evaluator helpers from `workflow.ts`.
-   - Preserve exported wrapper functions from `workflow.ts` if tests import
-     them, but make wrappers delegate to the acceptance-contract module.
-
-2. Verify the refactor cheaply.
-   - Run the focused workflow policy tests that cover acceptance contracts.
-   - Run `npm run typecheck`.
-   - Run the full test suite only after the focused tests pass.
-   - Do not run a paid benchmark workflow just to test this refactor.
-
-3. Commit and push the cleanup.
-   - Natural commit name: `Extract implementation acceptance evaluation`.
-   - Only commit once the worktree is coherent and tests/typecheck pass.
-
-4. Then reassess bigger cleanup.
+1. Reassess bigger cleanup.
    - Identify remaining policy clusters inside `workflow.ts`.
    - Prefer moving stable clusters into focused modules over adding new logic.
-   - Good candidates:
-     - Worker config policy and hygiene
-     - Release-gate evidence planning
-     - Task-plan normalization policy
-     - Generated slice dependency hygiene
+   - Good candidates, in suggested order:
+     - Worker config policy and hygiene.
+     - Release-gate evidence planning.
+     - Task-plan normalization policy.
+     - Generated slice dependency hygiene.
    - Avoid touching all clusters in one commit.
 
-5. Resume run iteration only after cleanup is stable.
+2. For each cleanup cluster.
+   - Move behavior without changing policy.
+   - Preserve exported workflow wrappers if tests import them.
+   - Run `npm run typecheck` and `npm test`.
+   - Run focused tests first when the cluster has focused coverage.
+   - Commit and push each coherent extraction.
+
+3. Resume run iteration only after cleanup is stable.
    - Clean the benchmark project back to `vision.md`.
    - Run the CLI delivery workflow.
    - Watch for forward progress against the baseline above.
