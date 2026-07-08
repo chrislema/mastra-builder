@@ -20,6 +20,10 @@ export {
   wranglerConfigObject,
 } from './wrangler-config';
 export {
+  validateMaterializedScaffold,
+  type ScaffoldValidationResult,
+} from './validation';
+export {
   packageScriptsForLanguage,
   renderPackageJson,
 } from './package-manifest';

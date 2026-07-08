@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,6 +7,7 @@ import {
   materializeProjectScaffold,
   renderProjectScaffold,
   selectProjectProfiles,
+  validateMaterializedScaffold,
 } from '../../src/mastra/delivery-engine/project-factory/index.ts';
 
 function fileContent(scaffold: ReturnType<typeof renderProjectScaffold>, path: string) {
@@ -121,6 +122,27 @@ test('project factory materializes files only through the explicit writer helper
 
   assert.equal(JSON.parse(readFileSync(join(projectFolder, 'package.json'), 'utf8')).name, 'writable-worker');
   assert.match(readFileSync(join(projectFolder, 'public/index.html'), 'utf8'), /writable-worker/);
+});
+
+test('project factory validates materialized scaffold against the manifest', () => {
+  const projectFolder = mkdtempSync(join(tmpdir(), 'project-factory-validation-'));
+  const scaffold = renderProjectScaffold({ projectName: 'Validated Worker', requestedProfiles: ['worker-d1'] });
+  materializeProjectScaffold(projectFolder, scaffold);
+
+  assert.deepEqual(
+    validateMaterializedScaffold(projectFolder, scaffold.manifest).map((check) => [check.check, check.passed]),
+    [
+      ['scaffold_generated_files_present', true],
+      ['scaffold_package_scripts_match', true],
+      ['scaffold_bindings_match', true],
+      ['scaffold_test_runtime_matrix_match', true],
+      ['scaffold_test_runtime_no_broad_worker_glob', true],
+    ],
+  );
+
+  rmSync(join(projectFolder, 'test/contracts.test.ts'));
+  const driftChecks = validateMaterializedScaffold(projectFolder, scaffold.manifest);
+  assert.equal(driftChecks.find((check) => check.check === 'scaffold_generated_files_present')?.passed, false);
 });
 
 test('project factory composes workflow and admin profiles without moving away from Workers', () => {

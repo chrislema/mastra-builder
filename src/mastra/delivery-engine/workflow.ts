@@ -7347,16 +7347,26 @@ const createScaffoldArtifactsStep = createStep({
       mastra,
     );
     const artifacts = [...new Set([...inputData.artifacts, scaffold.manifestPath])];
+    const checks = [
+      ...inputData.checks,
+      ...scaffold.checks.map((check) => ({ check: check.check, passed: check.passed, reason: check.reason })),
+    ];
+    const failedScaffoldChecks = scaffold.checks.filter((check) => !check.passed);
     const nextSteps = [
       `Scaffold manifest generated at ${scaffold.manifestPath}.`,
       ...inputData.nextSteps.filter((step) => !/scaffold manifest generated/i.test(step)),
     ];
     const output = {
       ...inputData,
+      status: failedScaffoldChecks.length ? ('stuck' as const) : inputData.status,
+      summary: failedScaffoldChecks.length
+        ? 'Scaffold deterministic checks failed before architect review.'
+        : inputData.summary,
       artifacts,
+      checks,
       scaffoldManifest: scaffold.scaffoldManifest,
       scaffoldManifestPath: scaffold.manifestPath,
-      nextSteps,
+      nextSteps: failedScaffoldChecks.length ? failedScaffoldChecks.map((check) => check.reason) : nextSteps,
     };
 
     await syncDeliveryWorkflowState({ state, setState, output });

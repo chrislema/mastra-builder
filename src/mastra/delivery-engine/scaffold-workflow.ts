@@ -2,7 +2,7 @@ import { basename, resolve } from 'node:path';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import { projectFactorySourcePolicySchema, scaffoldManifestSchema } from './project-factory/schemas';
-import { materializeProjectScaffold, normalizeProjectName, renderProjectScaffold } from './project-factory';
+import { materializeProjectScaffold, normalizeProjectName, renderProjectScaffold, validateMaterializedScaffold } from './project-factory';
 import { sourceDocumentsFromRepo, sourcePolicyFromDocuments } from './source-policy';
 import type { MastraLike } from './observability';
 import { writeDeliveryArtifact } from './state';
@@ -29,6 +29,7 @@ export const deliveryScaffoldOutputSchema = z.object({
   generatedFiles: z.array(z.string()),
   bindingMap: z.record(z.string(), z.string()),
   validationCommands: z.array(z.string()),
+  checks: z.array(z.object({ id: z.string(), check: z.string(), passed: z.boolean(), reason: z.string() })),
 });
 
 export type DeliveryScaffoldInput = z.input<typeof deliveryScaffoldInputSchema>;
@@ -54,6 +55,7 @@ export async function executeDeliveryScaffold(input: DeliveryScaffoldInput, mast
   });
 
   materializeProjectScaffold(repoPath, scaffold);
+  const checks = validateMaterializedScaffold(repoPath, scaffold.manifest);
 
   const manifestPath = '.delivery/artifacts/scaffold-manifest.json';
   writeDeliveryArtifact({
@@ -76,6 +78,7 @@ export async function executeDeliveryScaffold(input: DeliveryScaffoldInput, mast
       profiles: scaffold.manifest.profileList,
       generated_files: scaffold.manifest.generatedFiles,
       validation_commands: scaffold.manifest.validationCommands,
+      checks,
     },
   });
   await endDeliveryStageState({
@@ -94,6 +97,7 @@ export async function executeDeliveryScaffold(input: DeliveryScaffoldInput, mast
     generatedFiles: scaffold.manifest.generatedFiles,
     bindingMap: scaffold.manifest.bindingMap,
     validationCommands: scaffold.manifest.validationCommands,
+    checks,
   });
 }
 

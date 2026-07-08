@@ -33,6 +33,16 @@ test('delivery scaffold workflow writes deterministic Worker scaffold and record
   assert.ok(output.generatedFiles.includes('test/contracts.test.ts'));
   assert.equal(output.scaffoldManifest.main, 'src/index.ts');
   assert.deepEqual(output.scaffoldManifest.validationCommands, ['npm run typecheck', 'npm test']);
+  assert.deepEqual(
+    output.checks.map((check) => [check.check, check.passed]),
+    [
+      ['scaffold_generated_files_present', true],
+      ['scaffold_package_scripts_match', true],
+      ['scaffold_bindings_match', true],
+      ['scaffold_test_runtime_matrix_match', true],
+      ['scaffold_test_runtime_no_broad_worker_glob', true],
+    ],
+  );
 
   assert.equal(existsSync(join(repoPath, 'package.json')), true);
   assert.equal(existsSync(join(repoPath, 'wrangler.jsonc')), true);
