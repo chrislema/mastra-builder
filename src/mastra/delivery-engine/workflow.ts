@@ -4199,6 +4199,57 @@ export function outOfPlanVerificationFailurePaths({
   });
 }
 
+function deliveryImplementationNoteTouchedPaths(repoPath: string) {
+  const artifactsDir = join(resolve(repoPath), '.delivery', 'artifacts');
+  const touched = new Set<string>();
+
+  const visit = (directory: string) => {
+    if (!existsSync(directory)) return;
+    for (const entry of readdirSync(directory)) {
+      const path = join(directory, entry);
+      const stat = statSync(path);
+      if (stat.isDirectory()) {
+        visit(path);
+        continue;
+      }
+      if (!entry.startsWith('note-') || !entry.endsWith('.json')) continue;
+
+      try {
+        const note = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+        const record = note && typeof note === 'object' ? (note as Record<string, unknown>) : undefined;
+        if (record?.artifact_type !== 'implementation-note' || !Array.isArray(record.files_touched)) continue;
+        for (const file of record.files_touched) {
+          if (typeof file !== 'string') continue;
+          const normalized = normalizeDeliveryPathReference(file);
+          if (normalized) touched.add(normalized);
+        }
+      } catch {
+        // Partial or unrelated JSON artifacts are not provenance evidence.
+      }
+    }
+  };
+
+  visit(artifactsDir);
+  return touched;
+}
+
+export function staleOutOfPlanVerificationSurfacePaths({
+  repoPath,
+  taskPlan,
+  failure,
+}: {
+  repoPath: string;
+  taskPlan: TaskPlan;
+  failure: string;
+}) {
+  const deliveryTouchedPaths = deliveryImplementationNoteTouchedPaths(repoPath);
+  if (!deliveryTouchedPaths.size) return [];
+
+  return outOfPlanVerificationFailurePaths({ repoPath, taskPlan, failure }).filter((path) =>
+    deliveryTouchedPaths.has(path),
+  );
+}
+
 function staleWorkspaceVerificationRemediation({
   repoPath,
   taskPlan,
@@ -4255,6 +4306,46 @@ export async function repairStaleDownstreamVerificationSurfaces({
       paths,
       output_summary:
         'Reset stale downstream task surfaces to compile-safe preflight stubs after repo-wide verification failed.',
+    },
+  }).catch(() => undefined);
+  return true;
+}
+
+export async function repairStaleOutOfPlanVerificationSurfaces({
+  repoPath,
+  mastra,
+  stage,
+  taskPlan,
+  failure,
+}: {
+  repoPath: string;
+  mastra?: any;
+  stage: string;
+  taskPlan: TaskPlan;
+  failure: string;
+}) {
+  const paths = staleOutOfPlanVerificationSurfacePaths({
+    repoPath,
+    taskPlan,
+    failure,
+  });
+  if (!paths.length) return false;
+
+  for (const path of paths) {
+    writeFileSync(join(resolve(repoPath), path), compileSafeStubForSurface(path));
+  }
+
+  await appendDeliveryEventState({
+    repoPath,
+    mastra,
+    event: {
+      type: 'tool_use',
+      tool: 'auto_repair',
+      ok: true,
+      stage,
+      paths,
+      output_summary:
+        'Reset stale out-of-plan delivery-generated surfaces to compile-safe preflight stubs after repo-wide verification failed.',
     },
   }).catch(() => undefined);
   return true;
@@ -5356,6 +5447,19 @@ async function applyBuildVerificationRepair({
       stage,
       taskPlan,
       currentTaskIndex: taskIndex,
+      failure,
+    }))
+  ) {
+    return true;
+  }
+
+  if (
+    taskPlan &&
+    (await repairStaleOutOfPlanVerificationSurfaces({
+      repoPath,
+      mastra,
+      stage,
+      taskPlan,
       failure,
     }))
   ) {

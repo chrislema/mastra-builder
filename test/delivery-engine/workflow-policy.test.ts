@@ -60,6 +60,7 @@ import {
   projectScaffoldHygiene,
   readBudgetBlockedToolCount,
   repairStaleDownstreamVerificationSurfaces,
+  repairStaleOutOfPlanVerificationSurfaces,
   repairUnknownNumberIntegerNarrowing,
   releaseGateForInvalidTesterOutput,
   releaseGateEvidenceCommandPlan,
@@ -86,6 +87,7 @@ import {
   sourceDocumentsDeclareShortLinkLifecycle,
   sourceDocumentsRequiredProfileKinds,
   staleDownstreamVerificationSurfacePaths,
+  staleOutOfPlanVerificationSurfacePaths,
   taskOwnedSurfaceRoleHygiene,
   taskPlanAcceptanceContractRegression,
   taskBoundarySurfaces,
@@ -7543,6 +7545,56 @@ test('out-of-plan verification failures are classified as stale workspace contam
     ]),
     'stale_workspace_verification',
   );
+});
+
+test('stale out-of-plan repair resets only delivery-generated surfaces', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-stale-out-of-plan-repair-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, '.delivery/artifacts'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/contracts.ts'), 'export type RunRequest = { prompt: string };\n');
+  writeFileSync(join(repoPath, 'src/validation.ts'), 'import { ERROR_MESSAGES } from "./contracts";\n');
+  writeFileSync(join(repoPath, 'src/user-authored.ts'), 'import { OLD_USER_SYMBOL } from "./contracts";\n');
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/note-old-validation.json'),
+    JSON.stringify(
+      {
+        artifact_type: 'implementation-note',
+        task: 'old-validation',
+        changes: [],
+        files_touched: ['src/validation.ts'],
+        assumptions: [],
+        verification: { performed: [], missing: [] },
+        risks: [],
+      },
+      null,
+      2,
+    ),
+  );
+  const plan = taskPlan([{ depends_on: [], owned_surfaces: ['src/contracts.ts'] }]);
+  const failure = [
+    'src/validation.ts(1,10): error TS2305: Module "./contracts" has no exported member ERROR_MESSAGES.',
+    'src/user-authored.ts(1,10): error TS2305: Module "./contracts" has no exported member OLD_USER_SYMBOL.',
+  ].join('\n');
+
+  assert.deepEqual(outOfPlanVerificationFailurePaths({ repoPath, taskPlan: plan, failure }), [
+    'src/validation.ts',
+    'src/user-authored.ts',
+  ]);
+  assert.deepEqual(staleOutOfPlanVerificationSurfacePaths({ repoPath, taskPlan: plan, failure }), [
+    'src/validation.ts',
+  ]);
+
+  assert.equal(
+    await repairStaleOutOfPlanVerificationSurfaces({
+      repoPath,
+      stage: 'build:T03-contracts',
+      taskPlan: plan,
+      failure,
+    }),
+    true,
+  );
+  assert.match(readFileSync(join(repoPath, 'src/validation.ts'), 'utf8'), /Delivery preflight stub/);
+  assert.equal(readFileSync(join(repoPath, 'src/user-authored.ts'), 'utf8'), 'import { OLD_USER_SYMBOL } from "./contracts";\n');
 });
 
 test('lifecycle status schema columns require D1 CHECK constraints', () => {

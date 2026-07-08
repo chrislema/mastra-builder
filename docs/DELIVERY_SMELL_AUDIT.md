@@ -42,6 +42,10 @@ tests were available as performed evidence:
 
 ## Current Audit Counts
 
+The zero-smell checkpoint below applied before the 2026-07-08 CLI Resume Run 3
+rewrote the active benchmark plan. It remains useful as the previous known-good
+cheap-audit state, but it is no longer the current active benchmark plan.
+
 After stopping generic file evidence from verifying behavior-shaped criteria,
 keeping behavior-only evidence gaps out of deterministic implementation retries,
 copying API route, frontend, provider, contract, and validation criteria onto
@@ -86,6 +90,36 @@ Remaining gaps, not current smells:
   current audit smells.
 - Remaining unverified contracts should be treated as future evidence coverage
   work, not as justification for reintroducing brittle workflow parsing.
+
+## Active Benchmark Counts After CLI Resume Run 3
+
+After the 2026-07-08 11:25 CDT resume run, the active benchmark task plan is
+`/Users/chrislema/mastra/projects/benchmark/.delivery/artifacts/task-plan.revision-1.json`.
+The cheap audit now reports:
+
+- Acceptance contracts: 266
+- Structured evidence: 25
+- Command/test evidence: 53
+- Generic file evidence: 20
+- Unverified contracts: 168
+- Behavior-shaped criteria: 121
+- Behavior criteria verified by generic file evidence: 0
+- Behavior criteria still unverified: 10
+- Pending behavior evidence: 79
+- Total audit smells: 15
+
+This is a new evidence-routing cluster from the revised plan, not the stale
+out-of-plan file blocker itself. The stale-file blocker should be fixed by
+delivery-note provenance and compile-safe stubbing; do not solve it by adding
+contract text parsing. Before another smell-cleanup pass, prioritize these two
+clusters:
+
+- `T03-contracts`: five structural contract criteria are still verified by
+  generic `src/contracts.ts` file evidence. Prefer narrow structural helpers or
+  an explicit contract behavior test task over source-token matching.
+- `T04-api-guards`: ten guard criteria are behavior-shaped but have no routed
+  evidence path. Prefer generated guard behavior tests, likely in
+  `test/guards.test.{ts,js}`, over deterministic implementation retries.
 
 ## Active Cleanup Queue
 
