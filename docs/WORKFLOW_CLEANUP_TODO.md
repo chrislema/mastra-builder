@@ -142,6 +142,9 @@ Do not redo these:
   deterministic implementation results, and remediation text:
   `implementation/evidence.ts`
 - Shared repository file reading: `repo-files.ts`
+- Implementation retry runtime, stale-surface repair, engine policy mismatch
+  detection, timeout remediation, and TypeScript narrowing auto-repair:
+  `implementation/retry-runtime.ts`
 
 ## Cleanup Rules
 

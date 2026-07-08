@@ -337,6 +337,9 @@ Completed extraction:
   and deterministic remediation text.
 - `repo-files.ts` for shared repo-relative file content reads used by workflow
   prompts and implementation evidence.
+- `implementation/retry-runtime.ts` for stale verification surface detection
+  and repair, engine policy mismatch detection, retry mode wrappers, timeout
+  remediation, judge repair prompts, and TypeScript narrowing auto-repair.
 
 Keep in build-task workflow:
 
