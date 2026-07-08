@@ -83,14 +83,52 @@ the next cleanup target below. Do not redo either completed extraction.
 
 ## Cleanup Sequence
 
-1. Reassess bigger cleanup.
-   - Identify remaining policy clusters inside `workflow.ts`.
-   - Prefer moving stable clusters into focused modules over adding new logic.
-   - Good candidates, in suggested order:
-     - Worker config policy and hygiene.
-     - Release-gate evidence planning beyond HTTP probe evaluation.
-     - Task-plan normalization policy.
-     - Generated slice dependency hygiene.
+1. Extract remaining workflow clusters in small commits.
+   - Latest-transcript release-gate fixtures and schema evidence.
+     - Move D1 fixture schema checks, fixture SQL generation, fixture file
+       writing, and transcript-version audit SQL into a focused release-gate
+       module.
+     - Keep source-policy gating in place.
+   - Runtime probe planning by source capability.
+     - Move short-link probes, latest transcript probes, profile upload probes,
+       and health/static asset probe selection out of `workflow.ts`.
+     - Keep `workflow.ts` responsible only for orchestration.
+   - Source-scoped task-plan contract injection.
+     - Move route/profile/run/latest/workflow contract text and source-policy
+       gating into a task-plan policy module.
+     - Preserve the exported `normalizeTaskPlanCloudflareWorkerContracts`
+       adapter while tests migrate.
+   - Route ownership and generated-slice normalization.
+     - Move route endpoint ownership, route integration task creation, final
+       Worker entrypoint task creation, and generated-slice dependency repair
+       into focused modules.
+   - Worker config and package hygiene.
+     - Move Wrangler config hygiene, env/binding mirroring, package scaffold
+       hygiene, Workers AI binding checks, and installed-package freshness into
+       Worker policy modules.
+   - Implementation retry and stale-verification policy.
+     - Move engine-policy mismatch classification, stale downstream repair,
+       reusable implementation artifacts, timeout salvage, and retry-mode
+       selection into implementation policy modules.
+   - Release-gate command planning.
+     - Move Wrangler command construction, D1 migration command planning,
+       generated Worker types checks, and static evidence results out of
+       `workflow.ts` after probe/fixture extraction.
+   - Planner prompt policy.
+     - Move project policy text, source-scoped safe assumptions, and plan-gate
+       repair prompt fragments into small prompt/policy builders rather than
+       inline template strings.
+   - Build/deployment orchestration.
+     - Keep Mastra step definitions in `workflow.ts`, but move child process
+       command plans, deployment report construction, and human-approval
+       formatting into focused modules.
+   - Acceptance/traceability memory handoff.
+     - Move acceptance-contract traceability packet assembly and memory handoff
+       helpers into modules that can be shared by build, review, and release
+       stages.
+   - Studio/API facade entry points.
+     - Keep public workflow start shape simple and verify defaults live in
+       `run-input.ts` or a Studio-facing facade, not in the large workflow.
    - Avoid touching all clusters in one commit.
 
 2. For each cleanup cluster.
