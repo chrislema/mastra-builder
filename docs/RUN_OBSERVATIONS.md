@@ -415,3 +415,63 @@ For each run, record:
   `docs/**` should be allowed without weakening public UI or runtime ownership.
 - Stop decision: add `docs/**` to engineer-owned surfaces with a focused role
   hygiene test, then run cheap checks before another paid delivery pass.
+
+### 2026-07-08 12:28 CDT - CLI Resume Run 8 Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved; pick up from existing generated files and
+  `.delivery` state instead of clearing the project.
+- Forward-progress question: after commit `9e3cc90` allows engineer-owned
+  `docs/**`, does the preserved benchmark pass planner revision role hygiene,
+  reach the build cursor, and then clear the earlier `T02-contracts-AC09`
+  deterministic retry loop from commit `78596d1`?
+- Cheap/static verification already tried before this run:
+  - `node --import tsx --test test/delivery-engine/workflow-policy.test.ts`
+    passed with the new technical-doc role-boundary test.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+  - Static probe against the active benchmark
+    `.delivery/artifacts/task-plan.revision-1.json` showed role hygiene
+    `passed: true`, with `T04` owning `docs/security-boundary.md` as engineer.
+- Guardrail: if this run stalls, classify the failure from the report first.
+  Do not add broad string matching in `workflow.ts`.
+- Workflow run ID: `f239812a-77fc-44f0-8fbd-22538972174a`
+- Delivery run ID: `run-mrccqi8z-6977b38d`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/f239812a-77fc-44f0-8fbd-22538972174a.json`
+- Result: `deliveryStatus` was `stuck`; workflow control path completed and
+  wrote a report.
+- Confirmed fixes:
+  - Commit `9e3cc90` worked: planner revision role hygiene passed, including
+    engineer-owned `docs/security-boundary.md`.
+  - Commit `78596d1` worked: `T02-contracts` completed on the first attempt
+    after typecheck/test passed, and the prior cross-task contract drift retry
+    loop did not repeat.
+- Build resume cursor: reused `T01`, `T02`, and `T05`; next task was
+  `T02-contracts` out of 18 tasks.
+- Newly completed stage: `T02-contracts` wrote `src/contracts.ts`; `npm run
+  typecheck` and `npm run test` passed; judge completed.
+- Farthest verified task: `T02-contracts` complete, followed by
+  `T05-frontend-shell-tests` with passing typecheck and `npm test` showing
+  `test/frontend-shell.test.js` had 9 passing tests.
+- New blocker: `T05-frontend-shell-tests` failed deterministic
+  `acceptance_contracts_satisfied` on copied source/UI criteria:
+  `public/index.html defines...`, `public/styles.css implements...`,
+  `Before any run...`, and `public/index.html loads public/app.js...`.
+- Failure class: harness evidence-task normalization bug. The test task owns
+  only `test/frontend-shell.test.js`; copied implementation contracts from
+  source task `T05` should remain source context/pending evidence, not
+  deterministic acceptance contracts that force the test task to prove or own
+  `public/` files.
+- Current hypothesis: frontend shell evidence tasks were not recognized by the
+  frontend behavior-test normalizer, and the evidence-task generator appended
+  source implementation criteria into `acceptance_criteria` instead of
+  `source_acceptance_criteria`.
+- Stop decision: fix evidence-task normalization structurally for provider,
+  API route, frontend, and validation behavior-test tasks so their own
+  `acceptance_criteria` stay test-shaped and copied source contracts move to
+  `source_acceptance_criteria`; add a focused regression test around the exact
+  `T05-frontend-shell-tests` shape before another paid run.

@@ -1611,9 +1611,9 @@ test('task plan normalization copies provider failure behavior criteria to a smo
   assert.match(providerTask.acceptance_criteria.join('\n'), /provider_error|timeout_or_network_error|missing_binding/);
   assert.match(testTask.acceptance_criteria.join('\n'), /provider_error/);
   assert.match(testTask.acceptance_criteria.join('\n'), /timeout_or_network_error/);
-  assert.match(testTask.acceptance_criteria.join('\n'), /missing_binding/);
-  assert.match(testTask.acceptance_criteria.join('\n'), /messages\.create/);
-  assert.match(testTask.acceptance_criteria.join('\n'), /OpenAI-compatible non-OK responses/);
+  assert.match((testTask.source_acceptance_criteria ?? []).join('\n'), /missing_binding/);
+  assert.match((testTask.source_acceptance_criteria ?? []).join('\n'), /messages\.create/);
+  assert.match((testTask.source_acceptance_criteria ?? []).join('\n'), /OpenAI-compatible non-OK responses/);
   assert.ok(byId.T05.depends_on.includes('T04-provider-behavior-tests'));
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
@@ -1661,10 +1661,10 @@ test('task plan normalization copies API route behavior criteria to a smoke-test
   assert.deepEqual(testTask.owned_surfaces, ['test/api-routes.test.ts']);
   assert.match(routeTask.acceptance_criteria.join('\n'), /exports the Worker API route module/);
   assert.match(routeTask.acceptance_criteria.join('\n'), /GET \/api\/health|POST \/api\/run/);
-  assert.match(testTask.acceptance_criteria.join('\n'), /GET \/api\/health/);
-  assert.match(testTask.acceptance_criteria.join('\n'), /GET \/api\/models/);
-  assert.match(testTask.acceptance_criteria.join('\n'), /POST \/api\/run/);
-  assert.match(testTask.acceptance_criteria.join('\n'), /unknown_model result before provider dispatch/);
+  assert.match((testTask.source_acceptance_criteria ?? []).join('\n'), /GET \/api\/health/);
+  assert.match((testTask.source_acceptance_criteria ?? []).join('\n'), /GET \/api\/models/);
+  assert.match((testTask.source_acceptance_criteria ?? []).join('\n'), /POST \/api\/run/);
+  assert.match((testTask.source_acceptance_criteria ?? []).join('\n'), /unknown_model result before provider dispatch/);
   assert.match([...(routeTask.source_acceptance_criteria ?? [])].join('\n'), /GET \/api\/models/);
   assert.ok(byId.T06.depends_on.includes('T05-api-route-behavior-tests'));
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
@@ -1702,7 +1702,7 @@ test('task plan normalization copies frontend behavior criteria to a UI behavior
   assert.deepEqual(testTask.depends_on, ['T06']);
   assert.deepEqual(testTask.owned_surfaces, ['test/frontend-behavior.test.js']);
   assert.match(frontendTask.acceptance_criteria.join('\n'), /One prompt\. Every model|All and Clear/);
-  assert.match(testTask.acceptance_criteria.join('\n'), /One prompt\. Every model|All and Clear/);
+  assert.match((testTask.source_acceptance_criteria ?? []).join('\n'), /One prompt\. Every model|All and Clear/);
   assert.ok(byId.T07.depends_on.includes('T06-frontend-behavior-tests'));
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
@@ -1737,9 +1737,9 @@ test('task plan normalization copies validation behavior criteria to contract te
   assert.deepEqual(contractTestTask.owned_surfaces, ['test/contracts.test.ts']);
   assert.deepEqual(validationTestTask.owned_surfaces, ['test/validation.test.ts']);
   assert.match(byId.T02.acceptance_criteria.join('\n'), /single-model execution contract/);
-  assert.match(contractTestTask.acceptance_criteria.join('\n'), /single-model execution contract/);
+  assert.match((contractTestTask.source_acceptance_criteria ?? []).join('\n'), /single-model execution contract/);
   assert.match(byId.T03.acceptance_criteria.join('\n'), /do not call provider adapters/);
-  assert.match(validationTestTask.acceptance_criteria.join('\n'), /do not call provider adapters/);
+  assert.match((validationTestTask.source_acceptance_criteria ?? []).join('\n'), /do not call provider adapters/);
   assert.ok(byId.T03.depends_on.includes('T02-contract-behavior-tests'));
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
@@ -4331,6 +4331,59 @@ test('frontend behavior contracts use frontend-focused test evidence instead of 
 
   assert.equal(frontendTestContracts[0].status, 'verified');
   assert.match(frontendTestContracts[0].evidence.join('\n'), /frontend behavior test evidence/);
+});
+
+test('frontend shell evidence tasks keep copied source UI contracts out of deterministic test-task gates', () => {
+  const sourceCriteria = [
+    'public/index.html defines a no-build vanilla UI with a slim header, wordmark, model selection region, setup region, results region, and mobile navigation controls.',
+    'public/styles.css implements a light theme with warm gold accent #fcb040, near-black ink, condensed uppercase styling for headings/tabs/wordmark, rounded cards, subtle borders, and gentle animation states.',
+    'Before any run, the Results region shows an empty state with the phrase "One prompt. Every model."',
+    'public/index.html loads public/app.js as the no-build vanilla behavior script.',
+  ];
+  const plan = taskPlan([
+    {
+      id: 'T05',
+      owner: 'designer',
+      depends_on: ['T01'],
+      owned_surfaces: ['public/index.html', 'public/styles.css'],
+      acceptance_criteria: sourceCriteria,
+    },
+    {
+      id: 'T05-frontend-shell-tests',
+      owner: 'engineer',
+      depends_on: ['T05'],
+      owned_surfaces: ['test/frontend-shell.test.js'],
+      acceptance_criteria: [
+        'test/frontend-shell.test.js exercises the vanilla public UI shell with DOM fixtures instead of a frontend framework build.',
+        'test/frontend-shell.test.js proves the static shell includes the slim header, wordmark, model selection region, setup region, results region, mobile navigation controls, desktop run control, mobile run bar, and empty state phrase "One prompt. Every model."',
+        'npm test passes and includes frontend shell behavior coverage.',
+        ...sourceCriteria,
+      ],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const shellTask = normalized.tasks.find((task) => task.id === 'T05-frontend-shell-tests');
+  assert.ok(shellTask);
+
+  assert.doesNotMatch(shellTask.acceptance_criteria.join('\n'), /public\/index\.html defines/);
+  assert.doesNotMatch(shellTask.acceptance_criteria.join('\n'), /public\/styles\.css implements/);
+  assert.match((shellTask.source_acceptance_criteria ?? []).join('\n'), /public\/index\.html defines/);
+  assert.match((shellTask.source_acceptance_criteria ?? []).join('\n'), /public\/styles\.css implements/);
+
+  const contracts = acceptanceContractsForTask({
+    task: shellTask,
+    verification: {
+      performed: ['npm run test passed: test/frontend-shell.test.js > frontend shell includes static shell selectors'],
+      missing: [],
+    },
+  });
+
+  assert.doesNotMatch(
+    contracts.map((contract) => contract.criterion).join('\n'),
+    /public\/index\.html defines|public\/styles\.css implements/,
+  );
+  assert.equal(contracts.every((contract) => contract.status === 'verified'), true);
 });
 
 test('validation behavior contracts use validation-focused test evidence instead of generic test success', () => {

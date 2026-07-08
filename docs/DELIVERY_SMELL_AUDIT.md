@@ -144,6 +144,33 @@ Remaining unverified rows are visible gap counters, not current smell blockers.
 The next paid run should answer whether `T02-contracts` can complete and move
 past the prior deterministic AC09 loop.
 
+## Active Benchmark Counts After Evidence-Task Source Contract Fix
+
+After CLI Resume Run 8, evidence-test tasks no longer carry copied source
+implementation contracts in `acceptance_criteria`. Provider, API route,
+frontend, and validation behavior-test tasks keep their own test-shaped
+acceptance criteria, and copied source contracts move to
+`source_acceptance_criteria` for context, pending-evidence tracking, and
+handoff continuity.
+
+The active benchmark cheap audit now reports:
+
+- Acceptance contracts: 172
+- Structured evidence: 21
+- Command/test evidence: 44
+- Generic file evidence: 18
+- Unverified contracts: 89
+- Behavior-shaped criteria: 71
+- Behavior criteria verified by generic file evidence: 0
+- Behavior criteria still unverified: 0
+- Pending behavior evidence: 46
+- Total audit smells: 0
+
+This specifically addresses the `T05-frontend-shell-tests` stall where
+`test/frontend-shell.test.js` passed but deterministic gates still retried the
+test task for `public/index.html` and `public/styles.css` contracts that belong
+to the source designer task.
+
 ## Active Cleanup Queue
 
 1. Add the repeatable smell audit module, CLI command, tests, and this doc.

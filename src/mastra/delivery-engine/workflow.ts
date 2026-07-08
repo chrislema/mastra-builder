@@ -1478,6 +1478,26 @@ function appendTaskAcceptanceCriteria(task: Task, criteria: string[]) {
   return acceptance_criteria.length === task.acceptance_criteria.length ? task : { ...task, acceptance_criteria };
 }
 
+function appendTaskSourceAcceptanceCriteria(task: Task, criteria: string[]) {
+  const sourceCriteria = criteria.filter(Boolean);
+  if (!sourceCriteria.length) return task;
+
+  const sourceCriterionSet = new Set(sourceCriteria);
+  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !sourceCriterionSet.has(criterion));
+  const source_acceptance_criteria = Array.from(new Set([...(task.source_acceptance_criteria ?? []), ...sourceCriteria]));
+  const unchanged =
+    acceptance_criteria.length === task.acceptance_criteria.length &&
+    source_acceptance_criteria.length === (task.source_acceptance_criteria?.length ?? 0);
+
+  if (unchanged) return task;
+
+  return {
+    ...task,
+    acceptance_criteria,
+    source_acceptance_criteria,
+  };
+}
+
 function publicUiRawAdminTokenCriterion(criterion: string) {
   return (
     /\bpublic\/app\.js\b/i.test(criterion) &&
@@ -2481,9 +2501,9 @@ function providerAdapterBehaviorTestTask(providerTask: Task, testId: string, cri
         `${testSurface} proves provider adapter failures normalize to provider_error and timeout_or_network_error RunResult values with client-safe messages from src/contracts.ts.`,
         `${testSurface} proves missing keyed secrets and missing Workers AI binding fail closed before external provider calls.`,
         'npm test passes and includes provider adapter behavior coverage.',
-        ...criteria,
       ]),
     ),
+    source_acceptance_criteria: Array.from(new Set(criteria)),
     owned_surfaces: [testSurface],
   };
 }
@@ -2515,7 +2535,7 @@ function withProviderAdapterBehaviorTestTasks(tasks: Task[]) {
 
     next = next.map((task) => {
       if (task.id === testId) {
-        const updated = appendTaskAcceptanceCriteria(task, evidenceCriteria);
+        const updated = appendTaskSourceAcceptanceCriteria(task, evidenceCriteria);
         if (updated !== task) changed = true;
         return updated;
       }
@@ -2562,9 +2582,9 @@ function apiRouteBehaviorTestTask(routeTask: Task, testId: string, criteria: str
         `${testSurface} imports or exercises the Worker route surface with fake env bindings and no real provider calls.`,
         `${testSurface} proves /api/health, /api/models, and /api/run status codes and JSON response shapes, including validation_error and provider-failure paths when those routes exist.`,
         'npm test passes and includes API route behavior coverage.',
-        ...criteria,
       ]),
     ),
+    source_acceptance_criteria: Array.from(new Set(criteria)),
     owned_surfaces: [testSurface],
   };
 }
@@ -2613,7 +2633,7 @@ function withApiRouteBehaviorTestTasks(tasks: Task[]) {
 
     next = next.map((task) => {
       if (task.id === testId) {
-        const updated = appendTaskAcceptanceCriteria(task, behaviorCriteria);
+        const updated = appendTaskSourceAcceptanceCriteria(task, behaviorCriteria);
         if (updated !== task) changed = true;
         return updated;
       }
@@ -2636,7 +2656,7 @@ function taskLooksLikeFrontendBehaviorTest(task: Task, frontendTaskId: string) {
     task.owner === 'engineer' &&
     task.depends_on.includes(frontendTaskId) &&
     taskOwnedBoundaryPaths(task).some((path) => /^test\/.*(?:frontend|ui|dom|browser).*\.test\.[cm]?[jt]s$/i.test(path)) &&
-    /\b(?:frontend behavior|ui behavior|dom|browser|public\/app\.js|run controls?|result cards?)\b/i.test(
+    /\b(?:frontend behavior|frontend shell|ui behavior|ui shell|static shell|layout behavior|dom|browser|public\/app\.js|run controls?|result cards?)\b/i.test(
       [task.deliverable, ...task.acceptance_criteria, ...task.owned_surfaces].join('\n'),
     )
   );
@@ -2656,9 +2676,9 @@ function frontendBehaviorTestTask(frontendTask: Task, testId: string, criteria: 
         `${testSurface} exercises the vanilla public UI with DOM fixtures and mocked fetch/FileReader behavior instead of a frontend framework build.`,
         `${testSurface} proves UI behavior contracts for state changes, run controls, result cards, sorting/highlighting, and visible recovery messages that exist in the source task.`,
         'npm test passes and includes frontend behavior coverage.',
-        ...criteria,
       ]),
     ),
+    source_acceptance_criteria: Array.from(new Set(criteria)),
     owned_surfaces: [testSurface],
   };
 }
@@ -2690,7 +2710,7 @@ function withFrontendBehaviorTestTasks(tasks: Task[]) {
 
     next = next.map((task) => {
       if (task.id === testId) {
-        const updated = appendTaskAcceptanceCriteria(task, evidenceCriteria);
+        const updated = appendTaskSourceAcceptanceCriteria(task, evidenceCriteria);
         if (updated !== task) changed = true;
         return updated;
       }
@@ -2740,9 +2760,9 @@ function validationBehaviorTestTask(sourceTask: Task, testId: string, testSurfac
         `${testSurface} imports the source contract or validation helpers directly and uses fake inputs with no real provider calls.`,
         `${testSurface} proves validation, client-safe error, redaction, and single-model behavior contracts owned by the source task.`,
         'npm test passes and includes validation/domain contract behavior coverage.',
-        ...criteria,
       ]),
     ),
+    source_acceptance_criteria: Array.from(new Set(criteria)),
     owned_surfaces: [testSurface],
   };
 }
@@ -2778,7 +2798,7 @@ function withValidationBehaviorTestTasks(tasks: Task[]) {
 
     next = next.map((task) => {
       if (task.id === testId) {
-        const updated = appendTaskAcceptanceCriteria(task, evidenceCriteria);
+        const updated = appendTaskSourceAcceptanceCriteria(task, evidenceCriteria);
         if (updated !== task) changed = true;
         return updated;
       }

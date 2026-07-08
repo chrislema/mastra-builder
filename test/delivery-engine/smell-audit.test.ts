@@ -153,7 +153,7 @@ test('smell audit treats implementation behavior copied to a dependent evidence 
   const implementationContract = report.smells.find((smell) => smell.task === 'T06');
 
   assert.equal(report.summary.behaviorUnverified, 0);
-  assert.equal(report.summary.pendingBehaviorEvidence, 2);
+  assert.equal(report.summary.pendingBehaviorEvidence, 1);
   assert.equal(implementationContract, undefined);
   assert.equal(report.summary.smellCount, 0);
 });
