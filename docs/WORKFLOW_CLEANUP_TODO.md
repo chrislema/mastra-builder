@@ -120,6 +120,8 @@ Do not redo these:
   `planning/route-task-policy.ts`
 - Shared task acceptance criteria append helper:
   `planning/task-criteria-policy.ts`
+- Cloudflare Worker contract normalization and task verification criteria:
+  `planning/cloudflare-worker-contracts-policy.ts`
 
 ## Cleanup Rules
 

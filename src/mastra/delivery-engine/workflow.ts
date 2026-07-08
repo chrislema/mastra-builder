@@ -97,59 +97,18 @@ import {
 } from './planning/readout-policy';
 import {
   acceptanceContractId,
-  generatedWorkerTypeOwnershipCriterion,
   preserveTaskPlanAcceptanceContracts,
   taskPlanAcceptanceContractRegression,
 } from './planning/acceptance-contract-preservation';
 import {
   generatedSliceDependencyHygiene,
   normalizeTaskPlanGeneratedSliceDependencies,
-  preEntrypointBoundaryDependencyId,
-  routeIntegrationDependencyId,
 } from './planning/generated-slice-policy';
 import { taskPlanDeterministicResults } from './planning/task-plan-gates';
 import { pagesFunctionsExceptionHygiene } from './planning/pages-policy';
 import { ownedSurfaceHygiene } from './planning/owned-surface-policy';
 import { normalizeTaskPlanRoleBoundaries, taskOwnedSurfaceRoleHygiene } from './planning/role-boundary-policy';
-import {
-  canonicalizeProfileMigrationCriterionSurface,
-  withCanonicalCompletedEmptyStatus,
-  withoutAiOutputValidationCriteria,
-  withoutBoundaryAuthorityDriftCriteria,
-  withoutLifecycleDriftCriteria,
-  withoutPersistentRunLifecycleCriteria,
-  withoutPublicUiRawAdminTokenCriteria,
-  withoutRootScaffoldWorkflowExecutionCriteria,
-  withoutSessionRouteCrossSurfaceCriteria,
-  withoutSessionSecretFallbackCriteria,
-  withoutWorkflowExportDriftCriteria,
-} from './planning/cloudflare-contract-criteria-policy';
-import {
-  withApiRouteBehaviorTestTasks,
-  withFrontendBehaviorTestTasks,
-  withProviderAdapterBehaviorTestTasks,
-  withValidationBehaviorTestTasks,
-} from './planning/behavior-evidence-task-policy';
-import {
-  routeBoundaryConsistencyHygiene,
-  taskHasRouteIntegrationContract,
-} from './planning/route-boundary-policy';
-import {
-  routeEndpointContractCriterion,
-  routeEndpointCriterionBelongsToTask,
-  taskRouteEndpointSourceCriteria,
-  withoutRouteOwnershipDriftCriteria,
-  withoutSchedulerWorkflowExecutionCriteria,
-} from './planning/route-criteria-policy';
-import {
-  withAuthSessionTask,
-  withCloudflareWorkerDependencyContracts,
-  withPreEntrypointGeneratedSliceDependencies,
-  withProfileSummaryTask,
-  withRouteIntegrationTask,
-  withWorkerEntrypointIntegrationTask,
-} from './planning/route-task-policy';
-import { appendTaskAcceptanceCriteria } from './planning/task-criteria-policy';
+import { routeBoundaryConsistencyHygiene } from './planning/route-boundary-policy';
 import { normalizeTaskPlanLargeStorageTasks } from './planning/large-task-policy';
 import { configSchemaTaskSplitHygiene, normalizeTaskPlanConfigSchemaTasks } from './planning/config-schema-policy';
 import { normalizeTaskPlanOperatorDocumentation, operatorDocumentationHygiene } from './planning/operator-documentation-policy';
@@ -159,11 +118,14 @@ import {
   profileContractProducerSurfaces,
 } from './planning/profile-contract-policy';
 import {
+  normalizeTaskPlanCloudflareWorkerContracts,
+  taskVerificationAcceptanceContractCriteria,
+} from './planning/cloudflare-worker-contracts-policy';
+import {
   legacyProjectScaffoldHygiene,
   normalizeTaskPlanScaffoldDependencies,
   ownsTypeScriptInputSurface,
   projectScaffoldHygiene,
-  taskIsRootScaffold,
   workerSourceSurfaceIsConcrete,
 } from './planning/scaffold-policy';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
@@ -209,7 +171,6 @@ import {
   type TaskPlan,
 } from './workflow-schemas';
 import {
-  acceptanceContractReferences,
   acceptanceContractsForCriteria,
   verificationWithAcceptanceContractGaps,
 } from './acceptance-contracts';
@@ -266,48 +227,15 @@ import {
   type ReleaseGatePublicAssetProbeFile,
 } from './release-gate-runtime-probe-plan';
 import {
-  sourceScopedDeliveryContracts,
-  taskPlanSourceContractCriteria as sourceTaskPlanContractCriteria,
-  type SourceScopedDeliveryContracts,
-} from './task-plan-source-contracts';
-import {
   concreteOwnedSurfacePath,
   effectiveOwnedSurfaces,
   normalizedOwnedSurfaces,
-  taskAcceptanceText,
-  taskAuthBoundarySurface,
-  taskD1MigrationSurface,
   taskOwnedBoundaryPaths,
-  taskOwnsAiPipelineSurface,
-  taskOwnsAiValidationSurface,
-  taskOwnsAuthSurface,
-  taskOwnsCandidateRoute,
-  taskOwnsContractSurface,
   taskOwnsD1MigrationFile,
-  taskOwnsIndexSurface,
-  taskOwnsLatestRoute,
-  taskOwnsManualRunRoute,
-  taskOwnsOperatorAuthBoundary,
   taskOwnsExactSurface as ownsExactSurface,
-  taskOwnsProfileRepositorySurface,
-  taskOwnsProfileRoute,
-  taskOwnsPublicAppSurface,
-  taskOwnsReadme,
-  taskOwnsRegenerationRoute,
-  taskOwnsRouterSurface,
-  taskOwnsRunRepositorySurface,
-  taskOwnsRunRoute,
-  taskOwnsSchedulerSurface,
-  taskOwnsSessionRoute,
-  taskOwnsTranscriptRepositorySurface,
   taskOwnsWorkerConfigFile,
-  taskOwnsWorkflowExecutionSurface,
-  taskOwnsWorkflowSurface,
 } from './task-plan-surface-policy';
-import { generatedSliceAcceptanceCriterion } from './task-plan-generated-slices';
-import {
-  topoOrderTasks,
-} from './task-plan-dependencies';
+import { topoOrderTasks } from './task-plan-dependencies';
 import {
   releaseGateTranscriptFixtureAvailable as transcriptFixtureAvailable,
   releaseGateTranscriptFixtureSchemaGaps as transcriptFixtureSchemaGaps,
@@ -404,6 +332,7 @@ export {
 } from './planning/generated-slice-policy';
 export { taskPlanDeterministicResults } from './planning/task-plan-gates';
 export { routeBoundaryConsistencyHygiene } from './planning/route-boundary-policy';
+export { normalizeTaskPlanCloudflareWorkerContracts } from './planning/cloudflare-worker-contracts-policy';
 
 const execFileAsync = promisify(execFile);
 
@@ -518,50 +447,6 @@ const checkSummaries = (results: DeterministicGateResult[], suffix?: string): Ch
     reason: check.reason ?? 'deterministic check',
   }));
 
-function withoutGeneratedWorkerTypeOwnership(task: Task) {
-  const owned_surfaces = task.owned_surfaces.filter(
-    (surface) => normalizeDeliveryPathReference(surface) !== workerConfigTaskPacketPolicy().generated_types.output,
-  );
-  const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !generatedWorkerTypeOwnershipCriterion(criterion));
-  const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
-    (criterion) => !generatedWorkerTypeOwnershipCriterion(criterion),
-  );
-
-  const unchanged =
-    owned_surfaces.length === task.owned_surfaces.length &&
-    acceptance_criteria.length === task.acceptance_criteria.length &&
-    (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0);
-
-  if (unchanged) return task;
-
-  return {
-    ...task,
-    owned_surfaces,
-    acceptance_criteria,
-    ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
-  };
-}
-
-function sourceAcceptanceCriterionBelongsToTask(task: Task, criterion: string) {
-  if (generatedSliceAcceptanceCriterion(criterion)) return false;
-  if (routeEndpointContractCriterion(criterion)) return routeEndpointCriterionBelongsToTask(task, criterion);
-
-  const references = acceptanceContractReferences(criterion).map(normalizeDeliveryPathReference);
-  if (!references.length) return false;
-
-  const owned = new Set(normalizedOwnedSurfaces(task));
-  return references.every((reference) => owned.has(reference));
-}
-
-function taskVerificationAcceptanceContractCriteria(task: Task) {
-  return Array.from(
-    new Set([
-      ...(task.source_acceptance_criteria ?? []).filter((criterion) => sourceAcceptanceCriterionBelongsToTask(task, criterion)),
-      ...task.acceptance_criteria.filter((criterion) => !generatedSliceAcceptanceCriterion(criterion)),
-    ]),
-  );
-}
-
 function taskOwnsStatePersistenceSurface(task?: Task) {
   if (!task) return true;
   return taskOwnedBoundaryPaths(task).some(
@@ -571,274 +456,6 @@ function taskOwnsStatePersistenceSurface(task?: Task) {
       path.startsWith('src/workflows/') ||
       /\bdurable|do-state|state-store\b/i.test(path),
   );
-}
-
-function taskPlanDeclaresWorkerWorkflow(tasks: Task[]) {
-  return tasks.some(
-    (task) =>
-      taskOwnsWorkflowSurface(task) ||
-      /\b(?:WorkflowEntrypoint|WeeklyWorkflow|WEEKLY_WORKFLOW|workflows\.class_name|Workers Workflows?)\b/i.test(
-        taskAcceptanceText(task),
-      ),
-  );
-}
-
-function taskPlanHasPersistentRunLifecycle(tasks: Task[]) {
-  return tasks.some(
-    (task) =>
-      taskOwnsWorkflowSurface(task) ||
-      taskOwnsD1MigrationFile(task) ||
-      taskOwnsRunRepositorySurface(task) ||
-      taskOwnsTranscriptRepositorySurface(task),
-  );
-}
-
-function taskWorkflowImplementationSurface(task: Task) {
-  return (
-    taskOwnedBoundaryPaths(task).find((path) =>
-      /^src\/(?:(?:workflows\/)?weeklyWorkflow|workflow)\.[cm]?[jt]s$/i.test(path),
-    ) ?? 'src/workflow.js'
-  );
-}
-
-function sourceContractCriteriaForTask(
-  task: Task,
-  context: {
-    contractScope: SourceScopedDeliveryContracts;
-    hasAuthBoundary: boolean;
-    hasProfileState: boolean;
-    hasAiValidationSurface: boolean;
-    hasWorkerWorkflow: boolean;
-    hasPersistentRunLifecycle: boolean;
-    indexOwnerCount: number;
-  },
-) {
-  const authSurface = taskAuthBoundarySurface(task);
-  return sourceTaskPlanContractCriteria({
-    contractScope: context.contractScope,
-    hasAuthBoundary: context.hasAuthBoundary,
-    hasProfileState: context.hasProfileState,
-    hasAiValidationSurface: context.hasAiValidationSurface,
-    hasWorkerWorkflow: context.hasWorkerWorkflow,
-    hasPersistentRunLifecycle: context.hasPersistentRunLifecycle,
-    indexOwnerCount: context.indexOwnerCount,
-    ownsOperatorAuthBoundary: taskOwnsOperatorAuthBoundary(task),
-    authSurface,
-    authBoundaryIsInternalHelper: !taskOwnsAuthSurface(task) || /\/adminAuth\.[cm]?[jt]s$/i.test(authSurface),
-    ownsPublicAppSurface: taskOwnsPublicAppSurface(task),
-    ownsD1MigrationFile: taskOwnsD1MigrationFile(task),
-    migrationSurface: taskD1MigrationSurface(task) ?? 'migrations/0001_schema.sql',
-    ownsProfileRoute: taskOwnsProfileRoute(task),
-    ownsManualRunRoute: taskOwnsManualRunRoute(task),
-    ownsLatestRoute: taskOwnsLatestRoute(task),
-    ownsRegenerationRoute: taskOwnsRegenerationRoute(task),
-    ownsCandidateRoute: taskOwnsCandidateRoute(task),
-    ownsProfileRepositorySurface: taskOwnsProfileRepositorySurface(task),
-    ownsContractSurface: taskOwnsContractSurface(task),
-    ownsRunRepositorySurface: taskOwnsRunRepositorySurface(task),
-    ownsSchedulerSurface: taskOwnsSchedulerSurface(task),
-    ownsWorkflowExecutionSurface: taskOwnsWorkflowExecutionSurface(task),
-    isRootScaffold: taskIsRootScaffold(task),
-    workflowSurface: taskWorkflowImplementationSurface(task),
-    ownsRunRoute: taskOwnsRunRoute(task),
-    ownsTranscriptRepositorySurface: taskOwnsTranscriptRepositorySurface(task),
-    ownsAiValidationSurface: taskOwnsAiValidationSurface(task),
-    ownsAiPipelineSurface: taskOwnsAiPipelineSurface(task),
-    ownsRouterSurface: taskOwnsRouterSurface(task),
-    hasRouteIntegrationContract: taskHasRouteIntegrationContract(task),
-    ownsWorkerConfigFile: taskOwnsWorkerConfigFile(task),
-    ownsIndexSurface: taskOwnsIndexSurface(task),
-    ownsReadme: taskOwnsReadme(task),
-    sourceRouteEndpointCriteria: taskRouteEndpointSourceCriteria(task),
-  });
-}
-
-export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, sourcePolicy?: SourcePolicy): TaskPlan {
-  let changed = false;
-  const contractScope = sourceScopedDeliveryContracts(sourcePolicy);
-  const indexOwnerCount = taskPlan.tasks.filter(taskOwnsIndexSurface).length;
-  const hasAuthBoundary = taskPlan.tasks.some(taskOwnsOperatorAuthBoundary);
-  const hasProfileState =
-    contractScope.profileState &&
-    taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
-  const hasAiValidationSurface = taskPlan.tasks.some(taskOwnsAiValidationSurface);
-  const hasWorkerWorkflow = taskPlanDeclaresWorkerWorkflow(taskPlan.tasks);
-  const hasPersistentRunLifecycle = contractScope.latestTranscript && taskPlanHasPersistentRunLifecycle(taskPlan.tasks);
-
-  let tasks = taskPlan.tasks.map((task) => {
-    const statusCanonicalized = withCanonicalCompletedEmptyStatus(task);
-    if (statusCanonicalized !== task) {
-      changed = true;
-      task = statusCanonicalized;
-    }
-
-    if (!hasPersistentRunLifecycle) {
-      const lifecycleSanitized = withoutPersistentRunLifecycleCriteria(task);
-      if (lifecycleSanitized !== task) {
-        changed = true;
-        task = lifecycleSanitized;
-      }
-    }
-
-    const sessionSecretSanitized = withoutSessionSecretFallbackCriteria(task);
-    if (sessionSecretSanitized !== task) {
-      changed = true;
-      task = sessionSecretSanitized;
-    }
-
-    const rootSanitized = withoutRootScaffoldWorkflowExecutionCriteria(task);
-    if (rootSanitized !== task) {
-      changed = true;
-      task = rootSanitized;
-    }
-
-    const generatedTypeSanitized = withoutGeneratedWorkerTypeOwnership(task);
-    if (generatedTypeSanitized !== task) {
-      changed = true;
-      task = generatedTypeSanitized;
-    }
-
-    if (taskOwnsPublicAppSurface(task)) {
-      const sanitized = withoutPublicUiRawAdminTokenCriteria(task);
-      if (sanitized !== task) {
-        changed = true;
-        task = sanitized;
-      }
-    }
-
-    if (taskOwnsSessionRoute(task)) {
-      const sanitized = withoutSessionRouteCrossSurfaceCriteria(task);
-      if (sanitized !== task) {
-        changed = true;
-        task = sanitized;
-      }
-    }
-
-    const lifecycleSanitized = withoutLifecycleDriftCriteria(task);
-    if (lifecycleSanitized !== task) {
-      changed = true;
-      task = lifecycleSanitized;
-    }
-
-    const workflowExportSanitized = withoutWorkflowExportDriftCriteria(task);
-    if (workflowExportSanitized !== task) {
-      changed = true;
-      task = workflowExportSanitized;
-    }
-
-    const boundaryAuthoritySanitized = withoutBoundaryAuthorityDriftCriteria(task);
-    if (boundaryAuthoritySanitized !== task) {
-      changed = true;
-      task = boundaryAuthoritySanitized;
-    }
-
-    const schedulerSanitized = withoutSchedulerWorkflowExecutionCriteria(task);
-    if (schedulerSanitized !== task) {
-      changed = true;
-      task = schedulerSanitized;
-    }
-
-    const routeOwnershipSanitized = withoutRouteOwnershipDriftCriteria(task);
-    if (routeOwnershipSanitized !== task) {
-      changed = true;
-      task = routeOwnershipSanitized;
-    }
-
-    const migrationCanonicalized = canonicalizeProfileMigrationCriterionSurface(task);
-    if (migrationCanonicalized !== task) {
-      changed = true;
-      task = migrationCanonicalized;
-    }
-
-    if (hasAiValidationSurface && !taskOwnsAiValidationSurface(task)) {
-      const sanitized = withoutAiOutputValidationCriteria(task);
-      if (sanitized !== task) {
-        changed = true;
-        task = sanitized;
-      }
-    }
-
-    const criteria = sourceContractCriteriaForTask(task, {
-      contractScope,
-      hasAuthBoundary,
-      hasProfileState,
-      hasAiValidationSurface,
-      hasWorkerWorkflow,
-      hasPersistentRunLifecycle,
-      indexOwnerCount,
-    });
-
-    if (!criteria.length) return task;
-    const next = appendTaskAcceptanceCriteria(task, criteria);
-    if (next !== task) changed = true;
-    return next;
-  });
-
-  const withSession = withAuthSessionTask(taskPlan, tasks);
-  if (withSession.changed) {
-    changed = true;
-    tasks = withSession.tasks;
-  }
-
-  const withIntegration = withRouteIntegrationTask(taskPlan, tasks, contractScope);
-  if (withIntegration.changed) {
-    changed = true;
-    tasks = withIntegration.tasks;
-  }
-
-  if (contractScope.profileState) {
-    const withSummary = withProfileSummaryTask(taskPlan, tasks);
-    if (withSummary.changed) {
-      changed = true;
-      tasks = withSummary.tasks;
-    }
-  }
-
-  if (contractScope.latestTranscript) {
-    const withEntrypoint = withWorkerEntrypointIntegrationTask(taskPlan, tasks);
-    if (withEntrypoint.changed) {
-      changed = true;
-      tasks = withEntrypoint.tasks;
-    }
-  }
-
-  const withProviderBehaviorTests = withProviderAdapterBehaviorTestTasks(tasks);
-  if (withProviderBehaviorTests.changed) {
-    changed = true;
-    tasks = withProviderBehaviorTests.tasks;
-  }
-
-  const withApiRouteBehaviorTests = withApiRouteBehaviorTestTasks(tasks);
-  if (withApiRouteBehaviorTests.changed) {
-    changed = true;
-    tasks = withApiRouteBehaviorTests.tasks;
-  }
-
-  const withFrontendBehaviorTests = withFrontendBehaviorTestTasks(tasks);
-  if (withFrontendBehaviorTests.changed) {
-    changed = true;
-    tasks = withFrontendBehaviorTests.tasks;
-  }
-
-  const withValidationBehaviorTests = withValidationBehaviorTestTasks(tasks);
-  if (withValidationBehaviorTests.changed) {
-    changed = true;
-    tasks = withValidationBehaviorTests.tasks;
-  }
-
-  const withDependencies = withCloudflareWorkerDependencyContracts(tasks);
-  if (withDependencies.changed) {
-    changed = true;
-    tasks = withDependencies.tasks;
-  }
-
-  const withPreEntrypointDependencies = withPreEntrypointGeneratedSliceDependencies(taskPlan, tasks);
-  if (withPreEntrypointDependencies.changed) {
-    changed = true;
-    tasks = withPreEntrypointDependencies.tasks;
-  }
-
-  return changed ? { ...taskPlan, tasks } : taskPlan;
 }
 
 function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {

@@ -262,6 +262,8 @@ Completed extraction:
   Cloudflare route dependency rewiring.
 - `planning/task-criteria-policy.ts` for shared task acceptance criteria
   append semantics.
+- `planning/cloudflare-worker-contracts-policy.ts` for the full Cloudflare
+  Worker contract normalizer and task verification acceptance criteria.
 
 Keep in planning workflow:
 
