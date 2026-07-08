@@ -133,6 +133,9 @@ Do not redo these:
   `implementation/task-packet.ts`
 - Implementation deterministic gates for route, Workflow, profile-kind, and
   lifecycle status structure: `implementation/deterministic-gates.ts`
+- Reusable implementation artifacts, build resume cursor policy, prior stopped
+  task detection, and touched-file inference:
+  `implementation/reusable-artifacts.ts`
 
 ## Cleanup Rules
 

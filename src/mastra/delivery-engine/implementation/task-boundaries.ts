@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { matchesAny } from '../checks';
 import { ownsTypeScriptInputSurface, workerSourceSurfaceIsConcrete } from '../planning/scaffold-policy';
 import { appendDeliveryEventState } from '../state-service';
 import {
@@ -90,6 +91,10 @@ export function taskSourceBoundarySurfaces(repoPath: string, task: Task) {
     const path = concreteOwnedSurfacePath(surface);
     return !path || !generated.has(path);
   });
+}
+
+export function taskBoundaryAllowsRepairPath(repoPath: string, task: Task, path: string) {
+  return matchesAny(path, taskBoundarySurfaces(repoPath, task));
 }
 
 function taskBoundaryCanConfigureWorkersAi(repoPath: string, task: Task) {

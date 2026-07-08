@@ -326,6 +326,9 @@ Completed extraction:
 - `implementation/deterministic-gates.ts` for route integration, Workflow step
   integration, WorkflowEntrypoint imports, profile-kind contract alignment, and
   lifecycle status CHECK constraint gates.
+- `implementation/reusable-artifacts.ts` for prior stopped task detection,
+  reusable implementation artifact validation, build resume cursor planning,
+  and touched-file inference from implementation-stage events.
 
 Keep in build-task workflow:
 
