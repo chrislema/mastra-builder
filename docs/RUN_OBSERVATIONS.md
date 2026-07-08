@@ -250,6 +250,39 @@ For each run, record:
     are separate from the stale-file resume blocker.
 - Guardrail: if this run stalls, classify the failure from the report first.
   Do not add broad string matching in `workflow.ts`.
+- Workflow run ID: `6c40fcd1-e676-45c5-ba79-c1a535685d27`
+- Delivery run ID: `run-mrcdeqju-f58f244e`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/6c40fcd1-e676-45c5-ba79-c1a535685d27.json`
+- Result: `deliveryStatus` was `stuck`; workflow control path completed and
+  wrote a report.
+- Confirmed fix from commit `57a3f35`: the run cleared the prior
+  `T05-frontend-shell-tests` deterministic retry loop. The revised plan reused
+  `T01`, `T02`, `T05`, and `T02-contracts`, then completed and judged
+  `T05-shell-dom-tests`.
+- New progress: `T05-shell-dom-tests` wrote `test/frontend-shell.test.js`,
+  `npm run typecheck` passed, `npm run test` passed with 6 tests, and the
+  implementation judge completed.
+- Farthest verified task: `T05-shell-dom-tests` complete. This is further than
+  Run 8.
+- New blocker: `T02-contracts-contract-behavior-tests` failed all three
+  attempts because `npm run test` errored with `Runner
+  @cloudflare/vitest-pool-workers is not supported` for
+  `test/contracts.test.ts`. The test file is pure domain-contract logic and
+  imports `src/contracts.ts`; it should not require the Cloudflare Workers pool.
+- Failure class: generated project test-environment / harness policy gap. The
+  generated `vitest.config.ts` routes `test/**/*.test.ts` through the Workers
+  pool, so pure Node/contract TypeScript tests are sent to the wrong runner.
+- Current hypothesis: the Worker scaffold should separate test globs by runtime
+  environment: Worker/API integration tests use the Workers pool, frontend tests
+  use jsdom, and pure contract/domain tests use Node. This should be fixed as a
+  scaffold/test-plan policy, not by asking the model to keep patching the same
+  test file.
+- Stop decision: pause the expensive run loop and step back. The repeated pattern
+  is now bigger than one bug: the harness is still relying too much on generated
+  test/config repair inside paid workflow runs instead of deterministic
+  Cloudflare Worker scaffold policy and cheap fixture tests.
 - Workflow run ID: `ef820857-7925-4bbf-a025-ac703512b776`
 - Delivery run ID: `run-mrcb80pq-921f0601`
 - Resource ID: `delivery:9ec42a6ede484450`
@@ -475,3 +508,27 @@ For each run, record:
   `acceptance_criteria` stay test-shaped and copied source contracts move to
   `source_acceptance_criteria`; add a focused regression test around the exact
   `T05-frontend-shell-tests` shape before another paid run.
+
+### 2026-07-08 - CLI Resume Run 9 Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved; pick up from existing generated files and
+  `.delivery` state instead of clearing the project.
+- Forward-progress question: after commit `57a3f35` keeps copied source
+  contracts contextual on evidence-test tasks, does the preserved benchmark
+  clear the `T05-frontend-shell-tests` deterministic retry loop and move beyond
+  the Run 8 farthest verified point?
+- Cheap/static verification already tried before this run:
+  - `node --import tsx --test test/delivery-engine/workflow-policy.test.ts`
+    passed.
+  - `node --import tsx --test test/delivery-engine/smell-audit.test.ts`
+    passed.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+  - `npm run audit:smells -- --projectFolder
+    /Users/chrislema/mastra/projects/benchmark --assume-typecheck
+    --assume-tests` reported `Total smells: 0` on the active benchmark plan.
+- Guardrail: if this run stalls, classify the failure from the report first.
+  Do not add broad string matching in `workflow.ts`.
