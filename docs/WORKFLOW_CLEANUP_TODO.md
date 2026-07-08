@@ -47,6 +47,12 @@ Completed cleanup checkpoints:
     `workflow-schemas.ts`.
   - `workflow.ts` imports schema contracts instead of defining them inline.
   - Verification passed: `npm run typecheck`, `npm test`.
+- `1f7299b Extract release gate probe evaluation`
+  - Release-gate HTTP probe types and response assertion helpers now live in
+    `release-gate-probes.ts`.
+  - `workflow.ts` still owns Wrangler process lifecycle and release-gate
+    orchestration, but delegates probe execution to the focused module.
+  - Verification passed: `npm run typecheck`, `npm test`.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
@@ -58,7 +64,7 @@ the next cleanup target below. Do not redo either completed extraction.
    - Prefer moving stable clusters into focused modules over adding new logic.
    - Good candidates, in suggested order:
      - Worker config policy and hygiene.
-     - Release-gate evidence planning.
+     - Release-gate evidence planning beyond HTTP probe evaluation.
      - Task-plan normalization policy.
      - Generated slice dependency hygiene.
    - Avoid touching all clusters in one commit.
