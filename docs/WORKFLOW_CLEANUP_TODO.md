@@ -74,6 +74,9 @@ Completed cleanup checkpoints:
     status canonicalization.
   - Rename the source-gated transcript policy from a project label to the
     generic `latestTranscriptRequired` capability.
+  - Pass source policy into the real task-plan normalizer so profile,
+    run/latest/transcript, and route-protection contracts are injected only
+    when source documents declare those capabilities.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.

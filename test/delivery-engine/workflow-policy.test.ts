@@ -1434,6 +1434,32 @@ test('task plan normalization adds Cloudflare Worker auth, profile, router, and 
   assert.doesNotMatch(criteria('E20-auth-session'), /ADMIN_TOKEN as the fallback/);
 });
 
+test('source policy gates profile and transcript route contract injection', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['src/routes.ts', 'src/router.js'],
+      acceptance_criteria: [
+        'src/routes.ts defines GET /profiles, GET /runs, and GET /latest status endpoints for generic account health.',
+      ],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan, {
+    pagesRequired: false,
+    requiredProfileKinds: [],
+    latestTranscriptRequired: false,
+    externalServiceBindings: [],
+  });
+  const criteria = normalized.tasks.flatMap((task) => task.acceptance_criteria).join('\n');
+
+  assert.match(criteria, /generic account health/);
+  assert.doesNotMatch(criteria, /audience_segments|voice_profile/);
+  assert.doesNotMatch(criteria, /latest completed transcript|transcript version|candidate selection/);
+  assert.doesNotMatch(criteria, /WEEKLY_WORKFLOW|completed_empty\/no-output/);
+});
+
 test('task plan normalization does not inject workflow or auth contracts into stateless Worker plans', () => {
   const plan = taskPlan([
     {

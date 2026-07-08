@@ -1737,10 +1737,20 @@ function taskRouteEndpointSourceCriteria(task: Task) {
   );
 }
 
-function taskRouteEndpointDefaultCriteria(task: Task) {
+function sourceScopedDeliveryContracts(sourcePolicy?: SourcePolicy) {
+  const legacyFixtureMode = !sourcePolicy;
+  return {
+    profileState: legacyFixtureMode || sourcePolicy.requiredProfileKinds.length > 0,
+    latestTranscript: legacyFixtureMode || sourcePolicy.latestTranscriptRequired,
+  };
+}
+
+type SourceScopedDeliveryContracts = ReturnType<typeof sourceScopedDeliveryContracts>;
+
+function taskRouteEndpointDefaultCriteria(task: Task, contractScope: SourceScopedDeliveryContracts) {
   const criteria: string[] = [];
 
-  if (taskOwnsProfileRoute(task)) {
+  if (contractScope.profileState && taskOwnsProfileRoute(task)) {
     criteria.push(
       'POST /profiles accepts multipart/form-data uploads for audience_segments and voice_profile markdown, validates kind/content/size, persists the original markdown through the profile service boundary, and can set the uploaded profile active.',
       'POST /profiles/:id/activate atomically activates the selected profile for its kind, deactivates the previous active profile for that kind, and returns the active profile metadata without exposing raw markdown.',
@@ -1748,26 +1758,26 @@ function taskRouteEndpointDefaultCriteria(task: Task) {
     );
   }
 
-  if (taskOwnsManualRunRoute(task)) {
+  if (contractScope.latestTranscript && taskOwnsManualRunRoute(task)) {
     criteria.push(
       'POST /runs creates a queued manual run record with a default previous-seven-day window when no window is supplied, uses active profile artifact IDs when profile IDs are omitted, returns runId with status queued, and starts WEEKLY_WORKFLOW through the workflow binding/service boundary.',
       'GET /runs/:id returns run status, requested window, profile artifact IDs used, selected candidate ID, transcript ID, status/error details, and never exposes raw profile markdown or fetched source content.',
     );
   }
 
-  if (taskOwnsLatestRoute(task)) {
+  if (contractScope.latestTranscript && taskOwnsLatestRoute(task)) {
     criteria.push(
       'GET /latest returns the latest completed transcript with title, hook, transcript, captions, sourceUrls, primarySegment, whyThisWasPicked, generatedAt, and run ID; it excludes completed_empty/no-transcript, failed, queued, and running runs and never exposes private profile markdown or fetched source content.',
     );
   }
 
-  if (taskOwnsRegenerationRoute(task)) {
+  if (contractScope.latestTranscript && taskOwnsRegenerationRoute(task)) {
     criteria.push(
       'POST /runs/:id/regenerate creates a new transcript version for the selected run through the transcript generation/service boundary, preserves prior transcript rows, advances the current transcript pointer only when intended, and returns updated transcript metadata.',
     );
   }
 
-  if (taskOwnsCandidateRoute(task)) {
+  if (contractScope.latestTranscript && taskOwnsCandidateRoute(task)) {
     criteria.push(
       'Candidate routes for a run return candidate metadata and selection state without exposing private profile markdown or raw fetched source content, and candidate selection changes persist through the run/transcript repository boundary.',
     );
@@ -1795,14 +1805,14 @@ function runRouteMutationCriterion(task: Task) {
   return `Cookie-authenticated ${mutations.join(' and ')} mutations enforce the session CSRF token or same-origin Origin validation contract from the auth/session boundary.`;
 }
 
-function routeReachabilityNames(tasks: Task[], routeTasks: Task[]) {
+function routeReachabilityNames(tasks: Task[], routeTasks: Task[], contractScope: SourceScopedDeliveryContracts) {
   return [
     tasks.some(taskOwnsSessionRoute) ? 'browser session' : undefined,
-    routeTasks.some(taskOwnsProfileRoute) ? 'profile' : undefined,
-    routeTasks.some(taskOwnsManualRunRoute) ? 'run' : undefined,
-    routeTasks.some(taskOwnsLatestRoute) ? 'latest' : undefined,
-    routeTasks.some(taskOwnsRegenerationRoute) ? 'regenerate' : undefined,
-    routeTasks.some(taskOwnsCandidateRoute) ? 'candidate' : undefined,
+    contractScope.profileState && routeTasks.some(taskOwnsProfileRoute) ? 'profile' : undefined,
+    contractScope.latestTranscript && routeTasks.some(taskOwnsManualRunRoute) ? 'run' : undefined,
+    contractScope.latestTranscript && routeTasks.some(taskOwnsLatestRoute) ? 'latest' : undefined,
+    contractScope.latestTranscript && routeTasks.some(taskOwnsRegenerationRoute) ? 'regenerate' : undefined,
+    contractScope.latestTranscript && routeTasks.some(taskOwnsCandidateRoute) ? 'candidate' : undefined,
     'health',
     'static asset fallback',
   ].filter(Boolean);
@@ -2160,7 +2170,7 @@ function withAuthSessionTask(taskPlan: TaskPlan, tasks: Task[]) {
   };
 }
 
-function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
+function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[], contractScope: SourceScopedDeliveryContracts) {
   const deduped = dedupeRouteIntegrationTasks(tasks);
   tasks = deduped.tasks;
 
@@ -2180,7 +2190,7 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
       const routerSurface = taskOwnedBoundaryPaths(task).find((path) =>
         /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/.test(path),
       ) ?? 'src/router.js';
-      const expectedRouteCriterion = routeIntegrationCriterion(routerSurface, routeReachabilityNames(tasks, routeTasks));
+      const expectedRouteCriterion = routeIntegrationCriterion(routerSurface, routeReachabilityNames(tasks, routeTasks, contractScope));
       let replacedReachability = false;
       const acceptance_criteria = task.acceptance_criteria.map((criterion) => {
         if (!routeReachabilityCriterion(criterion)) return criterion;
@@ -2214,7 +2224,8 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
   const depends_on = Array.from(
     new Set([...routerTasks, ...routeTasks].map((task) => preEntrypointBoundaryDependencyId(tasks, task))),
   );
-  const routeNames = routeReachabilityNames(tasks, routeTasks);
+  const routeNames = routeReachabilityNames(tasks, routeTasks, contractScope);
+  const needsProtectedFeatureMatrix = contractScope.profileState || contractScope.latestTranscript;
 
   const integrationTask = {
     id: uniqueTaskId({ ...taskPlan, tasks }, 'E98-route-integration'),
@@ -2225,7 +2236,11 @@ function withRouteIntegrationTask(taskPlan: TaskPlan, tasks: Task[]) {
       `${routerSurface} is the single API route registration boundary after feature route modules exist.`,
       routeIntegrationCriterion(routerSurface, routeNames),
       'Every declared API endpoint is reachable through the router after this task completes.',
-      'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
+      ...(needsProtectedFeatureMatrix
+        ? [
+            'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
+          ]
+        : []),
     ],
     owned_surfaces: [routerSurface],
   };
@@ -2462,14 +2477,17 @@ function withCloudflareWorkerDependencyContracts(tasks: Task[]) {
   return { tasks: next, changed };
 }
 
-export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): TaskPlan {
+export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, sourcePolicy?: SourcePolicy): TaskPlan {
   let changed = false;
+  const contractScope = sourceScopedDeliveryContracts(sourcePolicy);
   const indexOwnerCount = taskPlan.tasks.filter(taskOwnsIndexSurface).length;
   const hasAuthBoundary = taskPlan.tasks.some(taskOwnsOperatorAuthBoundary);
-  const hasProfileState = taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
+  const hasProfileState =
+    contractScope.profileState &&
+    taskPlan.tasks.some((task) => taskOwnsProfileRoute(task) || taskOwnsProfileRepositorySurface(task));
   const hasAiValidationSurface = taskPlan.tasks.some(taskOwnsAiValidationSurface);
   const hasWorkerWorkflow = taskPlanDeclaresWorkerWorkflow(taskPlan.tasks);
-  const hasPersistentRunLifecycle = taskPlanHasPersistentRunLifecycle(taskPlan.tasks);
+  const hasPersistentRunLifecycle = contractScope.latestTranscript && taskPlanHasPersistentRunLifecycle(taskPlan.tasks);
 
   let tasks = taskPlan.tasks.map((task) => {
     const statusCanonicalized = withCanonicalCompletedEmptyStatus(task);
@@ -2597,14 +2615,14 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       );
     }
 
-    if (taskOwnsProfileRepositorySurface(task)) {
+    if (contractScope.profileState && taskOwnsProfileRepositorySurface(task)) {
       criteria.push(
         'Profile storage activation runs in a D1 transaction that deactivates the previous active profile for the same kind and activates the selected profile atomically.',
         'Profile repository persists derived_summary_r2_key updates only through the profile summary service boundary, preserving original profile markdown as the source of truth.',
       );
     }
 
-    if (taskOwnsProfileRoute(task)) {
+    if (contractScope.profileState && taskOwnsProfileRoute(task)) {
       criteria.push(
         'Profile upload and activation routes use the profile repository transaction for active-profile state changes instead of duplicating active-state authority in route code.',
         'Profile upload, profile activation, and profile listing routes use the auth/session boundary; for this single-user private MVP, GET /profiles must not expose private profile metadata without authentication.',
@@ -2619,19 +2637,24 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       );
     }
 
-    if (taskOwnsRunRepositorySurface(task)) {
+    if (contractScope.latestTranscript && taskOwnsRunRepositorySurface(task)) {
       criteria.push(
         'Run repository exposes idempotent transition helpers that enforce the run lifecycle contract and record exact profile artifact IDs used by a run before processing begins.',
       );
     }
 
-    if (taskOwnsSchedulerSurface(task) && !taskOwnsWorkflowExecutionSurface(task) && !taskIsRootScaffold(task)) {
+    if (
+      contractScope.latestTranscript &&
+      taskOwnsSchedulerSurface(task) &&
+      !taskOwnsWorkflowExecutionSurface(task) &&
+      !taskIsRootScaffold(task)
+    ) {
       criteria.push(
         'Scheduled trigger handling creates or reuses queued run records and starts WEEKLY_WORKFLOW; scheduler code does not perform workflow execution, domain scoring, output generation, or terminal completed/completed_empty/failed transitions directly.',
       );
     }
 
-    if (taskOwnsWorkflowExecutionSurface(task) && !taskIsRootScaffold(task)) {
+    if (contractScope.latestTranscript && taskOwnsWorkflowExecutionSurface(task) && !taskIsRootScaffold(task)) {
       const workflowSurface = taskOwnedBoundaryPaths(task).find((path) =>
         /^src\/(?:(?:workflows\/)?weeklyWorkflow|workflow)\.[cm]?[jt]s$/i.test(path),
       ) ?? 'src/workflow.js';
@@ -2644,7 +2667,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       );
     }
 
-    if (taskOwnsRunRoute(task)) {
+    if (contractScope.latestTranscript && taskOwnsRunRoute(task)) {
       const routeFamilies = taskRunRouteFamilyLabel(task);
       const mutationCriterion = runRouteMutationCriterion(task);
       criteria.push(
@@ -2653,7 +2676,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       if (mutationCriterion) criteria.push(mutationCriterion);
     }
 
-    if (taskOwnsTranscriptRepositorySurface(task) || taskOwnsRegenerationRoute(task)) {
+    if (contractScope.latestTranscript && (taskOwnsTranscriptRepositorySurface(task) || taskOwnsRegenerationRoute(task))) {
       criteria.push(
         'Transcript regeneration inserts a new transcript row, preserves prior transcript rows, updates the run current transcript pointer only when intended, and keeps GET /latest deterministic for the latest completed run.',
       );
@@ -2667,7 +2690,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       criteria.push(
         'The router surface remains the single API route registration boundary; feature routes must be registered through the router rather than dispatched directly from src/index.js.',
       );
-      if (taskHasRouteIntegrationContract(task)) {
+      if (taskHasRouteIntegrationContract(task) && (contractScope.profileState || contractScope.latestTranscript)) {
         criteria.push(
           'The router surface explicitly registers the browser session endpoint before UI work depends on it, so public/app.js can authenticate through the session route without handling raw ADMIN_TOKEN on feature mutations.',
           'Route integration defines and enforces the protection matrix: profile upload, profile activation, GET /profiles, manual runs, regeneration, and run detail endpoints are operator/session protected; GET /latest may be public only when it returns generated transcript fields and never raw profile markdown, profile history, or fetched source content.',
@@ -2675,16 +2698,28 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       }
     }
 
-    criteria.push(...taskRouteEndpointDefaultCriteria(task));
+    criteria.push(...taskRouteEndpointDefaultCriteria(task, contractScope));
     criteria.push(...taskRouteEndpointSourceCriteria(task));
 
-    if (hasWorkerWorkflow && taskIsRootScaffold(task) && taskOwnsWorkerConfigFile(task) && taskOwnsIndexSurface(task)) {
+    if (
+      contractScope.latestTranscript &&
+      hasWorkerWorkflow &&
+      taskIsRootScaffold(task) &&
+      taskOwnsWorkerConfigFile(task) &&
+      taskOwnsIndexSurface(task)
+    ) {
       criteria.push(
         'src/index.js exports a minimal class named WeeklyWorkflow that extends WorkflowEntrypoint when wrangler.jsonc defines workflows.class_name "WeeklyWorkflow", so Wrangler dry-run validation succeeds before later workflow code fills in the implementation without changing the configured export name.',
       );
     }
 
-    if (hasWorkerWorkflow && indexOwnerCount > 1 && taskOwnsIndexSurface(task) && !taskIsRootScaffold(task)) {
+    if (
+      contractScope.latestTranscript &&
+      hasWorkerWorkflow &&
+      indexOwnerCount > 1 &&
+      taskOwnsIndexSurface(task) &&
+      !taskIsRootScaffold(task)
+    ) {
       criteria.push(
         'src/index.js changes preserve the existing default fetch handler, scheduled handler wiring, static asset fallback path, and WeeklyWorkflow export introduced by earlier tasks.',
         'src/index.js preserves a stable WeeklyWorkflow export whose class name matches wrangler.jsonc workflows.class_name; later workflow code may fill in or delegate implementation details without changing the configured export.',
@@ -2709,22 +2744,26 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
     tasks = withSession.tasks;
   }
 
-  const withIntegration = withRouteIntegrationTask(taskPlan, tasks);
+  const withIntegration = withRouteIntegrationTask(taskPlan, tasks, contractScope);
   if (withIntegration.changed) {
     changed = true;
     tasks = withIntegration.tasks;
   }
 
-  const withSummary = withProfileSummaryTask(taskPlan, tasks);
-  if (withSummary.changed) {
-    changed = true;
-    tasks = withSummary.tasks;
+  if (contractScope.profileState) {
+    const withSummary = withProfileSummaryTask(taskPlan, tasks);
+    if (withSummary.changed) {
+      changed = true;
+      tasks = withSummary.tasks;
+    }
   }
 
-  const withEntrypoint = withWorkerEntrypointIntegrationTask(taskPlan, tasks);
-  if (withEntrypoint.changed) {
-    changed = true;
-    tasks = withEntrypoint.tasks;
+  if (contractScope.latestTranscript) {
+    const withEntrypoint = withWorkerEntrypointIntegrationTask(taskPlan, tasks);
+    if (withEntrypoint.changed) {
+      changed = true;
+      tasks = withEntrypoint.tasks;
+    }
   }
 
   const withDependencies = withCloudflareWorkerDependencyContracts(tasks);
@@ -3101,6 +3140,7 @@ export function projectScaffoldHygiene(repoPath: string, taskPlan: TaskPlan) {
 }
 
 function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): TaskPlan {
+  const sourcePolicy = sourcePolicyFromRepo(repoPath);
   return normalizeTaskPlanOperatorDocumentation(
     normalizeTaskPlanCloudflareWorkerContracts(
       normalizeTaskPlanGeneratedSliceDependencies(
@@ -3112,6 +3152,7 @@ function normalizeTaskPlanForDelivery(repoPath: string, taskPlan: TaskPlan): Tas
           ),
         ),
       ),
+      sourcePolicy,
     ),
   );
 }
