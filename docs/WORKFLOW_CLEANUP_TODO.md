@@ -58,6 +58,12 @@ Completed cleanup checkpoints:
     helpers now live in `process-utils.ts`.
   - `workflow.ts` still owns release-gate runtime orchestration.
   - Verification passed: `npm run typecheck`, `npm test`.
+- `78f9095 Extract source document policy`
+  - Source-document declarations for Pages, profile kinds, Talking Head
+    transcript contracts, bookmarks, and short-link lifecycle now live in
+    `source-policy.ts`.
+  - `workflow.ts` re-exports the same public helpers for compatibility.
+  - Verification passed: `npm run typecheck`, `npm test`.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
