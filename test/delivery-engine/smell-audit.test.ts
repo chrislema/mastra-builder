@@ -49,7 +49,27 @@ test('smell audit reports behavior criteria as unverified instead of file-eviden
   assert.equal(report.summary.genericFileEvidence, 0);
   assert.equal(report.summary.behaviorByFileEvidence, 0);
   assert.equal(report.summary.behaviorUnverified, 1);
+  assert.equal(report.summary.pendingBehaviorEvidence, 0);
   assert.equal(report.smells[0].smell, 'behavior_unverified');
+});
+
+test('smell audit treats unverified behavior on explicit test tasks as pending evidence', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-smell-pending-test-evidence-'));
+  const report = auditDeliveryTaskPlan({
+    repoPath,
+    taskPlan: minimalTaskPlan({
+      id: 'T05-api-route-behavior-tests',
+      owner: 'engineer',
+      deliverable: 'API route behavior tests',
+      depends_on: ['T05'],
+      owned_surfaces: ['test/api-routes.test.ts'],
+      acceptance_criteria: ['POST /api/run returns HTTP 400 for malformed JSON with a normalized validation_error response.'],
+    }),
+  });
+
+  assert.equal(report.summary.behaviorUnverified, 0);
+  assert.equal(report.summary.pendingBehaviorEvidence, 1);
+  assert.equal(report.summary.smellCount, 0);
 });
 
 test('smell audit treats provider behavior test output as command evidence', () => {
@@ -94,6 +114,7 @@ test('smell audit report is stable enough for run-journal use', () => {
       behaviorCriteria: 1,
       behaviorByFileEvidence: 1,
       behaviorUnverified: 0,
+      pendingBehaviorEvidence: 0,
       smellCount: 1,
     },
     taskRows: [
@@ -105,6 +126,7 @@ test('smell audit report is stable enough for run-journal use', () => {
         unverified: 0,
         behaviorByFileEvidence: 1,
         behaviorUnverified: 0,
+        pendingBehaviorEvidence: 0,
       },
     ],
     smells: [
@@ -116,6 +138,7 @@ test('smell audit report is stable enough for run-journal use', () => {
         status: 'verified',
         evidenceKind: 'generic_file_evidence',
         behaviorCriterion: true,
+        evidenceTask: false,
         smell: 'behavior_by_file_evidence',
         evidence: ['file evidence covered 4/4 acceptance tokens in src/index.ts'],
         gaps: [],

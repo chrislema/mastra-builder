@@ -191,6 +191,7 @@ const taskPlan = (
     owner?: 'engineer' | 'designer';
     depends_on: string[];
     acceptance_criteria?: string[];
+    source_acceptance_criteria?: string[];
     owned_surfaces?: string[];
   }>,
 ) => ({
@@ -202,6 +203,7 @@ const taskPlan = (
     deliverable: 'deliverable',
     depends_on: task.depends_on,
     acceptance_criteria: task.acceptance_criteria ?? ['verified'],
+    ...(task.source_acceptance_criteria ? { source_acceptance_criteria: task.source_acceptance_criteria } : {}),
     owned_surfaces: task.owned_surfaces ?? ['src/index.ts'],
   })),
   technology_decisions: [] as Array<{ decision: string; rationale: string }>,
@@ -1571,6 +1573,56 @@ test('task plan normalization moves provider failure behavior criteria to a smok
   assert.match(testTask.acceptance_criteria.join('\n'), /timeout_or_network_error/);
   assert.match(testTask.acceptance_criteria.join('\n'), /missing_binding/);
   assert.ok(byId.T05.depends_on.includes('T04-provider-behavior-tests'));
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
+test('task plan normalization moves API route behavior criteria to a smoke-test task', () => {
+  const plan = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'tsconfig.json', 'src/index.ts'],
+      acceptance_criteria: ['Root Worker scaffold exists.'],
+    },
+    {
+      id: 'T05',
+      depends_on: ['T01'],
+      owned_surfaces: ['src/routes.ts'],
+      acceptance_criteria: [
+        'src/routes.ts exports the Worker API route module.',
+        'GET /api/health returns JSON exactly shaped with ok true and service "benchmark".',
+        'POST /api/run returns HTTP 400 for malformed JSON with a normalized validation_error response and no provider call.',
+        'POST /api/run returns a normalized one-result provider_error response when the provider adapter fails.',
+      ],
+      source_acceptance_criteria: [
+        'GET /api/models returns a models array containing id, label, vendor, provider, and configured for each catalog entry.',
+      ],
+    },
+    {
+      id: 'T06',
+      owner: 'designer',
+      depends_on: ['T05'],
+      owned_surfaces: ['public/app.js'],
+      acceptance_criteria: ['public/app.js calls /api/run.'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const routeTask = byId.T05;
+  const testTask = byId['T05-api-route-behavior-tests'];
+
+  assert.ok(testTask);
+  assert.equal(testTask.owner, 'engineer');
+  assert.deepEqual(testTask.depends_on, ['T05']);
+  assert.deepEqual(testTask.owned_surfaces, ['test/api-routes.test.ts']);
+  assert.match(routeTask.acceptance_criteria.join('\n'), /exports the Worker API route module/);
+  assert.doesNotMatch(routeTask.acceptance_criteria.join('\n'), /GET \/api\/health|POST \/api\/run/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /GET \/api\/health/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /GET \/api\/models/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /POST \/api\/run/);
+  assert.doesNotMatch([...(routeTask.source_acceptance_criteria ?? [])].join('\n'), /GET \/api\/models/);
+  assert.ok(byId.T06.depends_on.includes('T05-api-route-behavior-tests'));
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
@@ -4073,6 +4125,39 @@ test('provider failure contracts use provider-focused test evidence instead of g
 
   assert.equal(providerTestContracts[0].status, 'verified');
   assert.match(providerTestContracts[0].evidence.join('\n'), /provider behavior test evidence/);
+});
+
+test('API route behavior contracts use route-focused test evidence instead of generic test success', () => {
+  const [task] = taskPlan([
+    {
+      id: 'T05-api-route-behavior-tests',
+      owner: 'engineer',
+      depends_on: ['T05'],
+      owned_surfaces: ['test/api-routes.test.ts'],
+      acceptance_criteria: [
+        'POST /api/run returns HTTP 400 for malformed JSON with a normalized validation_error response and no provider call.',
+      ],
+    },
+  ]).tasks;
+
+  const genericTestContracts = acceptanceContractsForTask({
+    task,
+    verification: { performed: ['npm run test passed: validation rejects empty model lists'], missing: [] },
+  });
+  assert.equal(genericTestContracts[0].status, 'unverified');
+
+  const routeTestContracts = acceptanceContractsForTask({
+    task,
+    verification: {
+      performed: [
+        'npm run test passed: test/api-routes.test.ts > POST /api/run returns HTTP 400 validation_error without provider calls',
+      ],
+      missing: [],
+    },
+  });
+
+  assert.equal(routeTestContracts[0].status, 'verified');
+  assert.match(routeTestContracts[0].evidence.join('\n'), /api route behavior test evidence/);
 });
 
 test('provider adapter contract rejects hard-coded provider secret env reads', () => {

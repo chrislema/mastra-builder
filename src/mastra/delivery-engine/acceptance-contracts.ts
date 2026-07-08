@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
-import { isBehaviorLikeAcceptanceCriterion } from './acceptance-evidence-policy';
+import {
+  isApiRouteBehaviorAcceptanceCriterion,
+  isBehaviorLikeAcceptanceCriterion,
+} from './acceptance-evidence-policy';
 import { normalizeDeliveryPathReference } from './checks';
 
 export interface AcceptanceContractTask {
@@ -1283,6 +1286,15 @@ function acceptanceCriterionCommandEvidence(criterion: string, performed: string
     )
   ) {
     return 'provider behavior test evidence covered provider adapter failure and client-safe error criteria';
+  }
+  if (
+    isApiRouteBehaviorAcceptanceCriterion(criterion) &&
+    /\bnpm run test passed\b|\bvitest\b/.test(evidence) &&
+    /\b(?:test\/(?:api-)?routes?|api route|route behavior|\/api\/health|\/api\/models|\/api\/run|validation_error)\b/.test(
+      evidence,
+    )
+  ) {
+    return 'api route behavior test evidence covered route status and JSON contract criteria';
   }
   if (/\b(typecheck|tsc|typescript)\b/.test(text) && /\b(typecheck|tsc)\b/.test(evidence)) {
     return 'verification command covered TypeScript/typecheck criterion';

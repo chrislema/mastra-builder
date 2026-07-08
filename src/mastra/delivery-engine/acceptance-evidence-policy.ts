@@ -4,3 +4,12 @@ const behaviorCriterionPattern =
 export function isBehaviorLikeAcceptanceCriterion(criterion: string) {
   return behaviorCriterionPattern.test(criterion);
 }
+
+export function isApiRouteBehaviorAcceptanceCriterion(criterion: string) {
+  return (
+    isBehaviorLikeAcceptanceCriterion(criterion) &&
+    (/\b(?:GET|POST|PUT|PATCH|DELETE)\s+\/api\/[A-Za-z0-9_./:{}*-]+/i.test(criterion) ||
+      /\b\/api\/(?:health|models|run)\b/i.test(criterion) ||
+      /\bHTTP\s+(?:400|401|403|404|413|500)\b/i.test(criterion))
+  );
+}

@@ -16,6 +16,7 @@ export type SmellAuditContract = {
   status: AcceptanceContract['status'];
   evidenceKind: SmellAuditEvidenceKind;
   behaviorCriterion: boolean;
+  evidenceTask: boolean;
   smell:
     | 'behavior_by_file_evidence'
     | 'behavior_unverified'
@@ -39,6 +40,7 @@ export type SmellAuditReport = {
     behaviorCriteria: number;
     behaviorByFileEvidence: number;
     behaviorUnverified: number;
+    pendingBehaviorEvidence: number;
     smellCount: number;
   };
   taskRows: Array<{
@@ -49,6 +51,7 @@ export type SmellAuditReport = {
     unverified: number;
     behaviorByFileEvidence: number;
     behaviorUnverified: number;
+    pendingBehaviorEvidence: number;
   }>;
   smells: SmellAuditContract[];
 };
@@ -63,6 +66,13 @@ export function acceptanceContractEvidenceKind(contract: AcceptanceContract): Sm
   if (/^file evidence covered/m.test(evidenceText)) return 'generic_file_evidence';
   if (/^(verification command|provider behavior test)/m.test(evidenceText)) return 'command';
   return 'structured';
+}
+
+function taskIsEvidenceTask(task: TaskPlan['tasks'][number]) {
+  return (
+    task.owned_surfaces.some((surface) => /^test\/|\.test\.[cm]?[jt]s$/i.test(surface)) ||
+    /\b(?:test|tests|coverage|evidence|smoke)\b/i.test(task.deliverable)
+  );
 }
 
 export function loadTaskPlanForSmellAudit(taskPlanPath: string): TaskPlan {
@@ -92,6 +102,7 @@ export function auditDeliveryTaskPlan({
       unverified: number;
       behaviorByFileEvidence: number;
       behaviorUnverified: number;
+      pendingBehaviorEvidence: number;
     }
   >();
 
@@ -104,15 +115,20 @@ export function auditDeliveryTaskPlan({
       unverified: 0,
       behaviorByFileEvidence: 0,
       behaviorUnverified: 0,
+      pendingBehaviorEvidence: 0,
     };
+    const evidenceTask = taskIsEvidenceTask(task);
 
     for (const contract of acceptanceContractsForTask({ repoPath, task, verification })) {
       const evidenceKind = acceptanceContractEvidenceKind(contract);
       const behaviorCriterion = isBehaviorCriterion(contract.criterion);
+      const pendingBehaviorEvidence = behaviorCriterion && evidenceKind === 'unverified' && evidenceTask;
       const smell =
-        behaviorCriterion && evidenceKind === 'generic_file_evidence'
+        pendingBehaviorEvidence
+          ? undefined
+          : behaviorCriterion && evidenceKind === 'generic_file_evidence'
           ? 'behavior_by_file_evidence'
-          : behaviorCriterion && evidenceKind === 'unverified'
+          : behaviorCriterion && evidenceKind === 'unverified' && !pendingBehaviorEvidence
             ? 'behavior_unverified'
             : evidenceKind === 'generic_file_evidence'
               ? 'generic_file_evidence'
@@ -125,6 +141,7 @@ export function auditDeliveryTaskPlan({
       if (evidenceKind === 'unverified') row.unverified += 1;
       if (smell === 'behavior_by_file_evidence') row.behaviorByFileEvidence += 1;
       if (smell === 'behavior_unverified') row.behaviorUnverified += 1;
+      if (pendingBehaviorEvidence) row.pendingBehaviorEvidence += 1;
 
       contracts.push({
         task: task.id,
@@ -134,6 +151,7 @@ export function auditDeliveryTaskPlan({
         status: contract.status,
         evidenceKind,
         behaviorCriterion,
+        evidenceTask,
         smell,
         evidence: contract.evidence,
         gaps: contract.gaps,
@@ -154,6 +172,9 @@ export function auditDeliveryTaskPlan({
     behaviorCriteria: contracts.filter((contract) => contract.behaviorCriterion).length,
     behaviorByFileEvidence: contracts.filter((contract) => contract.smell === 'behavior_by_file_evidence').length,
     behaviorUnverified: contracts.filter((contract) => contract.smell === 'behavior_unverified').length,
+    pendingBehaviorEvidence: contracts.filter(
+      (contract) => contract.behaviorCriterion && contract.evidenceKind === 'unverified' && contract.evidenceTask,
+    ).length,
     smellCount: smells.length,
   };
 
@@ -162,7 +183,12 @@ export function auditDeliveryTaskPlan({
     taskPlanPath,
     summary,
     taskRows: [...taskRows.values()].filter(
-      (row) => row.genericFileEvidence || row.unverified || row.behaviorByFileEvidence || row.behaviorUnverified,
+      (row) =>
+        row.genericFileEvidence ||
+        row.unverified ||
+        row.behaviorByFileEvidence ||
+        row.behaviorUnverified ||
+        row.pendingBehaviorEvidence,
     ),
     smells,
   };
@@ -204,12 +230,13 @@ export function formatSmellAuditReport(report: SmellAuditReport) {
     `Behavior criteria: ${report.summary.behaviorCriteria}`,
     `Behavior by file evidence: ${report.summary.behaviorByFileEvidence}`,
     `Behavior unverified: ${report.summary.behaviorUnverified}`,
+    `Pending behavior evidence on test tasks: ${report.summary.pendingBehaviorEvidence}`,
     `Total smells: ${report.summary.smellCount}`,
     '',
     'Task rows with smells or gaps:',
     ...report.taskRows.map(
       (row) =>
-        `- ${row.task}: contracts=${row.contracts}, fileEvidence=${row.genericFileEvidence}, unverified=${row.unverified}, behaviorByFile=${row.behaviorByFileEvidence}, behaviorUnverified=${row.behaviorUnverified}`,
+        `- ${row.task}: contracts=${row.contracts}, fileEvidence=${row.genericFileEvidence}, unverified=${row.unverified}, behaviorByFile=${row.behaviorByFileEvidence}, behaviorUnverified=${row.behaviorUnverified}, pendingBehaviorEvidence=${row.pendingBehaviorEvidence}`,
     ),
     '',
     'Top smell examples:',

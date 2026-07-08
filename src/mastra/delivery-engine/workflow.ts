@@ -52,7 +52,10 @@ import {
 import { safePersistDeliveryStateWithMastra } from './observability';
 import { deliveryStructuredOutputOptions } from './models';
 import { parseDeliveryStructuredOutput } from './structured-output';
-import { isBehaviorLikeAcceptanceCriterion } from './acceptance-evidence-policy';
+import {
+  isApiRouteBehaviorAcceptanceCriterion,
+  isBehaviorLikeAcceptanceCriterion,
+} from './acceptance-evidence-policy';
 import {
   deliveryWorkflowInputSchema,
   normalizeDeliveryWorkflowInput,
@@ -1824,6 +1827,7 @@ function routeEndpointContractCriterion(criterion: string) {
 }
 
 function routeEndpointCriterionBelongsToTask(task: Task, criterion: string) {
+  if (/\/api\//i.test(criterion)) return taskOwnsGenericRouteModule(task) || taskOwnsRouterSurface(task) || taskOwnsIndexSurface(task);
   if (/\/profiles?(?:\b|\/|:)/i.test(criterion)) return taskOwnsProfileRoute(task);
   if (/\/latest\b/i.test(criterion)) return taskOwnsLatestRoute(task);
   if (/(?:\/runs\/:id\/regenerate|regenerat)/i.test(criterion)) return taskOwnsRegenerationRoute(task);
@@ -2513,6 +2517,107 @@ function withProviderAdapterBehaviorTestTasks(tasks: Task[]) {
   return { tasks: next, changed };
 }
 
+function taskTestSurfaceExtension(task: Task) {
+  return taskOwnedBoundaryPaths(task).some((path) => /\.(?:ts|mts|cts)$/.test(path)) ? 'ts' : 'js';
+}
+
+function taskOwnsApiRouteBehaviorSurface(task: Task) {
+  return taskOwnsRouteModule(task) || taskOwnsRouterSurface(task) || (!taskIsRootScaffold(task) && taskOwnsIndexSurface(task));
+}
+
+function taskLooksLikeApiRouteBehaviorTest(task: Task, routeTaskId: string) {
+  return (
+    task.owner === 'engineer' &&
+    task.depends_on.includes(routeTaskId) &&
+    taskOwnedBoundaryPaths(task).some((path) => /^test\/.*(?:api|route).*\.test\.[cm]?[jt]s$/i.test(path)) &&
+    /\b(?:api route|route behavior|\/api\/health|\/api\/models|\/api\/run|validation_error)\b/i.test(
+      [task.deliverable, ...task.acceptance_criteria, ...task.owned_surfaces].join('\n'),
+    )
+  );
+}
+
+function apiRouteBehaviorTestTask(routeTask: Task, testId: string, criteria: string[]): Task {
+  const extension = taskTestSurfaceExtension(routeTask);
+  const testSurface = `test/api-routes.test.${extension}`;
+  return {
+    id: testId,
+    owner: 'engineer',
+    deliverable:
+      'Add API route behavior tests that prove Worker route status codes, JSON shapes, validation failures, and provider-failure response handling with fake bindings.',
+    depends_on: [routeTask.id],
+    acceptance_criteria: Array.from(
+      new Set([
+        `${testSurface} imports or exercises the Worker route surface with fake env bindings and no real provider calls.`,
+        `${testSurface} proves /api/health, /api/models, and /api/run status codes and JSON response shapes, including validation_error and provider-failure paths when those routes exist.`,
+        'npm test passes and includes API route behavior coverage.',
+        ...criteria,
+      ]),
+    ),
+    owned_surfaces: [testSurface],
+  };
+}
+
+function withApiRouteBehaviorTestTasks(tasks: Task[]) {
+  let changed = false;
+  let next = [...tasks];
+
+  for (const routeTask of tasks) {
+    if (!taskOwnsApiRouteBehaviorSurface(routeTask)) continue;
+    const behaviorCriteria = Array.from(
+      new Set(
+        [...routeTask.acceptance_criteria, ...(routeTask.source_acceptance_criteria ?? [])].filter(
+          isApiRouteBehaviorAcceptanceCriterion,
+        ),
+      ),
+    );
+    if (!behaviorCriteria.length) continue;
+
+    const existingTestTask = next.find((task) => taskLooksLikeApiRouteBehaviorTest(task, routeTask.id));
+    const testId = existingTestTask?.id ?? uniqueTaskIdFromTasks(next, `${routeTask.id}-api-route-behavior-tests`);
+
+    if (!existingTestTask) {
+      const routeIndex = next.findIndex((task) => task.id === routeTask.id);
+      const insertionIndex = routeIndex < 0 ? next.length : routeIndex + 1;
+      next = [
+        ...next.slice(0, insertionIndex),
+        apiRouteBehaviorTestTask(routeTask, testId, behaviorCriteria),
+        ...next.slice(insertionIndex),
+      ];
+      changed = true;
+    }
+
+    next = next.map((task) => {
+      if (task.id === routeTask.id) {
+        const acceptance_criteria = task.acceptance_criteria.filter(
+          (criterion) => !isApiRouteBehaviorAcceptanceCriterion(criterion),
+        );
+        const source_acceptance_criteria = task.source_acceptance_criteria?.filter(
+          (criterion) => !isApiRouteBehaviorAcceptanceCriterion(criterion),
+        );
+        if (
+          acceptance_criteria.length === task.acceptance_criteria.length &&
+          (source_acceptance_criteria?.length ?? 0) === (task.source_acceptance_criteria?.length ?? 0)
+        ) {
+          return task;
+        }
+        changed = true;
+        return {
+          ...task,
+          acceptance_criteria,
+          ...(task.source_acceptance_criteria ? { source_acceptance_criteria } : {}),
+        };
+      }
+
+      if (task.id === testId || !task.depends_on.includes(routeTask.id) || task.depends_on.includes(testId)) return task;
+      if (!taskCanDependOnTaskList(next, task.id, testId)) return task;
+      changed = true;
+      return appendDependencies(task, [testId]);
+    });
+  }
+
+  return { tasks: next, changed };
+}
+
 function sourceContractCriteriaForTask(
   task: Task,
   context: {
@@ -2718,6 +2823,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, s
   if (withProviderBehaviorTests.changed) {
     changed = true;
     tasks = withProviderBehaviorTests.tasks;
+  }
+
+  const withApiRouteBehaviorTests = withApiRouteBehaviorTestTasks(tasks);
+  if (withApiRouteBehaviorTests.changed) {
+    changed = true;
+    tasks = withApiRouteBehaviorTests.tasks;
   }
 
   const withDependencies = withCloudflareWorkerDependencyContracts(tasks);
