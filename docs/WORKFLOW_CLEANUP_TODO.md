@@ -71,6 +71,10 @@ Do not redo these:
 - Agent call options and timeout constants: `agent-runtime/options.ts`
 - Agent stage timeout watchdogs and write/read-budget event helpers:
   `agent-runtime/stage-timeout.ts`
+- Compact diagnostics shared by workflow and runtime modules:
+  `agent-runtime/diagnostics.ts`
+- Judge provider fallback and artifact judging:
+  `agent-runtime/judge-runtime.ts`
 
 ## Cleanup Rules
 

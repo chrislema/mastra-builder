@@ -139,7 +139,7 @@ Verification:
 
 ### Phase 2: Agent Runtime And Judge Infrastructure
 
-Status: in progress.
+Status: complete.
 
 Goal: make agent execution mechanics reusable and testable outside workflows.
 
@@ -171,6 +171,10 @@ Completed extraction:
   options, implementation workspace tool sets, and timeout constants.
 - `agent-runtime/stage-timeout.ts` for stage timeout errors, no-tool/read-budget
   watchdogs, latest-write tracking, and timeout event recording.
+- `agent-runtime/diagnostics.ts` for compact error diagnostics shared by
+  workflow stages and agent runtime modules.
+- `agent-runtime/judge-runtime.ts` for judge provider error shaping,
+  unavailable-judge fallback output, and shared artifact judging.
 
 Keep in workflow steps:
 

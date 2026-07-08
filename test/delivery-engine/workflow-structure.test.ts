@@ -14,6 +14,11 @@ import {
 import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaffold-workflow.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
+const agentRuntimeSource = () =>
+  [
+    readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8'),
+    readFileSync('src/mastra/delivery-engine/agent-runtime/judge-runtime.ts', 'utf8'),
+  ].join('\n');
 
 test('delivery workflow is split into native stage workflows', () => {
   assert.deepEqual(
@@ -49,7 +54,7 @@ test('delivery workflow scaffolds deterministically between planning and review'
 });
 
 test('workflow agent calls use run-scoped Mastra memory', () => {
-  const source = workflowSource();
+  const source = agentRuntimeSource();
   const requestContextCount = source.match(/requestContext: createDeliveryRequestContext/g)?.length ?? 0;
   const controlRequestContextCount = source.match(/requestContext: createDeliveryControlRequestContext/g)?.length ?? 0;
   const memoryCount = source.match(/memory: deliveryRunMemory/g)?.length ?? 0;
