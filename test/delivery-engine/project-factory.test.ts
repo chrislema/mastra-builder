@@ -122,3 +122,70 @@ test('project factory materializes files only through the explicit writer helper
   assert.equal(JSON.parse(readFileSync(join(projectFolder, 'package.json'), 'utf8')).name, 'writable-worker');
   assert.match(readFileSync(join(projectFolder, 'public/index.html'), 'utf8'), /writable-worker/);
 });
+
+test('project factory composes workflow and admin profiles without moving away from Workers', () => {
+  const scaffold = renderProjectScaffold({
+    projectName: 'Workflow Admin',
+    requestedProfiles: ['worker-workflows', 'worker-authenticated-admin'],
+  });
+
+  assert.deepEqual(scaffold.manifest.profileList, [
+    'worker-typescript',
+    'worker-workflows',
+    'worker-authenticated-admin',
+  ]);
+
+  const wrangler = JSON.parse(fileContent(scaffold, 'wrangler.jsonc')) as {
+    workflows: Array<{ binding: string; class_name: string }>;
+    env: { staging: { workflows: unknown }; production: { workflows: unknown } };
+  };
+  assert.equal(wrangler.workflows[0]?.binding, 'PROCESSING_WORKFLOW');
+  assert.equal(wrangler.workflows[0]?.class_name, 'ProcessingWorkflow');
+  assert.deepEqual(wrangler.env.staging.workflows, wrangler.workflows);
+  assert.deepEqual(wrangler.env.production.workflows, wrangler.workflows);
+
+  assert.match(fileContent(scaffold, 'src/index.ts'), /WorkflowEntrypoint/);
+  assert.match(fileContent(scaffold, 'src/index.ts'), /export class ProcessingWorkflow extends WorkflowEntrypoint/);
+  assert.match(fileContent(scaffold, '.dev.vars.example'), /ADMIN_SESSION_SECRET=change-me-locally/);
+});
+
+test('project factory treats Pages as an explicit exception profile only', () => {
+  assert.equal(
+    selectProjectProfiles({
+      projectName: 'Default Worker',
+      sourceDocuments: [{ path: 'vision.md', content: 'Build this as a Worker. Do not use Cloudflare Pages.' }],
+      sourcePolicy: { pagesRequired: false, requiredProfileKinds: [], latestTranscriptRequired: false, externalServiceBindings: [] },
+    }).includes('pages-explicit'),
+    false,
+  );
+
+  assert.deepEqual(
+    selectProjectProfiles({
+      projectName: 'Explicit Pages',
+      sourcePolicy: { pagesRequired: true, requiredProfileKinds: [], latestTranscriptRequired: false, externalServiceBindings: [] },
+    }),
+    ['worker-typescript', 'pages-explicit'],
+  );
+});
+
+test('project factory maps benchmark-shaped transcript persistence to D1 rails', () => {
+  const scaffold = renderProjectScaffold({
+    projectName: 'Talking Head Builder',
+    sourceDocuments: [
+      {
+        path: 'spec.md',
+        content: 'Store runs, candidates, and transcripts for completed transcript regeneration.',
+      },
+    ],
+    sourcePolicy: {
+      pagesRequired: false,
+      requiredProfileKinds: ['audience_segments', 'voice_profile'],
+      latestTranscriptRequired: true,
+      externalServiceBindings: [],
+    },
+  });
+
+  assert.ok(scaffold.manifest.profileList.includes('worker-d1'));
+  assert.ok(scaffold.manifest.generatedFiles.includes('migrations/0001_app_events.sql'));
+  assert.match(fileContent(scaffold, 'wrangler.jsonc'), /"binding": "DB"/);
+});

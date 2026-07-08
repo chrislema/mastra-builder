@@ -70,7 +70,12 @@ export function selectProjectProfiles(input: unknown): ProjectProfile[] {
     featureProfiles.add('worker-workers-ai');
   }
 
-  if (requestedProfiles.has('worker-d1') || sourceMentions(text, /\bCloudflare\s+D1\b|\bD1\b|\bSQLite\b|\bSQL\b|\bmigrations?\b/i)) {
+  if (
+    requestedProfiles.has('worker-d1') ||
+    normalized.sourcePolicy.latestTranscriptRequired ||
+    sourceMentions(text, /\bCloudflare\s+D1\b|\bD1\b|\bSQLite\b|\bSQL\b|\bmigrations?\b/i) ||
+    sourceMentions(text, /\bstore\s+(?:runs|records|transcripts|candidates)\b|\bpersist(?:ent)?\s+(?:runs|records|transcripts|state)\b/i)
+  ) {
     featureProfiles.add('worker-d1');
   }
 
