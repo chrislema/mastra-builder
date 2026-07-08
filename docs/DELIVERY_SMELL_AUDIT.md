@@ -44,23 +44,21 @@ tests were available as performed evidence:
 
 After stopping generic file evidence from verifying behavior-shaped criteria,
 keeping behavior-only evidence gaps out of deterministic implementation retries,
-copying API route and frontend behavior criteria onto explicit evidence tasks,
-preserving those criteria on the implementation tasks as first-class contracts,
-and carrying non-endpoint behavior from tasks that already declare explicit API
-route behavior into the same route evidence task, and copying contract/validation
-behavior onto explicit domain evidence tasks. Provider-adapter behavior is also
-copied onto the provider evidence task by provider surface ownership:
+copying API route, frontend, provider, contract, and validation criteria onto
+explicit evidence tasks, preserving those criteria on implementation tasks as
+first-class contracts, and counting exact downstream evidence-task coverage
+before treating generic file evidence as a smell:
 
-- Acceptance contracts: 269
+- Acceptance contracts: 341
 - Structured evidence: 33
-- Command/test evidence: 42
+- Command/test evidence: 46
 - Generic file evidence: 26
-- Unverified contracts: 168
+- Unverified contracts: 236
 - Behavior-shaped criteria: 155
 - Behavior criteria verified by generic file evidence: 0
 - Behavior criteria still unverified: 0
 - Pending behavior evidence: 127
-- Total audit smells: 26
+- Total audit smells: 3
 
 `Unverified contracts` remains a gap counter for unfinished or not-yet-proven
 work. It is intentionally broader than `Total audit smells`. A smell is now a
@@ -72,31 +70,20 @@ runtime behavior.
 
 This is an intentional intermediate state: behavior is no longer falsely marked
 verified by token overlap, behavior-only proof gaps no longer cause
-deterministic implementation retry loops, and route/frontend behavior proof is
-now routed toward generated tests instead of source-file overlap. Implementation
-tasks keep the behavior contracts as working memory; evidence tasks copy those
-criteria and make missing executable proof visible as pending evidence. The
-harness still needs to route the remaining behavior proof to generated tests,
-command evidence, judges, or release gates.
+deterministic implementation retry loops, and route/frontend/provider/contract
+proof is now routed toward generated tests instead of source-file overlap.
+Implementation tasks keep the contracts as working memory; evidence tasks copy
+those criteria and make missing executable proof visible as pending evidence.
 
 Largest clusters:
 
-- `T05`: API route and same-task route behavior now have an explicit
-  `T05-api-route-behavior-tests` task. The normalizer only broadens same-task
-  behavior when the route task already carries explicit API route behavior, so
-  auth/session/generated route-integration tasks do not get stray route-test
-  tasks.
-- `T06`, `T07`, `T08`, `T09`: frontend/runtime behavior now has explicit
-  `*-frontend-behavior-tests` tasks; remaining smells are mostly structural
-  generic-file evidence. Non-behavior unverified UI/documentation contracts are
-  tracked as gaps, not smells.
-- `T04-provider-behavior-tests`: provider-adapter behavior now routes to the
-  provider evidence task by provider surface ownership. Remaining provider smells
-  are structural generic-file or non-behavior unverified contracts.
-- `T02`/`T02-part-2`: contract and validation behavior now have explicit
-  `test/contracts.test.{ts,js}` and `test/validation.test.{ts,js}` evidence
-  tasks. Remaining smells on those rows are structural generic-file evidence,
-  not behavior-by-file evidence.
+- `T01`: `wrangler.jsonc` secret-name/environment expectation evidence is still
+  generic file evidence.
+- `T03`: model catalog structural criteria are still generic file evidence:
+  one-object catalog additions and provider-family limits.
+- All API route, frontend, provider, contract, and validation behavior smells
+  are now routed into explicit evidence tasks. Their unverified rows are gap
+  counters, not current audit smells.
 
 ## Active Cleanup Queue
 

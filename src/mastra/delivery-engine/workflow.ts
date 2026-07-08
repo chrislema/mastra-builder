@@ -2482,10 +2482,10 @@ function withProviderAdapterBehaviorTestTasks(tasks: Task[]) {
 
   for (const providerTask of tasks) {
     if (!taskOwnsProviderAdapterSurface(providerTask)) continue;
-    const behaviorCriteria = providerTask.acceptance_criteria.filter(
-      (criterion) => providerAdapterBehaviorCriterion(criterion) || isBehaviorLikeAcceptanceCriterion(criterion),
+    const evidenceCriteria = Array.from(
+      new Set([...providerTask.acceptance_criteria, ...(providerTask.source_acceptance_criteria ?? [])]),
     );
-    if (!behaviorCriteria.length) continue;
+    if (!evidenceCriteria.length) continue;
 
     const existingTestTask = next.find((task) => taskLooksLikeProviderAdapterBehaviorTest(task, providerTask.id));
     const testId = existingTestTask?.id ?? uniqueTaskIdFromTasks(next, `${providerTask.id}-provider-behavior-tests`);
@@ -2495,7 +2495,7 @@ function withProviderAdapterBehaviorTestTasks(tasks: Task[]) {
       const insertionIndex = providerIndex < 0 ? next.length : providerIndex + 1;
       next = [
         ...next.slice(0, insertionIndex),
-        providerAdapterBehaviorTestTask(providerTask, testId, behaviorCriteria),
+        providerAdapterBehaviorTestTask(providerTask, testId, evidenceCriteria),
         ...next.slice(insertionIndex),
       ];
       changed = true;
@@ -2503,7 +2503,7 @@ function withProviderAdapterBehaviorTestTasks(tasks: Task[]) {
 
     next = next.map((task) => {
       if (task.id === testId) {
-        const updated = appendTaskAcceptanceCriteria(task, behaviorCriteria);
+        const updated = appendTaskAcceptanceCriteria(task, evidenceCriteria);
         if (updated !== task) changed = true;
         return updated;
       }
@@ -2657,14 +2657,10 @@ function withFrontendBehaviorTestTasks(tasks: Task[]) {
 
   for (const frontendTask of tasks) {
     if (!taskOwnsFrontendBehaviorSurface(frontendTask)) continue;
-    const behaviorCriteria = Array.from(
-      new Set(
-        [...frontendTask.acceptance_criteria, ...(frontendTask.source_acceptance_criteria ?? [])].filter(
-          isBehaviorLikeAcceptanceCriterion,
-        ),
-      ),
+    const evidenceCriteria = Array.from(
+      new Set([...frontendTask.acceptance_criteria, ...(frontendTask.source_acceptance_criteria ?? [])]),
     );
-    if (!behaviorCriteria.length) continue;
+    if (!evidenceCriteria.length) continue;
 
     const existingTestTask = next.find((task) => taskLooksLikeFrontendBehaviorTest(task, frontendTask.id));
     const testId = existingTestTask?.id ?? uniqueTaskIdFromTasks(next, `${frontendTask.id}-frontend-behavior-tests`);
@@ -2674,7 +2670,7 @@ function withFrontendBehaviorTestTasks(tasks: Task[]) {
       const insertionIndex = frontendIndex < 0 ? next.length : frontendIndex + 1;
       next = [
         ...next.slice(0, insertionIndex),
-        frontendBehaviorTestTask(frontendTask, testId, behaviorCriteria),
+        frontendBehaviorTestTask(frontendTask, testId, evidenceCriteria),
         ...next.slice(insertionIndex),
       ];
       changed = true;
@@ -2682,7 +2678,7 @@ function withFrontendBehaviorTestTasks(tasks: Task[]) {
 
     next = next.map((task) => {
       if (task.id === testId) {
-        const updated = appendTaskAcceptanceCriteria(task, behaviorCriteria);
+        const updated = appendTaskAcceptanceCriteria(task, evidenceCriteria);
         if (updated !== task) changed = true;
         return updated;
       }
@@ -2745,14 +2741,10 @@ function withValidationBehaviorTestTasks(tasks: Task[]) {
 
   for (const sourceTask of tasks) {
     if (!taskOwnsValidationBehaviorSurface(sourceTask)) continue;
-    const behaviorCriteria = Array.from(
-      new Set(
-        [...sourceTask.acceptance_criteria, ...(sourceTask.source_acceptance_criteria ?? [])].filter(
-          isBehaviorLikeAcceptanceCriterion,
-        ),
-      ),
+    const evidenceCriteria = Array.from(
+      new Set([...sourceTask.acceptance_criteria, ...(sourceTask.source_acceptance_criteria ?? [])]),
     );
-    if (!behaviorCriteria.length) continue;
+    if (!evidenceCriteria.length) continue;
 
     const testSurface = validationBehaviorTestSurface(sourceTask);
     const baseId = /\/validation\.test\./.test(testSurface)
@@ -2766,7 +2758,7 @@ function withValidationBehaviorTestTasks(tasks: Task[]) {
       const insertionIndex = sourceIndex < 0 ? next.length : sourceIndex + 1;
       next = [
         ...next.slice(0, insertionIndex),
-        validationBehaviorTestTask(sourceTask, testId, testSurface, behaviorCriteria),
+        validationBehaviorTestTask(sourceTask, testId, testSurface, evidenceCriteria),
         ...next.slice(insertionIndex),
       ];
       changed = true;
@@ -2774,7 +2766,7 @@ function withValidationBehaviorTestTasks(tasks: Task[]) {
 
     next = next.map((task) => {
       if (task.id === testId) {
-        const updated = appendTaskAcceptanceCriteria(task, behaviorCriteria);
+        const updated = appendTaskAcceptanceCriteria(task, evidenceCriteria);
         if (updated !== task) changed = true;
         return updated;
       }

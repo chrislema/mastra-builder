@@ -93,13 +93,12 @@ export function auditDeliveryTaskPlan({
   const normalizedPlan = normalizeTaskPlanCloudflareWorkerContracts(taskPlan);
   const pendingEvidenceBySourceTaskAndCriterion = new Map<string, string>();
   for (const evidenceTask of normalizedPlan.tasks.filter(taskIsEvidenceTask)) {
-    const behaviorCriteria = new Set(
-      [...evidenceTask.acceptance_criteria, ...(evidenceTask.source_acceptance_criteria ?? [])].filter(
-        isBehaviorCriterion,
-      ),
-    );
+    const evidenceCriteria = new Set([
+      ...evidenceTask.acceptance_criteria,
+      ...(evidenceTask.source_acceptance_criteria ?? []),
+    ]);
     for (const sourceTaskId of evidenceTask.depends_on) {
-      for (const criterion of behaviorCriteria) {
+      for (const criterion of evidenceCriteria) {
         pendingEvidenceBySourceTaskAndCriterion.set(`${sourceTaskId}\0${criterion}`, evidenceTask.id);
       }
     }
@@ -137,21 +136,21 @@ export function auditDeliveryTaskPlan({
       const evidenceKind = acceptanceContractEvidenceKind(contract);
       const behaviorCriterion = isBehaviorCriterion(contract.criterion);
       const coveredByEvidenceTask =
-        behaviorCriterion && evidenceKind === 'unverified' && !evidenceTask
+        (evidenceKind === 'unverified' || evidenceKind === 'generic_file_evidence') && !evidenceTask
           ? pendingEvidenceBySourceTaskAndCriterion.get(`${task.id}\0${contract.criterion}`)
           : undefined;
       const pendingBehaviorEvidence =
         behaviorCriterion && evidenceKind === 'unverified' && (evidenceTask || coveredByEvidenceTask !== undefined);
-      const smell =
-        pendingBehaviorEvidence
-          ? undefined
-          : behaviorCriterion && evidenceKind === 'generic_file_evidence'
-          ? 'behavior_by_file_evidence'
-          : behaviorCriterion && evidenceKind === 'unverified' && !pendingBehaviorEvidence
-            ? 'behavior_unverified'
-            : evidenceKind === 'generic_file_evidence'
-              ? 'generic_file_evidence'
-              : undefined;
+      let smell: SmellAuditContract['smell'];
+      if (pendingBehaviorEvidence) {
+        smell = undefined;
+      } else if (behaviorCriterion && evidenceKind === 'generic_file_evidence') {
+        smell = coveredByEvidenceTask ? undefined : 'behavior_by_file_evidence';
+      } else if (behaviorCriterion && evidenceKind === 'unverified') {
+        smell = 'behavior_unverified';
+      } else if (evidenceKind === 'generic_file_evidence') {
+        smell = coveredByEvidenceTask ? undefined : 'generic_file_evidence';
+      }
 
       row.contracts += 1;
       if (evidenceKind === 'generic_file_evidence') row.genericFileEvidence += 1;
