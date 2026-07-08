@@ -89,6 +89,9 @@ Completed cleanup checkpoints:
     scope calculation, route endpoint default criteria, run-route labels, run
     mutation criteria, and AI output validation contract text into
     `task-plan-source-contracts.ts`.
+  - Move the larger auth/profile/run/workflow/router task-plan criteria builder
+    into `task-plan-source-contracts.ts`, leaving `workflow.ts` to provide typed
+    task facts and append the resulting criteria.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
