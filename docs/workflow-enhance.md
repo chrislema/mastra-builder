@@ -81,7 +81,7 @@ export const deliveryWorkflow = createDeliveryWorkflow({
 
 ### Phase 0: Plan And Re-Anchor
 
-Status: active.
+Status: complete.
 
 Tasks:
 
@@ -96,6 +96,8 @@ Exit criteria:
 - Repo remains clean after the checkpoint commit.
 
 ### Phase 1: Workflow Error, State Sync, And Step Utilities
+
+Status: complete.
 
 Goal: remove cross-cutting workflow mechanics from the policy-heavy file.
 
@@ -114,6 +116,14 @@ Move:
 - `syncDeliveryWorkflowState`
 - `createSyncDeliveryStageStateStep`
 - sync stage steps
+
+Completed extraction:
+
+- `workflow-support/errors.ts`
+- `workflow-support/state-sync.ts`
+
+`step-factory.ts` was not needed yet because the current sync-step factory is
+small and cohesive inside `state-sync.ts`.
 
 Keep in `workflow.ts`:
 

@@ -64,6 +64,8 @@ Do not redo these:
 - Implementation retry and stale-verification policy: `implementation-retry-policy.ts`
 - Planner prompt policy: `planner-prompt-policy.ts`
 - Build verification and deployment report policy: `build-deployment-policy.ts`
+- Workflow error handling: `workflow-support/errors.ts`
+- Workflow state sync steps: `workflow-support/state-sync.ts`
 
 ## Cleanup Rules
 

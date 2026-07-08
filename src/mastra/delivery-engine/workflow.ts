@@ -4,11 +4,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync,
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
-import { createStep, createWorkflow, type WorkflowErrorCallbackInfo } from '@mastra/core/workflows';
+import { createStep, createWorkflow } from '@mastra/core/workflows';
 import {
   appendDeliveryEventState,
   endDeliveryStageState,
-  finishDeliveryRunState,
   readDeliveryEventsState,
   initializeDeliveryRunState,
   readDeliveryRunState,
@@ -16,8 +15,9 @@ import {
   recordDeliveryJudgmentState,
   startDeliveryStageState,
   updateDeliveryTaskState,
+  finishDeliveryRunState,
 } from './state-service';
-import { finishDeliveryRun, readDeliveryEvents, readDeliveryRun, writeDeliveryArtifact, type DeliveryRunStatus } from './state';
+import { readDeliveryEvents, writeDeliveryArtifact, type DeliveryRunStatus } from './state';
 import {
   dependencyGraphAcyclic,
   fileOwnership,
@@ -61,6 +61,16 @@ import {
   deliveryWorkflowInputSchema,
   normalizeDeliveryWorkflowInput,
 } from './run-input';
+import { markDeliveryRunFailedOnWorkflowError } from './workflow-support/errors';
+import {
+  syncBuildStateStep,
+  syncDeliveryWorkflowState,
+  syncDeploymentReportStateStep,
+  syncFinalDeliveryStateStep,
+  syncPlanStateStep,
+  syncReleaseGateStateStep,
+  syncReviewStateStep,
+} from './workflow-support/state-sync';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
 import { taskPacketRailsForTask } from './task-packet-rails';
 import {
@@ -269,82 +279,9 @@ export {
   sourceDocumentsRequiredProfileKinds,
   sourcePolicyFromDocuments,
 } from './source-policy';
+export { markDeliveryRunFailedOnWorkflowError } from './workflow-support/errors';
 
 const execFileAsync = promisify(execFile);
-
-function stringField(value: unknown) {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function workflowErrorFailure(error: WorkflowErrorCallbackInfo['error']) {
-  const name = stringField(error?.name) ?? 'WorkflowError';
-  const message = stringField(error?.message) ?? 'Delivery workflow failed without a serialized error message.';
-  return { name, message };
-}
-
-function initializedDeliveryRunFailureTarget(errorInfo: WorkflowErrorCallbackInfo) {
-  const state = errorInfo.state as Record<string, unknown> | undefined;
-  const initData = errorInfo.getInitData?.() as Record<string, unknown> | undefined;
-  const repoPath =
-    stringField(state?.repoPath) ??
-    stringField(state?.projectFolder) ??
-    stringField(initData?.repoPath) ??
-    stringField(initData?.projectFolder);
-  const runId = stringField(state?.runId);
-
-  if (!repoPath || !runId) return undefined;
-  return { repoPath, runId };
-}
-
-export async function markDeliveryRunFailedOnWorkflowError(errorInfo: WorkflowErrorCallbackInfo) {
-  const target = initializedDeliveryRunFailureTarget(errorInfo);
-  if (!target) {
-    errorInfo.logger.warn('Delivery workflow failed before an initialized delivery run was available', {
-      workflowId: errorInfo.workflowId,
-      runId: errorInfo.runId,
-      resourceId: errorInfo.resourceId,
-      error: errorInfo.error?.message,
-    });
-    return;
-  }
-
-  const currentRun = readDeliveryRun(target.repoPath);
-  if (currentRun.run_id !== target.runId) {
-    errorInfo.logger.warn('Delivery workflow failure did not match the active local delivery run', {
-      workflowId: errorInfo.workflowId,
-      workflowRunId: errorInfo.runId,
-      deliveryRunId: target.runId,
-      activeDeliveryRunId: currentRun.run_id,
-      repoPath: target.repoPath,
-    });
-    return;
-  }
-
-  const failure = workflowErrorFailure(errorInfo.error);
-  try {
-    await finishDeliveryRunState({
-      repoPath: target.repoPath,
-      status: 'failed',
-      summary: `Delivery workflow failed: ${failure.message}`,
-      failure,
-      mastra: errorInfo.mastra,
-    });
-  } catch (stateError) {
-    errorInfo.logger.warn('Failed to mark delivery run failed through Mastra-backed state service; falling back locally', {
-      repoPath: target.repoPath,
-      deliveryRunId: target.runId,
-      error: stateError instanceof Error ? stateError.message : String(stateError),
-    });
-    finishDeliveryRun({
-      repoPath: target.repoPath,
-      status: 'failed',
-      summary: `Delivery workflow failed: ${failure.message}`,
-      failure,
-    });
-  }
-
-  await safePersistDeliveryStateWithMastra({ repoPath: target.repoPath, mastra: errorInfo.mastra });
-}
 
 function compactDiagnostic(error: unknown, limit = 600) {
   const text = error instanceof Error ? error.message : String(error);
@@ -434,28 +371,6 @@ function parsePlannerRevisionResponse(response: unknown, label: string) {
   }
 }
 
-const normalizeDeliveryWorkflowState = (state?: Partial<DeliveryWorkflowState>): DeliveryWorkflowState => ({
-  repoPath: state?.repoPath,
-  runId: state?.runId,
-  status: state?.status,
-  summary: state?.summary,
-  maxRetries: state?.maxRetries,
-  deployMode: state?.deployMode,
-  reviewMode: state?.reviewMode,
-  artifacts: state?.artifacts ?? [],
-  checks: state?.checks ?? [],
-  judgments: state?.judgments ?? [],
-  questions: state?.questions ?? [],
-  nextSteps: state?.nextSteps ?? [],
-  sourcePolicy: state?.sourcePolicy,
-  scaffoldManifest: state?.scaffoldManifest,
-  scaffoldManifestPath: state?.scaffoldManifestPath,
-  taskPlan: state?.taskPlan,
-  releaseGate: state?.releaseGate,
-  deploymentReport: state?.deploymentReport,
-  deploymentReportPath: state?.deploymentReportPath,
-});
-
 function scaffoldStageFields(input: Partial<DeliveryWorkflowState>) {
   return {
     ...(input.scaffoldManifest ? { scaffoldManifest: input.scaffoldManifest } : {}),
@@ -475,50 +390,6 @@ function scaffoldManifestPromptSummary(manifest: DeliveryWorkflowState['scaffold
     validation_commands: manifest.validationCommands,
     test_runtime_matrix: manifest.testRuntimeMatrix,
   };
-}
-
-async function syncDeliveryWorkflowState({
-  state,
-  setState,
-  output,
-}: {
-  state?: Partial<DeliveryWorkflowState>;
-  setState: (state: DeliveryWorkflowState) => Promise<void> | void;
-  output: Partial<DeliveryWorkflowState> & {
-    repoPath?: string;
-    runId?: string;
-    status?: DeliveryWorkflowState['status'];
-    summary?: string;
-    artifacts?: string[];
-    checks?: CheckSummary[];
-    judgments?: JudgmentRef[];
-    questions?: string[];
-    nextSteps?: string[];
-  };
-}) {
-  const current = normalizeDeliveryWorkflowState(state);
-  await setState({
-    ...current,
-    repoPath: output.repoPath ?? current.repoPath,
-    runId: output.runId ?? current.runId,
-    status: output.status ?? current.status,
-    summary: output.summary ?? current.summary,
-    maxRetries: output.maxRetries ?? current.maxRetries,
-    deployMode: output.deployMode ?? current.deployMode,
-    reviewMode: output.reviewMode ?? current.reviewMode,
-    artifacts: output.artifacts ?? current.artifacts,
-    checks: output.checks ?? current.checks,
-    judgments: output.judgments ?? current.judgments,
-    questions: output.questions ?? current.questions,
-    nextSteps: output.nextSteps ?? current.nextSteps,
-    sourcePolicy: output.sourcePolicy ?? current.sourcePolicy,
-    scaffoldManifest: output.scaffoldManifest ?? current.scaffoldManifest,
-    scaffoldManifestPath: output.scaffoldManifestPath ?? current.scaffoldManifestPath,
-    taskPlan: output.taskPlan ?? current.taskPlan,
-    releaseGate: output.releaseGate ?? current.releaseGate,
-    deploymentReport: output.deploymentReport ?? current.deploymentReport,
-    deploymentReportPath: output.deploymentReportPath ?? current.deploymentReportPath,
-  });
 }
 
 const checkSummaries = (results: DeterministicGateResult[], suffix?: string): CheckSummary[] =>
@@ -6582,63 +6453,6 @@ async function judgeDeliveryArtifact({
     ref,
   };
 }
-
-const createSyncDeliveryStageStateStep = (id: string, description: string) =>
-  createStep({
-    id,
-    description,
-    inputSchema: deliveryStageOutputSchema,
-    outputSchema: deliveryStageOutputSchema,
-    stateSchema: deliveryWorkflowStateSchema,
-    execute: async ({ inputData, state, setState, mastra }) => {
-      await syncDeliveryWorkflowState({ state, setState, output: inputData });
-      await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
-      return inputData;
-    },
-  });
-
-const syncPlanStateStep = createSyncDeliveryStageStateStep(
-  'sync-plan-state',
-  'Persist plan gate output into the native workflow state snapshot.',
-);
-const syncReviewStateStep = createSyncDeliveryStageStateStep(
-  'sync-review-state',
-  'Persist architect review output into the native workflow state snapshot.',
-);
-const syncBuildStateStep = createSyncDeliveryStageStateStep(
-  'sync-build-state',
-  'Persist build aggregation output into the native workflow state snapshot.',
-);
-const syncReleaseGateStateStep = createSyncDeliveryStageStateStep(
-  'sync-release-gate-state',
-  'Persist release gate output into the native workflow state snapshot.',
-);
-
-const syncDeploymentReportStateStep = createStep({
-  id: 'sync-deployment-report-state',
-  description: 'Persist deployment report output into the native workflow state snapshot.',
-  inputSchema: deploymentReportStageSchema,
-  outputSchema: deploymentReportStageSchema,
-  stateSchema: deliveryWorkflowStateSchema,
-  execute: async ({ inputData, state, setState, mastra }) => {
-    await syncDeliveryWorkflowState({ state, setState, output: inputData });
-    if (inputData.repoPath) await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
-    return inputData;
-  },
-});
-
-const syncFinalDeliveryStateStep = createStep({
-  id: 'sync-final-delivery-state',
-  description: 'Persist final delivery workflow output into the native workflow state snapshot.',
-  inputSchema: workflowOutputSchema,
-  outputSchema: workflowOutputSchema,
-  stateSchema: deliveryWorkflowStateSchema,
-  execute: async ({ inputData, state, setState, mastra }) => {
-    await syncDeliveryWorkflowState({ state, setState, output: inputData });
-    if (inputData.repoPath) await safePersistDeliveryStateWithMastra({ repoPath: inputData.repoPath, mastra });
-    return inputData;
-  },
-});
 
 const initializeRunStep = createStep({
   id: 'initialize-delivery-run',

@@ -12,6 +12,7 @@ import {
   recordDeliveryArtifactState,
   startDeliveryStageState,
 } from './state-service';
+import { markDeliveryRunFailedOnWorkflowError } from './workflow-support/errors';
 
 export const deliveryScaffoldInputSchema = z.object({
   repoPath: z.string().min(1),
@@ -115,11 +116,7 @@ export const deliveryScaffoldWorkflow = createWorkflow({
   inputSchema: deliveryScaffoldInputSchema,
   outputSchema: deliveryScaffoldOutputSchema,
   options: {
-    // Imported lazily to avoid a circular reference in tests that import this standalone workflow.
-    onError: async (errorInfo) => {
-      const { markDeliveryRunFailedOnWorkflowError } = await import('./workflow');
-      await markDeliveryRunFailedOnWorkflowError(errorInfo);
-    },
+    onError: markDeliveryRunFailedOnWorkflowError,
   },
 })
   .then(createScaffoldManifestStep)
