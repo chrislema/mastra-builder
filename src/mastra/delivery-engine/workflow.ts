@@ -138,6 +138,11 @@ import {
   workersAiBindingGaps,
   wranglerConfigHasWorkersAiBinding,
 } from './implementation/task-boundaries';
+import {
+  directDependencySurfacePaths,
+  existingOwnedFiles,
+  focusedRepairContextPaths,
+} from './implementation/task-packet';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
 import { taskPacketRailsForTask } from './task-packet-rails';
 import {
@@ -239,7 +244,6 @@ import {
 import {
   concreteOwnedSurfacePath,
   effectiveOwnedSurfaces,
-  normalizedOwnedSurfaces,
   taskOwnedBoundaryPaths,
   taskOwnsD1MigrationFile,
 } from './task-plan-surface-policy';
@@ -350,6 +354,7 @@ export {
   workersAiBindingGaps,
   wranglerConfigHasWorkersAiBinding,
 } from './implementation/task-boundaries';
+export { directDependencySurfacePaths } from './implementation/task-packet';
 
 const execFileAsync = promisify(execFile);
 
@@ -562,33 +567,6 @@ function repoFileContents(repoPath: string, paths: Array<string | undefined>) {
     .filter((file): file is { path: string; content: string } => Boolean(file));
 }
 
-function concreteTaskSurfacePaths(task: Task) {
-  return normalizedOwnedSurfaces(task)
-    .filter((surface) => !surface.includes('*'))
-    .map(concreteOwnedSurfacePath)
-    .filter((path): path is string => typeof path === 'string' && !/^unknown:/i.test(path));
-}
-
-export function directDependencySurfacePaths(taskPlan: TaskPlan, task: Task) {
-  const byId = new Map(taskPlan.tasks.map((candidate) => [candidate.id, candidate]));
-  const paths = task.depends_on.flatMap((dependencyId) => {
-    const dependency = byId.get(dependencyId);
-    return dependency ? concreteTaskSurfacePaths(dependency) : [];
-  });
-  return Array.from(new Set(paths.filter((path) => !taskOwnedBoundaryPaths(task).includes(path))));
-}
-
-function focusedRepairContextPaths(taskPlan: TaskPlan, task: Task, boundarySurfaces: string[]) {
-  const boundaryPaths = boundarySurfaces
-    .filter((surface) => !surface.includes('*'))
-    .map(concreteOwnedSurfacePath)
-    .filter((path): path is string => Boolean(path));
-  const dependencyPaths = directDependencySurfacePaths(taskPlan, task).filter(
-    (path) => path.startsWith('src/') || path.startsWith('migrations/'),
-  );
-  return Array.from(new Set([...boundaryPaths, ...dependencyPaths]));
-}
-
 const implementationWriteTools = new Set<string>([
   'Write',
   'Edit',
@@ -603,14 +581,6 @@ const moduleSourceExtensions = ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs'] as const
 
 function firstExistingRepoPath(repoPath: string, candidates: string[]) {
   return candidates.find((candidate) => existsSync(join(resolve(repoPath), candidate)));
-}
-
-function existingOwnedFiles(repoPath: string, task: Task) {
-  return taskBoundarySurfaces(repoPath, task).filter((surface) => {
-    if (surface.includes('*')) return false;
-    const path = concreteOwnedSurfacePath(surface);
-    return path ? existsSync(join(resolve(repoPath), path)) : false;
-  });
 }
 
 function workflowStepOwnedSurfaces(task: Task) {

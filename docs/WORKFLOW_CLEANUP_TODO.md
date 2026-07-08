@@ -129,6 +129,8 @@ Do not redo these:
 - Worker task boundaries, task-scoped Worker hygiene guards, and preflight
   owned-surface stubs:
   `implementation/task-boundaries.ts`
+- Task packet dependency and focused repair context paths:
+  `implementation/task-packet.ts`
 
 ## Cleanup Rules
 

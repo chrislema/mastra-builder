@@ -321,6 +321,8 @@ Completed extraction:
   Wrangler type ownership, Worker config/package/binding hygiene guards,
   installed package freshness, source boundary filtering, and compile-safe
   preflight stubs for missing owned surfaces.
+- `implementation/task-packet.ts` for dependency surface context, existing
+  owned-file fallback, and focused repair context paths.
 
 Keep in build-task workflow:
 
