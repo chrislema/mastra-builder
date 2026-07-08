@@ -242,6 +242,8 @@ Completed extraction:
   normalization, source-surface predicates, and scaffold hygiene gates.
 - `planning/acceptance-contract-preservation.ts` for task-plan revision
   acceptance-contract IDs, preservation, and regression checks.
+- `planning/route-boundary-policy.ts` for route-integration predicates and
+  final entrypoint route-boundary consistency hygiene.
 
 Keep in planning workflow:
 

@@ -99,6 +99,8 @@ Do not redo these:
   `planning/scaffold-policy.ts`
 - Acceptance-contract preservation and revision regression policy:
   `planning/acceptance-contract-preservation.ts`
+- Route integration and final entrypoint consistency hygiene:
+  `planning/route-boundary-policy.ts`
 
 ## Cleanup Rules
 
