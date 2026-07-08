@@ -5,9 +5,7 @@ import {
   buildVerificationCommandPlan as buildVerificationCommandPlanBase,
   buildVerificationCommandPlans as buildVerificationCommandPlansBase,
 } from '../build-deployment-policy';
-import {
-  missingInstalledPackageNames,
-} from '../implementation/task-boundaries';
+import { missingInstalledPackageNames } from '../implementation/task-boundaries';
 import {
   applyBuildVerificationRepair,
   staleWorkspaceVerificationRemediation,

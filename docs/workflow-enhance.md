@@ -389,6 +389,8 @@ Completed extraction:
 - `evidence/build-verification.ts` for build verification command planning,
   dependency install evidence, verification execution, scoped repair, and
   stale-workspace failure classification.
+- `evidence/local-admin-secret.ts` for release-gate local admin secret path
+  selection, temporary token injection, and restoration.
 
 Keep in release-gate workflow:
 

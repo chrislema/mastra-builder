@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import {
@@ -229,6 +229,7 @@ import {
 } from './build-deployment-policy';
 import { commandFailureSummary, execFileAsync, recordRunCodeStart } from './evidence/command-runner';
 import { ensureNodeDependencies, runBuildVerification } from './evidence/build-verification';
+import { prepareReleaseGateLocalAdminSecret, releaseGateLocalAdminToken } from './evidence/local-admin-secret';
 import {
   buildReleaseGateRuntimeProbePlan,
   releaseGateRuntimeProbePlanRequiresAdminSecret as runtimeProbePlanRequiresAdminSecret,
@@ -259,7 +260,6 @@ import {
   initialPlannerPrompt,
   planGateRevisionPrompt,
 } from './planner-prompt-policy';
-import { workerConfigPath as releaseGateWorkerConfigPath } from './worker-hygiene';
 
 export {
   sourceDocumentsDeclareExternalServiceBindings,
@@ -389,6 +389,7 @@ export {
   buildVerificationCommandPlan,
   buildVerificationCommandPlans,
 } from './evidence/build-verification';
+export { releaseGateLocalAdminSecretPath } from './evidence/local-admin-secret';
 
 function parseReviewReportResponse(response: unknown, label: string) {
   try {
@@ -551,62 +552,6 @@ function sourceTreeContainsRouteLiteral(rootPath: string, route: string, scanned
 function workerSourceContainsRouteLiteral(repoPath: string, route: string) {
   const scanned = { count: 0 };
   return workerSourceSearchRoots(repoPath).some((sourceRoot) => sourceTreeContainsRouteLiteral(sourceRoot, route, scanned));
-}
-
-const releaseGateLocalAdminToken = 'release-gate-local-admin-token';
-
-function parseDevVarsValue(text: string, key: string) {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = new RegExp(`^\\s*${escaped}\\s*=\\s*(.+?)\\s*$`, 'm').exec(text);
-  if (!match) return undefined;
-  const raw = match[1].trim();
-  const quoted = /^["'](.*)["']$/.exec(raw);
-  return quoted ? quoted[1] : raw;
-}
-
-function releaseGateLocalWorkerEnvironment(repoPath: string) {
-  return releaseGateWorkerConfigPath(repoPath) ? 'staging' : undefined;
-}
-
-export function releaseGateLocalAdminSecretPath(repoPath: string) {
-  const root = resolve(repoPath);
-  const environmentName = releaseGateLocalWorkerEnvironment(repoPath);
-  const candidates = environmentName
-    ? [
-        `.dev.vars.${environmentName}`,
-        '.dev.vars',
-        `.env.${environmentName}.local`,
-        '.env.local',
-        `.env.${environmentName}`,
-        '.env',
-      ]
-    : ['.dev.vars', '.env.local', '.env'];
-  const existing = candidates.find((file) => existsSync(join(root, file)));
-
-  return join(root, existing ?? (environmentName ? `.dev.vars.${environmentName}` : '.dev.vars'));
-}
-
-function prepareReleaseGateLocalAdminSecret(repoPath: string) {
-  const devVarsPath = releaseGateLocalAdminSecretPath(repoPath);
-  if (existsSync(devVarsPath)) {
-    const original = readFileSync(devVarsPath, 'utf8');
-    const existingToken = parseDevVarsValue(original, 'ADMIN_TOKEN');
-    if (existingToken) return { token: existingToken, restore: () => undefined };
-
-    writeFileSync(devVarsPath, `${original.replace(/\s*$/, '\n')}ADMIN_TOKEN=${releaseGateLocalAdminToken}\n`);
-    return {
-      token: releaseGateLocalAdminToken,
-      restore: () => writeFileSync(devVarsPath, original),
-    };
-  }
-
-  writeFileSync(devVarsPath, `ADMIN_TOKEN=${releaseGateLocalAdminToken}\n`);
-  return {
-    token: releaseGateLocalAdminToken,
-    restore: () => {
-      if (existsSync(devVarsPath)) unlinkSync(devVarsPath);
-    },
-  };
 }
 
 export function releaseGateLocalD1DatabaseName(repoPath: string) {

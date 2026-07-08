@@ -155,6 +155,9 @@ Do not redo these:
   verification execution, stale-workspace classification, and scoped
   verification repair:
   `evidence/build-verification.ts`
+- Release-gate local admin secret path selection, temporary token injection,
+  and restoration:
+  `evidence/local-admin-secret.ts`
 
 ## Cleanup Rules
 
