@@ -95,6 +95,8 @@ Do not redo these:
   `planning/operator-documentation-policy.ts`
 - Profile contract producer/consumer dependency ordering:
   `planning/profile-contract-policy.ts`
+- Root Worker scaffold dependency and hygiene policy:
+  `planning/scaffold-policy.ts`
 
 ## Cleanup Rules
 

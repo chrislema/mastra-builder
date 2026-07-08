@@ -238,6 +238,8 @@ Completed extraction:
   documentation planning and hygiene.
 - `planning/profile-contract-policy.ts` for profile contract producer surfaces,
   consumer dependency normalization, and profile contract ordering hygiene.
+- `planning/scaffold-policy.ts` for root Worker scaffold dependency
+  normalization, source-surface predicates, and scaffold hygiene gates.
 
 Keep in planning workflow:
 
