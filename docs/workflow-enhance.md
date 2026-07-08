@@ -386,6 +386,9 @@ Completed extraction:
 
 - `evidence/command-runner.ts` for run-code start events, shared execFile
   command execution, and normalized command failure summaries.
+- `evidence/build-verification.ts` for build verification command planning,
+  dependency install evidence, verification execution, scoped repair, and
+  stale-workspace failure classification.
 
 Keep in release-gate workflow:
 

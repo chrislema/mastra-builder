@@ -151,6 +151,10 @@ Do not redo these:
 - Shared command evidence runner for run-code start events, execFile command
   execution, and command failure summaries:
   `evidence/command-runner.ts`
+- Build verification command planning, dependency install evidence,
+  verification execution, stale-workspace classification, and scoped
+  verification repair:
+  `evidence/build-verification.ts`
 
 ## Cleanup Rules
 
