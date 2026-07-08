@@ -4990,6 +4990,68 @@ test('implementation touched files infer stage windows for workspace events with
   );
 });
 
+test('implementation touched files exclude stale out-of-plan auto repairs', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-files-touched-auto-repair-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'vitest.config.ts'), 'export default {};\n');
+  writeFileSync(join(repoPath, 'src/validation.ts'), 'export {};\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['vitest.config.ts'] }]).tasks;
+
+  assert.deepEqual(
+    implementationFilesTouched({
+      repoPath,
+      stage: 'build:T02-test-harness',
+      task,
+      events: [
+        { type: 'stage_start', stage: 'build:T02-test-harness' },
+        {
+          type: 'tool_use',
+          stage: 'build:T02-test-harness',
+          tool: 'mastra_workspace_write_file',
+          ok: true,
+          paths: ['vitest.config.ts'],
+        },
+        {
+          type: 'tool_use',
+          stage: 'build:T02-test-harness',
+          tool: 'auto_repair',
+          ok: true,
+          paths: ['src/validation.ts'],
+        },
+        { type: 'stage_end', stage: 'build:T02-test-harness' },
+      ],
+    }),
+    ['vitest.config.ts'],
+  );
+});
+
+test('implementation touched files keep in-boundary auto repairs', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-files-touched-in-boundary-auto-repair-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/guards.ts'), 'export {};\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/guards.ts'] }]).tasks;
+
+  assert.deepEqual(
+    implementationFilesTouched({
+      repoPath,
+      stage: 'build:T04-api-guards',
+      task,
+      events: [
+        { type: 'stage_start', stage: 'build:T04-api-guards' },
+        {
+          type: 'tool_use',
+          stage: 'build:T04-api-guards',
+          tool: 'auto_repair',
+          ok: true,
+          paths: ['src/guards.ts'],
+        },
+        { type: 'stage_end', stage: 'build:T04-api-guards' },
+      ],
+    }),
+    ['src/guards.ts'],
+  );
+});
+
 test('owned surface presence normalizes annotated paths and ignores globs', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-owned-surfaces-'));
   writeFileSync(join(repoPath, 'wrangler.toml'), 'name = "demo"\n');

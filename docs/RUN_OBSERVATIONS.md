@@ -226,3 +226,58 @@ For each run, record:
 - Stop decision: do not run another paid delivery pass before adding focused
   tests around stale downstream files such as `src/validation.ts` and fixing the
   resume boundary structurally.
+
+### 2026-07-08 11:45 CDT - CLI Resume Run 4 Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved; pick up from existing generated files and
+  `.delivery` state instead of clearing the project.
+- Forward-progress question: after commit `8d738a3` added delivery-note
+  provenance repair for stale out-of-plan files, does the preserved benchmark
+  get past the `src/validation.ts` stale contract import typecheck blocker and
+  continue toward the final local-test/human gate?
+- Cheap/static verification already tried before this run:
+  - `node --import tsx --test test/delivery-engine/workflow-policy.test.ts`
+    passed.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+  - `npm run audit:smells -- --projectFolder
+    /Users/chrislema/mastra/projects/benchmark --assume-typecheck
+    --assume-tests` reports 15 active evidence-routing smells in the revised
+    benchmark plan; those are documented in `docs/DELIVERY_SMELL_AUDIT.md` and
+    are separate from the stale-file resume blocker.
+- Guardrail: if this run stalls, classify the failure from the report first.
+  Do not add broad string matching in `workflow.ts`.
+- Workflow run ID: `ef820857-7925-4bbf-a025-ac703512b776`
+- Delivery run ID: `run-mrcb80pq-921f0601`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/ef820857-7925-4bbf-a025-ac703512b776.json`
+- Result: `deliveryStatus` was `stuck`; workflow control path completed and
+  wrote a report.
+- Reused stages: `T01`.
+- Newly executed stages:
+  - Planning/review completed with one architect bounce and a judged revised
+    plan.
+  - `T02-test-harness` ran four attempts; every verification pass after the
+    first stale-file auto-repair had `npm run typecheck` and `npm run test`
+    passing.
+- Farthest verified task: `T02-test-harness` verification commands passed, but
+  the implementation judge never accepted the task.
+- Confirmed fix from commit `8d738a3`: the stale `src/validation.ts` typecheck
+  blocker recurred, the harness auto-repaired only `src/validation.ts`, and the
+  immediate typecheck rerun passed.
+- New blocker: the `T02-test-harness` implementation notes included
+  `src/validation.ts` in `files_touched` because the workflow counted the
+  harness `auto_repair` event as part of the implementation surface. The judge
+  repeatedly scored the task below threshold for unrelated file scope even
+  though deterministic verification passed.
+- Failure class: harness accounting bug. Auto-repair events should remain
+  observable, but stale out-of-plan repairs should not be folded into the
+  task's implementation-note file list. In-boundary auto-repairs can still count
+  as task files because they change the current task surface.
+- Stop decision: fix `implementationFilesTouched` so out-of-plan auto-repairs do
+  not pollute implementation notes, add focused tests, then run cheap checks
+  before another paid delivery pass.

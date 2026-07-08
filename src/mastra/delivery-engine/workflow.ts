@@ -4605,7 +4605,11 @@ export function implementationFilesTouched({
   const stageEvents = implementationStageEvents(events, stage);
   const written = stageEvents
     .filter((event) => event.ok !== false && implementationWriteTools.has(String(event.tool)))
-    .flatMap((event) => event.paths ?? [])
+    .flatMap((event) => {
+      const paths = event.paths ?? [];
+      if (String(event.tool) !== 'auto_repair') return paths;
+      return paths.filter((path) => taskBoundaryAllowsRepairPath(repoPath, task, path));
+    })
     .filter((path) => path && !path.startsWith('.delivery/'));
 
   return Array.from(new Set(written.length ? written : existingOwnedFiles(repoPath, task)));
