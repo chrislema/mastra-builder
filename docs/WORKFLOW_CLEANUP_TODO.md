@@ -131,6 +131,8 @@ Do not redo these:
   `implementation/task-boundaries.ts`
 - Task packet dependency and focused repair context paths:
   `implementation/task-packet.ts`
+- Implementation deterministic gates for route, Workflow, profile-kind, and
+  lifecycle status structure: `implementation/deterministic-gates.ts`
 
 ## Cleanup Rules
 

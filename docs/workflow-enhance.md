@@ -323,6 +323,9 @@ Completed extraction:
   preflight stubs for missing owned surfaces.
 - `implementation/task-packet.ts` for dependency surface context, existing
   owned-file fallback, and focused repair context paths.
+- `implementation/deterministic-gates.ts` for route integration, Workflow step
+  integration, WorkflowEntrypoint imports, profile-kind contract alignment, and
+  lifecycle status CHECK constraint gates.
 
 Keep in build-task workflow:
 
