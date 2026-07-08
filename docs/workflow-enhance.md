@@ -252,6 +252,8 @@ Completed extraction:
   acceptance-criteria sanitizer predicates and status/surface
   canonicalization.
 - `planning/scaffold-policy.ts` now owns root Worker scaffold detection.
+- `planning/behavior-evidence-task-policy.ts` for provider adapter, API route,
+  frontend UI, and validation behavior evidence task synthesis.
 
 Keep in planning workflow:
 

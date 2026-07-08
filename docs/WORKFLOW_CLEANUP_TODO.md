@@ -111,6 +111,8 @@ Do not redo these:
   `planning/cloudflare-contract-criteria-policy.ts`
 - Root Worker scaffold detection:
   `planning/scaffold-policy.ts`
+- Behavior evidence task synthesis for provider, API, frontend, and
+  validation contracts: `planning/behavior-evidence-task-policy.ts`
 
 ## Cleanup Rules
 
