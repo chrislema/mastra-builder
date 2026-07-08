@@ -93,6 +93,8 @@ Do not redo these:
   `planning/task-ids.ts`
 - Operator README planning and hygiene:
   `planning/operator-documentation-policy.ts`
+- Profile contract producer/consumer dependency ordering:
+  `planning/profile-contract-policy.ts`
 
 ## Cleanup Rules
 

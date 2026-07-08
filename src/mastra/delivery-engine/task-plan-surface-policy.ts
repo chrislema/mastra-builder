@@ -28,6 +28,14 @@ export function normalizedOwnedSurfaces(task: Task) {
   return task.owned_surfaces.map((surface) => normalizeDeliveryPathReference(surface)).filter(Boolean);
 }
 
+export function taskOwnsExactSurface(task: Task, path: string) {
+  return normalizedOwnedSurfaces(task).includes(path);
+}
+
+export function taskOwnsAnyExactSurface(task: Task, paths: readonly string[]) {
+  return paths.some((path) => taskOwnsExactSurface(task, path));
+}
+
 export function effectiveOwnedSurfaces(task: Task) {
   const surfaces = new Set(task.owned_surfaces);
   const taskText = [task.deliverable, ...task.acceptance_criteria].join('\n');

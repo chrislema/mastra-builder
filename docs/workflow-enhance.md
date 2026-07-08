@@ -236,6 +236,8 @@ Completed extraction:
 - `planning/task-ids.ts` for collision-safe generated task ids.
 - `planning/operator-documentation-policy.ts` for README/operator
   documentation planning and hygiene.
+- `planning/profile-contract-policy.ts` for profile contract producer surfaces,
+  consumer dependency normalization, and profile contract ordering hygiene.
 
 Keep in planning workflow:
 

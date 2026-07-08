@@ -105,6 +105,11 @@ import { normalizeTaskPlanRoleBoundaries, taskOwnedSurfaceRoleHygiene } from './
 import { normalizeTaskPlanLargeStorageTasks } from './planning/large-task-policy';
 import { configSchemaTaskSplitHygiene, normalizeTaskPlanConfigSchemaTasks } from './planning/config-schema-policy';
 import { normalizeTaskPlanOperatorDocumentation, operatorDocumentationHygiene } from './planning/operator-documentation-policy';
+import {
+  normalizeTaskPlanProfileContractDependencies,
+  profileContractDependencyHygiene,
+  profileContractProducerSurfaces,
+} from './planning/profile-contract-policy';
 import { taskAcceptanceContractCriteria, taskSourceTaskId } from './planning/task-contracts';
 import { uniqueTaskId, uniqueTaskIdFromTasks } from './planning/task-ids';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
@@ -224,6 +229,7 @@ import {
   taskAuthBoundarySurface,
   taskD1MigrationSurface,
   taskOwnedBoundaryPaths,
+  taskOwnsAnyExactSurface,
   taskOwnsAiPipelineSurface,
   taskOwnsAiValidationSurface,
   taskOwnsAuthSurface,
@@ -236,6 +242,7 @@ import {
   taskOwnsManualRunRoute,
   taskOwnsOperatorAuthBoundary,
   taskOwnsPathMatching,
+  taskOwnsExactSurface as ownsExactSurface,
   taskOwnsProfileRepositorySurface,
   taskOwnsProfileRoute,
   taskOwnsProfileSummarySurface,
@@ -268,7 +275,6 @@ import {
   moveTaskAfterDependencies,
   taskCanDependOnTaskList,
   taskCanSafelyDependOn,
-  taskDependsOn,
   taskListDependsOn,
   withoutCyclicDependencies as withoutCyclicTaskDependencies,
 } from './task-plan-dependencies';
@@ -351,6 +357,10 @@ export {
   normalizeTaskPlanOperatorDocumentation,
   operatorDocumentationHygiene,
 } from './planning/operator-documentation-policy';
+export {
+  normalizeTaskPlanProfileContractDependencies,
+  profileContractDependencyHygiene,
+} from './planning/profile-contract-policy';
 
 const execFileAsync = promisify(execFile);
 
@@ -524,14 +534,6 @@ function acceptanceContractId(task: Task, index: number, criterion?: string) {
   return `${taskSourceTaskId(task)}-AC${String(index + 1).padStart(2, '0')}`;
 }
 
-function ownsExactSurface(task: Task, path: string) {
-  return normalizedOwnedSurfaces(task).includes(path);
-}
-
-function taskOwnsAnyExactSurface(task: Task, paths: readonly string[]) {
-  return paths.some((path) => ownsExactSurface(task, path));
-}
-
 function ownsPackageScaffold(task: Task) {
   return ownsExactSurface(task, 'package.json');
 }
@@ -675,62 +677,6 @@ export function normalizeTaskPlanScaffoldDependencies(repoPath: string, taskPlan
   });
 
   return changed ? { ...taskPlan, tasks } : taskPlan;
-}
-
-const profileContractProducerSurfaces = [
-  'src/validation.ts',
-  'src/contracts.ts',
-  'src/domain.ts',
-  'src/domain/profileKinds.ts',
-  'src/domain/profile.ts',
-  'src/domain/profiles.ts',
-  'src/domain/profileArtifacts.ts',
-];
-const profileContractConsumerSurfaces = ['migrations/0001_schema.sql', 'src/storage/profiles.ts', 'src/routes/profiles.ts'];
-
-function profileContractProducerTask(taskPlan: TaskPlan) {
-  return taskPlan.tasks.find((task) => taskOwnsAnyExactSurface(task, profileContractProducerSurfaces));
-}
-
-function profileContractConsumerTasks(taskPlan: TaskPlan) {
-  return taskPlan.tasks.filter(
-    (task) => taskOwnsAnyExactSurface(task, profileContractConsumerSurfaces) || taskOwnsD1MigrationFile(task),
-  );
-}
-
-export function normalizeTaskPlanProfileContractDependencies(taskPlan: TaskPlan): TaskPlan {
-  const producer = profileContractProducerTask(taskPlan);
-  if (!producer) return taskPlan;
-
-  let changed = false;
-  const tasks = taskPlan.tasks.map((task) => {
-    if (!profileContractConsumerTasks(taskPlan).some((consumer) => consumer.id === task.id)) return task;
-    if (taskDependsOn(taskPlan, task.id, producer.id)) return task;
-    if (!taskCanSafelyDependOn(taskPlan, task.id, producer.id)) return task;
-
-    changed = true;
-    return {
-      ...task,
-      depends_on: [...task.depends_on, producer.id],
-    };
-  });
-
-  return changed ? { ...taskPlan, tasks } : taskPlan;
-}
-
-export function profileContractDependencyHygiene(taskPlan: TaskPlan) {
-  const producer = profileContractProducerTask(taskPlan);
-  if (!producer) return { passed: true, reason: 'ok' };
-
-  for (const task of profileContractConsumerTasks(taskPlan)) {
-    if (taskDependsOn(taskPlan, task.id, producer.id)) continue;
-    return {
-      passed: false,
-      reason: `${task.id} owns a profile contract consumer surface but does not depend_on ${producer.id}. Schema, storage, and profile routes must run after the validation/domain contract so profile kind values stay aligned.`,
-    };
-  }
-
-  return { passed: true, reason: 'ok' };
 }
 
 function taskOwnsStatePersistenceSurface(task?: Task) {
