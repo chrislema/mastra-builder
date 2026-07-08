@@ -3020,6 +3020,103 @@ test('package-level npm test contract rejects non-Vitest scripts', () => {
   assert.match(contract?.gaps.join('\n') ?? '', /scripts\.test must run Vitest/);
 });
 
+test('acceptance contracts verify Wrangler validation without frontend build step structurally', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-no-frontend-build-'));
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          'production:dry-run': 'wrangler deploy --dry-run --env production',
+          validate: 'npm run typecheck && npm run production:dry-run',
+          typecheck: 'npm run generate-types && tsc --noEmit',
+          'generate-types': 'wrangler types',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        main: 'src/index.ts',
+        compatibility_date: '2026-07-07',
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc'],
+      acceptance_criteria: [
+        'The scaffold is shaped so Wrangler local/dry-run validation can be performed without a frontend build step.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /Wrangler validation scripts do not require a frontend build step/);
+});
+
+test('Wrangler validation without frontend build contract rejects build-gated validation scripts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-frontend-build-validation-'));
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          build: 'vite build',
+          validate: 'npm run build && wrangler deploy --dry-run --env production',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        main: 'dist/index.js',
+        compatibility_date: '2026-07-07',
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc'],
+      acceptance_criteria: [
+        'The scaffold is shaped so Wrangler local/dry-run validation can be performed without a frontend build step.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'unverified');
+  assert.match(contract?.gaps.join('\n') ?? '', /frontend build step/);
+});
+
 test('acceptance contracts verify Worker type constants and result envelopes structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-types-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

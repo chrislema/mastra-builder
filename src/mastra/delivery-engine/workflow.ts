@@ -8318,6 +8318,79 @@ function packageScriptContractEvidence({
   };
 }
 
+function workerValidationWithoutFrontendBuildContractEvidence({
+  criterion,
+  repoPath,
+  task,
+}: {
+  criterion: string;
+  repoPath?: string;
+  task?: Task;
+}) {
+  if (!repoPath || !task) return undefined;
+  if (!/\bWrangler\b/i.test(criterion) || !/\b(?:local|dry-run)\b/i.test(criterion) || !/\bfrontend build step\b/i.test(criterion)) {
+    return undefined;
+  }
+
+  const surfaces = taskBoundarySurfaces(repoPath, task);
+  if (!surfaces.includes('package.json')) return undefined;
+
+  const packageJson = packageRecord(repoPath);
+  const scripts = recordValue(packageJson?.scripts);
+  const gaps: string[] = [];
+
+  const scriptEntries = Object.entries(scripts ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+  const hasLocalWranglerValidation = scriptEntries.some(
+    ([name, command]) => /^(?:dev|local:validate)$/.test(name) && /\bwrangler\s+dev\b/.test(command) && /--env\s+staging\b/.test(command),
+  );
+  const hasDryRunWranglerValidation = scriptEntries.some(
+    ([name, command]) =>
+      /^(?:dry-run|production:dry-run|validate)$/.test(name) &&
+      /\bwrangler\s+deploy\b/.test(command) &&
+      /--dry-run\b/.test(command) &&
+      /--env\s+production\b/.test(command),
+  );
+
+  if (!hasLocalWranglerValidation && !hasDryRunWranglerValidation) {
+    gaps.push('package.json must expose Wrangler local or production dry-run validation through scripts.');
+  }
+
+  const validationCommands = scriptEntries
+    .filter(([name]) => /^(?:dev|local:validate|dry-run|production:dry-run|validate)$/.test(name))
+    .map(([, command]) => command)
+    .join('\n');
+  if (/\b(?:npm|pnpm|yarn)\s+run\s+build\b|\b(?:vite|webpack|parcel|next|react-scripts)\s+build\b/i.test(validationCommands)) {
+    gaps.push('Wrangler validation scripts must not require a frontend build step.');
+  }
+
+  const directFrontendBuildScript = scripts?.build;
+  if (typeof directFrontendBuildScript === 'string' && /\b(?:vite|webpack|parcel|next|react-scripts)\b/i.test(directFrontendBuildScript)) {
+    gaps.push('package.json must not define a frontend build script for the vanilla Worker scaffold.');
+  }
+
+  const wranglerPath = join(resolve(repoPath), 'wrangler.jsonc');
+  if (surfaces.includes('wrangler.jsonc')) {
+    if (!existsSync(wranglerPath)) {
+      gaps.push('wrangler.jsonc must exist for config-driven Wrangler validation.');
+    } else {
+      const config = parseWranglerJsonConfig(readFileSync(wranglerPath, 'utf8'));
+      if (!config) {
+        gaps.push('wrangler.jsonc must be valid JSONC for config-driven Wrangler validation.');
+      } else if (typeof config.main !== 'string' || (config.main !== 'src/index.ts' && !config.main.startsWith('src/index.'))) {
+        gaps.push('wrangler.jsonc main must point at the Worker entrypoint rather than a frontend build output.');
+      }
+    }
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured package.json/wrangler evidence verified Wrangler validation scripts do not require a frontend build step'],
+    gaps: [],
+  };
+}
+
 function tsconfigWorkerContractEvidence({
   criterion,
   repoPath,
@@ -9060,6 +9133,13 @@ function acceptanceCriterionEvidence({
 
   const packageScriptEvidence = packageScriptContractEvidence({ criterion, repoPath, task });
   if (packageScriptEvidence) return packageScriptEvidence;
+
+  const workerValidationWithoutFrontendBuildEvidence = workerValidationWithoutFrontendBuildContractEvidence({
+    criterion,
+    repoPath,
+    task,
+  });
+  if (workerValidationWithoutFrontendBuildEvidence) return workerValidationWithoutFrontendBuildEvidence;
 
   const adminTokenEvidence = workerConfigAdminTokenSecretContractEvidence({ criterion, repoPath, task });
   if (adminTokenEvidence) return adminTokenEvidence;
