@@ -1665,6 +1665,43 @@ test('task plan normalization copies frontend behavior criteria to a UI behavior
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
 
+test('task plan normalization copies validation behavior criteria to contract test tasks', () => {
+  const plan = taskPlan([
+    {
+      id: 'T02',
+      depends_on: [],
+      owned_surfaces: ['src/contracts.ts'],
+      acceptance_criteria: [
+        'src/contracts.ts defines POST /api/run as a single-model execution contract: requests still use a models array for compatibility, but the array must contain exactly one model id.',
+      ],
+    },
+    {
+      id: 'T03',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/validation.ts'],
+      acceptance_criteria: [
+        'src/validation.ts validation helpers return consistent JSON-compatible error payloads and do not call provider adapters.',
+      ],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(plan);
+  const byId = Object.fromEntries(normalized.tasks.map((task) => [task.id, task]));
+  const contractTestTask = byId['T02-contract-behavior-tests'];
+  const validationTestTask = byId['T03-validation-behavior-tests'];
+
+  assert.ok(contractTestTask);
+  assert.ok(validationTestTask);
+  assert.deepEqual(contractTestTask.owned_surfaces, ['test/contracts.test.ts']);
+  assert.deepEqual(validationTestTask.owned_surfaces, ['test/validation.test.ts']);
+  assert.match(byId.T02.acceptance_criteria.join('\n'), /single-model execution contract/);
+  assert.match(contractTestTask.acceptance_criteria.join('\n'), /single-model execution contract/);
+  assert.match(byId.T03.acceptance_criteria.join('\n'), /do not call provider adapters/);
+  assert.match(validationTestTask.acceptance_criteria.join('\n'), /do not call provider adapters/);
+  assert.ok(byId.T03.depends_on.includes('T02-contract-behavior-tests'));
+  assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
+});
+
 test('task plan repair preservation does not carry generated route policy into stateless api-run plans', () => {
   const previous = taskPlan([
     {
@@ -4228,6 +4265,39 @@ test('frontend behavior contracts use frontend-focused test evidence instead of 
 
   assert.equal(frontendTestContracts[0].status, 'verified');
   assert.match(frontendTestContracts[0].evidence.join('\n'), /frontend behavior test evidence/);
+});
+
+test('validation behavior contracts use validation-focused test evidence instead of generic test success', () => {
+  const [task] = taskPlan([
+    {
+      id: 'T03-validation-behavior-tests',
+      owner: 'engineer',
+      depends_on: ['T03'],
+      owned_surfaces: ['test/validation.test.ts'],
+      acceptance_criteria: [
+        'src/validation.ts validation helpers return consistent JSON-compatible error payloads and do not call provider adapters.',
+      ],
+    },
+  ]).tasks;
+
+  const genericTestContracts = acceptanceContractsForTask({
+    task,
+    verification: { performed: ['npm run test passed: frontend behavior updates selected count'], missing: [] },
+  });
+  assert.equal(genericTestContracts[0].status, 'unverified');
+
+  const validationTestContracts = acceptanceContractsForTask({
+    task,
+    verification: {
+      performed: [
+        'npm run test passed: test/validation.test.ts > validation behavior returns JSON-compatible errors without provider calls',
+      ],
+      missing: [],
+    },
+  });
+
+  assert.equal(validationTestContracts[0].status, 'verified');
+  assert.match(validationTestContracts[0].evidence.join('\n'), /validation\/domain contract behavior test evidence/);
 });
 
 test('provider adapter contract rejects hard-coded provider secret env reads', () => {

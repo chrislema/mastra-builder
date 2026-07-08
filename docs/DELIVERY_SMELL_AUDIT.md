@@ -47,18 +47,19 @@ keeping behavior-only evidence gaps out of deterministic implementation retries,
 copying API route and frontend behavior criteria onto explicit evidence tasks,
 preserving those criteria on the implementation tasks as first-class contracts,
 and carrying non-endpoint behavior from tasks that already declare explicit API
-route behavior into the same route evidence task:
+route behavior into the same route evidence task, and copying contract/validation
+behavior onto explicit domain evidence tasks:
 
-- Acceptance contracts: 238
+- Acceptance contracts: 266
 - Structured evidence: 33
-- Command/test evidence: 36
+- Command/test evidence: 42
 - Generic file evidence: 25
-- Unverified contracts: 144
-- Behavior-shaped criteria: 131
+- Unverified contracts: 166
+- Behavior-shaped criteria: 155
 - Behavior criteria verified by generic file evidence: 0
-- Behavior criteria still unverified: 10
-- Pending behavior evidence: 95
-- Total audit smells: 74
+- Behavior criteria still unverified: 5
+- Pending behavior evidence: 122
+- Total audit smells: 69
 
 This is an intentional intermediate state: behavior is no longer falsely marked
 verified by token overlap, behavior-only proof gaps no longer cause
@@ -81,6 +82,10 @@ Largest clusters:
   generic-file evidence or non-behavior unverified UI/documentation contracts.
 - `T04-provider-behavior-tests`: good direction, but still needs fuller command
   evidence for missing-key and Workers AI binding behavior.
+- `T02`/`T02-part-2`: contract and validation behavior now have explicit
+  `test/contracts.test.{ts,js}` and `test/validation.test.{ts,js}` evidence
+  tasks. Remaining smells on those rows are structural generic-file evidence,
+  not behavior-by-file evidence.
 
 ## Active Cleanup Queue
 
@@ -95,12 +100,14 @@ Largest clusters:
    block deterministic retries, behavior-only gaps do not.
 4. Replace the highest-volume behavior criteria with test-task or command
    evidence patterns, starting with API route behavior and frontend state
-   behavior. API route and frontend behavior routing are partially complete: the
-   normalizer now creates `test/api-routes.test.{ts,js}` and
-   `test/frontend-behavior.test.{ts,js}` tasks, copies behavior contracts into
-   those evidence tasks, preserves the contracts on implementation tasks, and
-   classifies missing behavior evidence as pending evidence instead of a smell
-   when a downstream evidence task carries the same contract.
+   behavior. API route, frontend, contract, and validation behavior routing are
+   partially complete: the normalizer now creates
+   `test/api-routes.test.{ts,js}`, `test/frontend-behavior.test.{ts,js}`,
+   `test/contracts.test.{ts,js}`, and `test/validation.test.{ts,js}` tasks,
+   copies behavior contracts into those evidence tasks, preserves the contracts
+   on implementation tasks, and classifies missing behavior evidence as pending
+   evidence instead of a smell when a downstream evidence task carries the same
+   contract.
 5. Review the `without*Criteria` normalizers in `workflow.ts`; keep only typed
    ownership/scope normalization that cannot be expressed in task schemas,
    source-scoped contracts, or tests.

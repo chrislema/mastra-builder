@@ -2694,6 +2694,98 @@ function withFrontendBehaviorTestTasks(tasks: Task[]) {
   return { tasks: next, changed };
 }
 
+function validationBehaviorTestSurface(task: Task) {
+  const extension = taskTestSurfaceExtension(task);
+  return taskOwnsPathMatching(task, /^src\/validation\.[cm]?[jt]s$/i)
+    ? `test/validation.test.${extension}`
+    : `test/contracts.test.${extension}`;
+}
+
+function taskOwnsValidationBehaviorSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:contracts|validation)\.[cm]?[jt]s$/i);
+}
+
+function taskLooksLikeValidationBehaviorTest(task: Task, sourceTaskId: string, testSurface: string) {
+  return (
+    task.owner === 'engineer' &&
+    task.depends_on.includes(sourceTaskId) &&
+    taskOwnedBoundaryPaths(task).includes(testSurface) &&
+    /\b(?:validation|contract|error shape|single-model|client-safe)\b/i.test(
+      [task.deliverable, ...task.acceptance_criteria, ...task.owned_surfaces].join('\n'),
+    )
+  );
+}
+
+function validationBehaviorTestTask(sourceTask: Task, testId: string, testSurface: string, criteria: string[]): Task {
+  const isValidation = /\/validation\.test\./.test(testSurface);
+  return {
+    id: testId,
+    owner: 'engineer',
+    deliverable: isValidation
+      ? 'Add validation behavior tests that prove malformed requests, model selection, size limits, and provider-dispatch prevention with no real provider calls.'
+      : 'Add domain contract behavior tests that prove client-safe error shapes, redaction rules, and single-model request contracts.',
+    depends_on: [sourceTask.id],
+    acceptance_criteria: Array.from(
+      new Set([
+        `${testSurface} imports the source contract or validation helpers directly and uses fake inputs with no real provider calls.`,
+        `${testSurface} proves validation, client-safe error, redaction, and single-model behavior contracts owned by the source task.`,
+        'npm test passes and includes validation/domain contract behavior coverage.',
+        ...criteria,
+      ]),
+    ),
+    owned_surfaces: [testSurface],
+  };
+}
+
+function withValidationBehaviorTestTasks(tasks: Task[]) {
+  let changed = false;
+  let next = [...tasks];
+
+  for (const sourceTask of tasks) {
+    if (!taskOwnsValidationBehaviorSurface(sourceTask)) continue;
+    const behaviorCriteria = Array.from(
+      new Set(
+        [...sourceTask.acceptance_criteria, ...(sourceTask.source_acceptance_criteria ?? [])].filter(
+          isBehaviorLikeAcceptanceCriterion,
+        ),
+      ),
+    );
+    if (!behaviorCriteria.length) continue;
+
+    const testSurface = validationBehaviorTestSurface(sourceTask);
+    const baseId = /\/validation\.test\./.test(testSurface)
+      ? `${sourceTask.id}-validation-behavior-tests`
+      : `${sourceTask.id}-contract-behavior-tests`;
+    const existingTestTask = next.find((task) => taskLooksLikeValidationBehaviorTest(task, sourceTask.id, testSurface));
+    const testId = existingTestTask?.id ?? uniqueTaskIdFromTasks(next, baseId);
+
+    if (!existingTestTask) {
+      const sourceIndex = next.findIndex((task) => task.id === sourceTask.id);
+      const insertionIndex = sourceIndex < 0 ? next.length : sourceIndex + 1;
+      next = [
+        ...next.slice(0, insertionIndex),
+        validationBehaviorTestTask(sourceTask, testId, testSurface, behaviorCriteria),
+        ...next.slice(insertionIndex),
+      ];
+      changed = true;
+    }
+
+    next = next.map((task) => {
+      if (task.id === testId) {
+        const updated = appendTaskAcceptanceCriteria(task, behaviorCriteria);
+        if (updated !== task) changed = true;
+        return updated;
+      }
+      if (task.id === testId || !task.depends_on.includes(sourceTask.id) || task.depends_on.includes(testId)) return task;
+      if (!taskCanDependOnTaskList(next, task.id, testId)) return task;
+      changed = true;
+      return appendDependencies(task, [testId]);
+    });
+  }
+
+  return { tasks: next, changed };
+}
+
 function sourceContractCriteriaForTask(
   task: Task,
   context: {
@@ -2911,6 +3003,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, s
   if (withFrontendBehaviorTests.changed) {
     changed = true;
     tasks = withFrontendBehaviorTests.tasks;
+  }
+
+  const withValidationBehaviorTests = withValidationBehaviorTestTasks(tasks);
+  if (withValidationBehaviorTests.changed) {
+    changed = true;
+    tasks = withValidationBehaviorTests.tasks;
   }
 
   const withDependencies = withCloudflareWorkerDependencyContracts(tasks);

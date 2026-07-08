@@ -21,7 +21,7 @@ test('smell audit reports behavior criteria as unverified instead of file-eviden
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-smell-file-evidence-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
   writeFileSync(
-    join(repoPath, 'src/validation.ts'),
+    join(repoPath, 'src/helpers.ts'),
     [
       'export function validateRunRequest() {',
       '  const payload = { json: true, compatible: true, error: "validation_error" };',
@@ -39,9 +39,9 @@ test('smell audit reports behavior criteria as unverified instead of file-eviden
       owner: 'engineer',
       deliverable: 'Validation helpers',
       depends_on: [],
-      owned_surfaces: ['src/validation.ts'],
+      owned_surfaces: ['src/helpers.ts'],
       acceptance_criteria: [
-        'src/validation.ts validation helpers return consistent JSON-compatible error payloads and do not call provider adapters.',
+        'src/helpers.ts validation helpers return consistent JSON-compatible error payloads and do not call provider adapters.',
       ],
     }),
   });

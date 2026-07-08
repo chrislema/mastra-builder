@@ -1266,6 +1266,18 @@ function taskOwnsFrontendBehaviorEvidenceSurface(task?: AcceptanceContractTask) 
   );
 }
 
+function taskOwnsValidationBehaviorEvidenceSurface(task?: AcceptanceContractTask) {
+  return Boolean(
+    task?.owned_surfaces
+      .map(normalizeDeliveryPathReference)
+      .some(
+        (path) =>
+          /^src\/(?:contracts|validation)\.[cm]?[jt]s$/i.test(path) ||
+          /^test\/(?:contracts|validation).*\.test\.[cm]?[jt]s$/i.test(path),
+      ),
+  );
+}
+
 function repoFileContents(repoPath: string, paths: Array<string | undefined>) {
   return paths
     .filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
@@ -1318,6 +1330,16 @@ function acceptanceCriterionCommandEvidence(context: AcceptanceContractContext) 
     )
   ) {
     return 'frontend behavior test evidence covered vanilla UI interaction and render criteria';
+  }
+  if (
+    isBehaviorLikeAcceptanceCriterion(criterion) &&
+    taskOwnsValidationBehaviorEvidenceSurface(task) &&
+    /\bnpm run test passed\b|\bvitest\b/.test(evidence) &&
+    /\b(?:test\/(?:contracts|validation).*\.test\.[cm]?[jt]s|validation behavior|domain contract behavior|client-safe error|single-model)\b/.test(
+      evidence,
+    )
+  ) {
+    return 'validation/domain contract behavior test evidence covered request and error contract criteria';
   }
   if (/\b(typecheck|tsc|typescript)\b/.test(text) && /\b(typecheck|tsc)\b/.test(evidence)) {
     return 'verification command covered TypeScript/typecheck criterion';
