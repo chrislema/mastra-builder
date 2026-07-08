@@ -252,17 +252,23 @@ framework beside Mastra.
 - Phase 2: complete; `delivery-scaffold` materializes a scaffold manifest,
   validates generated files against it, and feeds the manifest into later
   workflow stages.
-- Phase 3: in progress; planner prompts no longer require root scaffold task
+- Phase 3: complete; planner prompts no longer require root scaffold task
   ownership, active plan scaffold hygiene delegates root rails to the project
-  factory, and task rows now receive workflow-derived `task`/`surface`/
+  factory, and task rows receive workflow-derived `task`/`surface`/
   `evidence`/`runtime` metadata.
-- Phase 4: in progress; `test/fixtures/delivery-projects/` now covers minimal
-  JS Worker, TypeScript public UI, Workers AI, D1, KV/R2, explicit Pages, and
+- Phase 4: complete; `test/fixtures/delivery-projects/` covers minimal JS
+  Worker, TypeScript public UI, Workers AI, D1, KV/R2, explicit Pages, and
   benchmark-shaped source docs through cheap project-factory fixture tests.
-- Phase 5: in progress; scaffold profile, runtime matrix, binding completeness,
+- Phase 5: complete; scaffold profile, runtime matrix, binding completeness,
   vanilla frontend, local evidence readiness, and model spend scorers are
-  registered, and workflow events now include deterministic gate results and
-  typed task packet emission.
+  registered, and workflow events include deterministic gate results and typed
+  task packet emission.
+- Phase 6: complete; build task packets now include typed rails for allowed
+  surfaces, scaffold-owned read-only surfaces, runtime/evidence/surface/task
+  classes, source contracts, dependency surfaces, verification command class,
+  and model budget caps. The same rails feed Studio-visible task packet events.
+- Phase 7: not started under this reset; the one paid benchmark run remains an
+  explicit approval step after cheap checks are green.
 
 ### Phase 0: Freeze Expensive Run Loop
 
@@ -488,8 +494,10 @@ Planned additions:
 - `src/mastra/delivery-engine/project-factory/package-manifest.ts`
 - `src/mastra/delivery-engine/scaffold-workflow.ts`
 - `src/mastra/delivery-engine/scaffold-scorers.ts`
+- `src/mastra/delivery-engine/task-packet-rails.ts`
 - `test/delivery-engine/project-factory.test.ts`
 - `test/delivery-engine/test-runtime-matrix.test.ts`
+- `test/delivery-engine/task-packet-rails.test.ts`
 - `test/fixtures/delivery-projects/`
 
 Likely edits:
@@ -529,13 +537,14 @@ This reset is done when:
 
 ## Immediate Next Step
 
-Start with Phase 1. Build the project factory and test runtime matrix first.
-The first regression fixture should encode the Run 9 failure:
+Do not start another full paid delivery run from this spec by default. The next
+step is Phase 7 only after explicit approval:
 
-- input profile: TypeScript Worker with public UI and contract tests.
-- generated `vitest.config.ts` must route `test/contracts.test.ts` to Node.
-- generated Worker/API tests must still route to the Workers pool.
-- generated frontend shell tests must route to jsdom.
-
-Only after that passes should the delivery workflow be changed to call the
-factory.
+- confirm `npm run typecheck` passes.
+- confirm `npm test` passes.
+- confirm scaffold fixture coverage still includes the benchmark-shaped project.
+- run the smell audit only against a real task-plan artifact, not a missing
+  default checkout path.
+- run one paid benchmark pass and classify any failure as factory, task-plan,
+  agent implementation, environment, or human-decision before deciding whether a
+  second paid pass is justified.
