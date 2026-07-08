@@ -68,6 +68,9 @@ Do not redo these:
 - Workflow state sync steps: `workflow-support/state-sync.ts`
 - Agent trace artifacts and response serialization:
   `agent-runtime/trace-artifacts.ts`
+- Agent call options and timeout constants: `agent-runtime/options.ts`
+- Agent stage timeout watchdogs and write/read-budget event helpers:
+  `agent-runtime/stage-timeout.ts`
 
 ## Cleanup Rules
 

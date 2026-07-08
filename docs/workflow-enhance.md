@@ -167,6 +167,10 @@ Completed extraction:
 
 - `agent-runtime/trace-artifacts.ts` for response text extraction, agent
   response serialization, secret redaction, and trace artifact writing.
+- `agent-runtime/options.ts` for required-agent lookup, structured no-tool
+  options, implementation workspace tool sets, and timeout constants.
+- `agent-runtime/stage-timeout.ts` for stage timeout errors, no-tool/read-budget
+  watchdogs, latest-write tracking, and timeout event recording.
 
 Keep in workflow steps:
 
