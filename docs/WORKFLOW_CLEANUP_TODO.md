@@ -113,6 +113,8 @@ Do not redo these:
   `planning/scaffold-policy.ts`
 - Behavior evidence task synthesis for provider, API, frontend, and
   validation contracts: `planning/behavior-evidence-task-policy.ts`
+- Route, scheduler, and final Worker entrypoint criteria cleanup:
+  `planning/route-criteria-policy.ts`
 
 ## Cleanup Rules
 

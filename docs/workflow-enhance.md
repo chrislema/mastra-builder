@@ -254,6 +254,9 @@ Completed extraction:
 - `planning/scaffold-policy.ts` now owns root Worker scaffold detection.
 - `planning/behavior-evidence-task-policy.ts` for provider adapter, API route,
   frontend UI, and validation behavior evidence task synthesis.
+- `planning/route-criteria-policy.ts` for route endpoint criteria ownership,
+  scheduler/workflow criteria drift cleanup, and final Worker entrypoint
+  criteria sanitization.
 
 Keep in planning workflow:
 
