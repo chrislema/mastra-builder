@@ -48,6 +48,7 @@ import {
   syncReleaseGateStateStep,
   syncReviewStateStep,
 } from './workflow-support/state-sync';
+import { scaffoldStageFields } from './workflow-support/stage-fields';
 import { compactDiagnostic } from './agent-runtime/diagnostics';
 import {
   judgeDeliveryArtifact,
@@ -426,13 +427,6 @@ function readCachedPlannerOutput({
   if (!generatedSliceDependencyHygiene(taskPlan.data).passed) return undefined;
 
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
-}
-
-function scaffoldStageFields(input: Partial<DeliveryWorkflowState>) {
-  return {
-    ...(input.scaffoldManifest ? { scaffoldManifest: input.scaffoldManifest } : {}),
-    ...(input.scaffoldManifestPath ? { scaffoldManifestPath: input.scaffoldManifestPath } : {}),
-  };
 }
 
 function scaffoldManifestPromptSummary(manifest: DeliveryWorkflowState['scaffoldManifest'] | undefined) {
