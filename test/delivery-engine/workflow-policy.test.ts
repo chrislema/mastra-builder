@@ -3916,6 +3916,85 @@ test('provider adapter contract accepts models.ts contract and class-based sanit
   assert.equal(contracts.every((contract) => contract.status === 'verified'), true);
 });
 
+test('provider adapter contract accepts split normalized errors module', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-provider-errors-contract-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/providers.ts'),
+    [
+      'import { PROVIDER_EXECUTION_TIMEOUT_MS } from "./contracts";',
+      'import type { Env } from "./contracts";',
+      'import type { ModelCatalogEntry } from "./models";',
+      'import { httpProviderError, malformedProviderResponseError, normalizeCaughtProviderError, timeoutProviderError } from "./errors";',
+      'export const PROVIDER_TIMEOUT_MS = PROVIDER_EXECUTION_TIMEOUT_MS;',
+      'type PromptInput = { userPrompt: string; systemPrompt?: string };',
+      'export async function executeModel(env: Env, model: ModelCatalogEntry, prompt: PromptInput) {',
+      '  try {',
+      '    return await runOpenAiCompatibleModel(env, model, prompt);',
+      '  } catch (error) {',
+      '    throw normalizeCaughtProviderError(model, error);',
+      '  }',
+      '}',
+      'async function runOpenAiCompatibleModel(env: Env, model: ModelCatalogEntry, prompt: PromptInput) {',
+      '  const apiKey = env[model.secretKey ?? "OPENAI_API_KEY"];',
+      '  const controller = new AbortController();',
+      '  const response = await withProviderTimeout(model, controller, fetch(`${model.baseUrl}/chat/completions`, { signal: controller.signal, headers: { authorization: `Bearer ${apiKey}` }, body: JSON.stringify(prompt), method: "POST" }));',
+      '  if (!response.ok) throw httpProviderError(model, response.status, await response.text());',
+      '  const body = await response.json() as { choices?: Array<{ message?: { content?: string } }> };',
+      '  const text = body.choices?.[0]?.message?.content;',
+      '  if (!text) throw malformedProviderResponseError(model, "missing choices[0].message.content");',
+      '  return { text };',
+      '}',
+      'function withProviderTimeout<T>(model: ModelCatalogEntry, controller: AbortController, operation: Promise<T>) {',
+      '  return Promise.race([operation, new Promise<T>((_, reject) => setTimeout(() => { controller.abort(); reject(timeoutProviderError(model)); }, PROVIDER_TIMEOUT_MS))]);',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'src/errors.ts'),
+    [
+      'import type { ModelCatalogEntry } from "./models";',
+      'export type NormalizedProviderError = { provider: ModelCatalogEntry["provider"]; vendor: string; modelId: string; classification: "http" | "timeout" | "response" | "network"; message: string; httpStatus?: number; excerpt?: string };',
+      'export const PROVIDER_ERROR_MESSAGE_CHARS = 300;',
+      'export const PROVIDER_ERROR_EXCERPT_CHARS = 200;',
+      'const STACK_TRACE_LINE = /^\\s*at\\s+.+/gm;',
+      'export const SECRET_REDACTION_PATTERNS = [/Bearer\\s+\\S+/gi, /authorization\\s*[:=]\\s*\\S+/gi, /ANTHROPIC_API_KEY/gi, /OPENAI_API_KEY/gi, /ZAI_API_KEY/gi, /request\\s*[:=]/gi];',
+      'export class ProviderAdapterError extends Error { constructor(readonly normalized: NormalizedProviderError) { super(normalized.message); } }',
+      'export function httpProviderError(model: ModelCatalogEntry, httpStatus: number, body: string) { return new ProviderAdapterError(buildProviderError(model, "http", { httpStatus, excerpt: sanitizeProviderText(body, PROVIDER_ERROR_EXCERPT_CHARS), message: `HTTP ${httpStatus}: ${body}` })); }',
+      'export function timeoutProviderError(model: ModelCatalogEntry) { return new ProviderAdapterError(buildProviderError(model, "timeout", { message: "provider timed out" })); }',
+      'export function malformedProviderResponseError(model: ModelCatalogEntry, detail: string) { return new ProviderAdapterError(buildProviderError(model, "response", { message: detail })); }',
+      'export function normalizeCaughtProviderError(model: ModelCatalogEntry, error: unknown) { if (error instanceof ProviderAdapterError) return error; return new ProviderAdapterError(buildProviderError(model, "network", { message: String(error) })); }',
+      'export function toRouteProviderError(error: unknown): NormalizedProviderError { return error instanceof ProviderAdapterError ? error.normalized : { provider: "openai-compatible", vendor: "Unknown", modelId: "unknown", classification: "network", message: "Provider request failed" }; }',
+      'export function sanitizeProviderText(value: string, maxChars = PROVIDER_ERROR_MESSAGE_CHARS) { let sanitized = value.replace(STACK_TRACE_LINE, ""); for (const pattern of SECRET_REDACTION_PATTERNS) sanitized = sanitized.replace(pattern, "[redacted]"); return sanitized.slice(0, maxChars); }',
+      'function buildProviderError(model: ModelCatalogEntry, classification: NormalizedProviderError["classification"], options: { message: string; httpStatus?: number; excerpt?: string }): NormalizedProviderError { return { provider: model.provider, vendor: model.vendor, modelId: model.id, classification, message: sanitizeProviderText(options.message, PROVIDER_ERROR_MESSAGE_CHARS), httpStatus: options.httpStatus, excerpt: options.excerpt }; }',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T03',
+      depends_on: ['T02'],
+      owned_surfaces: ['src/providers.ts', 'src/errors.ts'],
+      acceptance_criteria: [
+        'Provider adapters convert non-OK provider responses, SDK exceptions, timeout failures, and malformed response shapes into the normalized provider error shape.',
+        'Provider error messages returned to routes are capped to approximately 300 characters after sanitization.',
+        'Provider error normalization strips stack traces and never includes request headers, authorization tokens, raw secret values, or full provider response bodies.',
+        'Provider adapters enforce a per-model timeout using Worker-compatible abort behavior or an equivalent bounded execution mechanism.',
+        'A provider adapter failure is thrown or returned in a form that T04 can convert into one per-model failed result without crashing unrelated model runs.',
+      ],
+    },
+  ]).tasks;
+
+  const contracts = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contracts.every((contract) => contract.status === 'verified'), true);
+});
+
 test('provider adapter contract rejects hard-coded provider secret env reads', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-provider-adapter-hardcoded-secret-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

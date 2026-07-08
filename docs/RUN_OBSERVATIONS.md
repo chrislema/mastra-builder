@@ -56,3 +56,23 @@ For each run, record:
   artifact. Only rerun the full delivery workflow after those pass.
 - Next forward-progress question: after the split-error evidence fix, does the
   preserved benchmark folder resume past `T03` instead of failing on AC14-AC18?
+
+### 2026-07-08 - Split Provider Error Evidence Fix Verified
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Folder handling: preserved; no full delivery run executed for this checkpoint.
+- Fix scope: harness evidence in
+  `src/mastra/delivery-engine/acceptance-contracts.ts` now recognizes provider
+  adapter behavior split across `src/providers.ts` and `src/errors.ts`.
+- Cheap/static verification:
+  - `npm test -- test/delivery-engine/workflow-policy.test.ts` passed.
+  - Static `acceptanceContractsForTask` probe against benchmark `T03` revision
+    verified AC01-AC18 with no gaps.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+  - `npm run build` passed with network access; the sandbox-only attempt failed
+    at dependency install with `ENOTFOUND registry.npmjs.org`.
+- Farthest verified stage remains `T03`; this checkpoint proves the known
+  deterministic AC14-AC18 blocker should no longer stop the next resumed run.
+- Next forward-progress question: run the preserved benchmark folder and confirm
+  it proceeds beyond `T03` to the next real build or review blocker.

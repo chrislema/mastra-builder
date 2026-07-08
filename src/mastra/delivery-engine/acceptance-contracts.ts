@@ -1722,6 +1722,9 @@ function providerAdapterContractEvidence({
   if (!existsSync(fullPath)) return undefined;
 
   const source = readFileSync(fullPath, 'utf8');
+  const errorsPath = join(resolve(repoPath), 'src/errors.ts');
+  const errorsSource = existsSync(errorsPath) ? readFileSync(errorsPath, 'utf8') : '';
+  const combinedSource = `${source}\n${errorsSource}`;
   const gaps: string[] = [];
   let inspected = false;
 
@@ -1772,10 +1775,10 @@ function providerAdapterContractEvidence({
 
   if (/\bnormalizes? provider failures\b|\bProviderError\b|\bshared provider error\b/i.test(criterion)) {
     inspected = true;
-    if (!/\bnormalizeProviderError\b/.test(source)) {
+    if (!/\b(?:normalizeProviderError|normalizeCaughtProviderError|ProviderAdapterError)\b/.test(combinedSource)) {
       gaps.push('src/providers.ts must centralize provider failure normalization.');
     }
-    if (!/\bProviderError\b/.test(source)) {
+    if (!/\b(?:ProviderError|ProviderAdapterError|NormalizedProviderError)\b/.test(combinedSource)) {
       gaps.push('src/providers.ts must use the shared ProviderError shape.');
     }
     for (const provider of ['workers-ai', 'anthropic', 'openai-compatible']) {
@@ -1794,39 +1797,100 @@ function providerAdapterContractEvidence({
       ['status', /\b(?:httpStatus|status)\b/],
       ['userSafeMessage', /\buserSafeMessage\b/],
     ] as const) {
-      if (!pattern[1].test(source)) gaps.push(`src/providers.ts must include ${pattern[0]} in normalized provider errors.`);
+      if (!pattern[1].test(combinedSource)) gaps.push(`src/providers.ts must include ${pattern[0]} in normalized provider errors.`);
     }
   }
 
   if (/\bsanitizes?\b|\bBEARER_TOKEN\b|\bauthorization headers?\b|\brequest bodies?\b|\bsecret names?\b|\bAPI keys?\b/i.test(criterion)) {
     inspected = true;
     const sanitizerFunctionPattern = /\b(?:sanitizeProviderMessage|safeExcerpt|sanitize[A-Z]\w*|redact[A-Z]\w*)\b/;
-    if (!sanitizerFunctionPattern.test(source)) {
+    if (!sanitizerFunctionPattern.test(combinedSource)) {
       gaps.push('src/providers.ts must sanitize provider error messages before returning them.');
     }
-    if (!/\bSECRET_(?:VALUE|REDACTION)_PATTERNS\b/.test(source)) {
+    if (!/\bSECRET_(?:VALUE|REDACTION)_PATTERNS\b/.test(combinedSource)) {
       gaps.push('src/providers.ts must define explicit secret redaction patterns.');
     }
     for (const pattern of ['Bearer', 'BEARER_TOKEN', 'authorization', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ZAI_API_KEY', 'body', 'request']) {
-      if (!new RegExp(pattern, 'i').test(source)) {
+      if (!new RegExp(pattern, 'i').test(combinedSource)) {
         gaps.push(`src/providers.ts secret sanitization must cover ${pattern}.`);
       }
     }
-    if (!/\.replace\s*\(\s*pattern\b|\breplaceAll\s*\(/.test(source)) {
+    if (!/\.replace\s*\(\s*pattern\b|\breplaceAll\s*\(/.test(combinedSource)) {
       gaps.push('src/providers.ts must apply secret redaction patterns.');
     }
     const returnsSanitizedUserSafeMessage =
-      /\buserSafeMessage\s*:\s*(?:userSafeMessage|sanitizeProviderMessage\s*\()/.test(source) ||
+      /\buserSafeMessage\s*:\s*(?:userSafeMessage|sanitizeProviderMessage\s*\()/.test(combinedSource) ||
       /\bconst\s+userSafeMessage\s*=\s*sanitizeProviderMessage\s*\([\s\S]{0,800}return\s*\{[\s\S]{0,400}\buserSafeMessage\b/.test(
-        source,
+        combinedSource,
       ) ||
       /\bconst\s+userSafeMessage\s*=[\s\S]{0,300}\b(?:safeExcerpt|sanitizeProviderMessage|sanitize[A-Z]\w*|redact[A-Z]\w*)\s*\(/.test(
-        source,
+        combinedSource,
       ) ||
-      /\bnew\s+SanitizedProviderError\s*\([\s\S]{0,160}\buserSafeMessage\b/.test(source) ||
-      /\breturn\s+\{[\s\S]{0,160}\buserSafeMessage\s*:\s*error\.userSafeMessage\b[\s\S]{0,80}\}/.test(source);
+      /\bnew\s+(?:SanitizedProviderError|ProviderAdapterError)\s*\([\s\S]{0,220}\b(?:userSafeMessage|message|buildProviderError)\b/.test(
+        combinedSource,
+      ) ||
+      /\breturn\s+\{[\s\S]{0,220}\b(?:userSafeMessage|message)\s*:\s*(?:error\.)?\w+[\s\S]{0,80}\}/.test(combinedSource);
     if (!returnsSanitizedUserSafeMessage) {
       gaps.push('src/providers.ts must return only the sanitized userSafeMessage.');
+    }
+  }
+
+  if (/\bnon-OK provider responses\b|\bSDK exceptions\b|\btimeout failures\b|\bmalformed response shapes\b/i.test(criterion)) {
+    inspected = true;
+    for (const pattern of [
+      ['non-OK HTTP normalization', /\b!response\.ok\b[\s\S]{0,220}\bhttpProviderError\b|\bhttpProviderError\b[\s\S]{0,220}\bProviderAdapterError\b/],
+      ['caught exception normalization', /\bcatch\s*\([^)]*\)\s*\{[\s\S]{0,220}\bnormalizeCaughtProviderError\b/],
+      ['timeout normalization', /\btimeoutProviderError\b/],
+      ['malformed response normalization', /\bmalformedProviderResponseError\b/],
+      ['normalized provider error shape', /\b(?:NormalizedProviderError|ProviderAdapterError)\b/],
+    ] as const) {
+      if (!pattern[1].test(combinedSource)) gaps.push(`src/providers.ts/src/errors.ts must provide ${pattern[0]}.`);
+    }
+  }
+
+  if (/\bcapped\b|\bapproximately 300\b|\b300 characters\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\b(?:PROVIDER_(?:ROUTE_)?ERROR_MESSAGE_CHARS|USER_SAFE_MESSAGE_CHARS)\s*=\s*300\b/.test(combinedSource)) {
+      gaps.push('src/providers.ts/src/errors.ts must define a 300 character route-safe provider error cap.');
+    }
+    if (!/\bsanitize\w*\s*\([^)]*(?:300|PROVIDER_(?:ROUTE_)?ERROR_MESSAGE_CHARS)/.test(combinedSource) && !/\.slice\s*\(\s*0\s*,\s*(?:300|PROVIDER_(?:ROUTE_)?ERROR_MESSAGE_CHARS|maxChars)\s*\)/.test(combinedSource)) {
+      gaps.push('src/providers.ts/src/errors.ts must cap provider error messages after sanitization.');
+    }
+  }
+
+  if (/\bstrips stack traces\b|\bauthorization tokens\b|\braw secret values\b|\bfull provider response bodies\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\bSTACK_TRACE_LINE\b|^\s*at\s+\.\+/m.test(combinedSource)) {
+      gaps.push('src/errors.ts must strip stack trace lines from provider error messages.');
+    }
+    if (!/\bSECRET_(?:VALUE|REDACTION)_PATTERNS\b|\bBearer\b[\s\S]{0,220}\bauthorization\b/i.test(combinedSource)) {
+      gaps.push('src/errors.ts must include redaction patterns for authorization tokens and secret markers.');
+    }
+    if (!/\.replace\s*\(\s*pattern\b|\bsanitizeProviderText\b/.test(combinedSource)) {
+      gaps.push('src/errors.ts must apply redaction before returning provider error messages.');
+    }
+  }
+
+  if (/\bper-model timeout\b|\bWorker-compatible abort\b|\bbounded execution mechanism\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\b(?:AbortController|setTimeout|Promise\.race)\b/.test(combinedSource)) {
+      gaps.push('src/providers.ts must enforce a bounded provider execution timeout.');
+    }
+    if (!/\btimeoutProviderError\b|\bclassification\s*:\s*['"]timeout['"]/.test(combinedSource)) {
+      gaps.push('src/providers.ts/src/errors.ts must normalize provider timeouts.');
+    }
+    if (!/\bPROVIDER_(?:EXECUTION_)?TIMEOUT_MS\b/.test(combinedSource)) {
+      gaps.push('src/providers.ts must use the shared provider timeout constant.');
+    }
+  }
+
+  if (/\bT04\b|\bper-model failed result\b|\bwithout crashing unrelated model runs\b/i.test(criterion)) {
+    inspected = true;
+    if (!/\btoRouteProviderError\b|\bNormalizedProviderError\b/.test(combinedSource)) {
+      gaps.push('src/errors.ts must expose a route-convertible normalized provider error.');
+    }
+    if (!/\bthrow\s+(?:normalizeCaughtProviderError|new\s+ProviderAdapterError|httpProviderError|timeoutProviderError|malformedProviderResponseError)\b/.test(combinedSource)) {
+      gaps.push('src/providers.ts must throw normalized provider failures for route-level per-model conversion.');
     }
   }
 
