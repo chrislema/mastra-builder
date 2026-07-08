@@ -3233,6 +3233,38 @@ test('acceptance contracts verify Workers AI binding in staging and production e
   assert.match(contract?.evidence.join('\n') ?? '', /staging\/production environments with ai:AI/);
 });
 
+test('acceptance contracts verify top-level Workers AI binding wording', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-ai-binding-'));
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        main: 'src/index.ts',
+        ai: { binding: 'AI' },
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['wrangler.jsonc'],
+      acceptance_criteria: ['wrangler.jsonc configures Workers AI with binding AI.'],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /Workers AI binding "AI"/);
+});
+
 test('Workers AI environment binding contract rejects missing production binding', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-ai-env-binding-missing-'));
   writeFileSync(

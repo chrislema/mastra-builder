@@ -584,6 +584,35 @@ function workerConfigStaticAssetsContractEvidence(context: AcceptanceContractCon
   };
 }
 
+function workerConfigAiBindingContractEvidence(context: AcceptanceContractContext) {
+  const target = ensureTaskRepo(context);
+  if (!target || !taskOwns(context, 'wrangler.jsonc')) return undefined;
+
+  const config = wranglerJsonConfig(target.repoPath);
+  if (!config) {
+    return {
+      passed: false,
+      evidence: [],
+      gaps: ['wrangler.jsonc is not valid JSONC, so Workers AI binding could not be verified.'],
+    };
+  }
+
+  const ai = recordValue(config.ai);
+  if (ai?.binding !== 'AI') {
+    return {
+      passed: false,
+      evidence: [],
+      gaps: ['wrangler.jsonc must configure Workers AI with ai.binding set to "AI".'],
+    };
+  }
+
+  return {
+    passed: true,
+    evidence: ['structured wrangler.jsonc evidence verified Workers AI binding "AI"'],
+    gaps: [],
+  };
+}
+
 function workerConfigCompatibilityFlagsContractEvidence(context: AcceptanceContractContext) {
   const target = ensureTaskRepo(context);
   if (!target || !taskOwns(context, 'wrangler.jsonc')) return undefined;
@@ -904,6 +933,13 @@ export const workerScaffoldAcceptanceContracts: AcceptanceContractDefinition[] =
     surfaces: ['wrangler.jsonc'],
     matches: ({ criterion }) => /\bwrangler\.jsonc\b/i.test(criterion) && /\bWorkers Static Assets\b|\bassets\.directory\b|\bASSETS\b/i.test(criterion),
     evaluate: workerConfigStaticAssetsContractEvidence,
+  },
+  {
+    id: 'worker.config.aiBinding',
+    title: 'Workers AI binding config',
+    surfaces: ['wrangler.jsonc'],
+    matches: ({ criterion }) => /\bwrangler\.jsonc\b/i.test(criterion) && /\bWorkers AI\b/i.test(criterion) && /\bbinding\s+AI\b/i.test(criterion),
+    evaluate: workerConfigAiBindingContractEvidence,
   },
   {
     id: 'worker.config.compatibilityFlags',
