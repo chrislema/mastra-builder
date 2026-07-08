@@ -3117,6 +3117,122 @@ test('Wrangler validation without frontend build contract rejects build-gated va
   assert.match(contract?.gaps.join('\n') ?? '', /frontend build step/);
 });
 
+test('acceptance contracts verify Workers AI binding in staging and production environments', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-ai-env-binding-'));
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        main: 'src/index.ts',
+        ai: { binding: 'AI' },
+        env: {
+          staging: {
+            ai: { binding: 'AI' },
+          },
+          production: {
+            ai: { binding: 'AI' },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['wrangler.jsonc'],
+      acceptance_criteria: [
+        'wrangler.jsonc includes an active Workers AI binding named AI in both staging and production environments.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /staging\/production environments with ai:AI/);
+});
+
+test('Workers AI environment binding contract rejects missing production binding', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-ai-env-binding-missing-'));
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        main: 'src/index.ts',
+        ai: { binding: 'AI' },
+        env: {
+          staging: {
+            ai: { binding: 'AI' },
+          },
+          production: {},
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['wrangler.jsonc'],
+      acceptance_criteria: [
+        'wrangler.jsonc includes an active Workers AI binding named AI in both staging and production environments.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'unverified');
+  assert.match(contract?.gaps.join('\n') ?? '', /env\.production is missing AI as a ai binding/);
+});
+
+test('acceptance contracts verify Worker-compatible health route in src index', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-health-route-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/index.ts'),
+    [
+      'import { Hono } from "hono";',
+      'const app = new Hono<{ Bindings: Env }>();',
+      'app.get("/api/health", (c) => c.json({ ok: true, service: "benchmark" }));',
+      'export default { fetch(request, env, ctx) { return app.fetch(request, env, ctx); } } satisfies ExportedHandler<Env>;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['src/index.ts'],
+      acceptance_criteria: [
+        'src/index.ts exports a Worker-compatible module and implements GET /api/health returning { ok: true, service: "benchmark" }.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /health route/);
+});
+
 test('acceptance contracts verify Worker type constants and result envelopes structurally', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-types-contracts-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

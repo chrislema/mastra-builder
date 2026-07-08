@@ -7987,7 +7987,10 @@ function workerConfigEnvironmentContractEvidence({
 }) {
   if (!repoPath || !task) return undefined;
   if (!/\bwrangler\.jsonc\b/i.test(criterion)) return undefined;
-  if (!/\benv\.staging\b/i.test(criterion) || !/\benv\.production\b/i.test(criterion)) return undefined;
+  const mentionsDeploymentEnvironments =
+    (/\benv\.staging\b/i.test(criterion) && /\benv\.production\b/i.test(criterion)) ||
+    (/\bstaging\b/i.test(criterion) && /\bproduction\b/i.test(criterion));
+  if (!mentionsDeploymentEnvironments) return undefined;
 
   const configPath = join(resolve(repoPath), 'wrangler.jsonc');
   if (!taskBoundarySurfaces(repoPath, task).includes('wrangler.jsonc') || !existsSync(configPath)) return undefined;
@@ -8451,9 +8454,11 @@ function honoWorkerEntrypointContractEvidence({
 }) {
   if (!repoPath || !task) return undefined;
   if (!/\bsrc\/index\.ts\b/i.test(criterion)) return undefined;
-  if (!/\bHono\b/i.test(criterion)) return undefined;
+  const criterionMentionsHealthRoute = /\/api\/health\b|\bhealth\b/i.test(criterion);
+  const criterionMentionsHono = /\bHono\b|\bWorker module through Hono\b|\bthrough Hono\b/i.test(criterion);
+  if (!criterionMentionsHealthRoute && !criterionMentionsHono) return undefined;
   if (
-    !/\bWorker module entrypoint\b|\bWorker\b[\s\S]{0,80}\bentrypoint\b|\bloaded by Wrangler\b|\bWorker module through Hono\b|\bthrough Hono\b|\/api\/health\b/i.test(
+    !/\bWorker-compatible module\b|\bWorker module entrypoint\b|\bWorker\b[\s\S]{0,80}\bentrypoint\b|\bloaded by Wrangler\b|\bWorker module through Hono\b|\bthrough Hono\b|\/api\/health\b/i.test(
       criterion,
     )
   ) {
