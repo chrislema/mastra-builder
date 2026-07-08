@@ -45,6 +45,24 @@ If a run previously reached late tasks and a new approach stalls at T01/T02,
 stop and reassess. Do not keep adding patches just because each patch has a
 local explanation.
 
+## Run Journal Rule
+
+Every CLI or Studio delivery run must be recorded in
+`docs/RUN_OBSERVATIONS.md`. Do not rely on chat context, terminal scrollback, or
+memory surviving compaction.
+
+Before starting a run, add the project path, command or Studio input, whether the
+folder is being preserved or cleaned, and the forward-progress question the run
+is meant to answer.
+
+After the run stops, update the same entry with the workflow run ID, delivery run
+ID, report path, reused stages, farthest verified stage or task, failure class,
+concrete error, current hypothesis, cheap verification already tried, and the
+next fix or stop decision.
+
+If a context compaction happens mid-loop, read this file before touching the
+workflow or running the sample again.
+
 ## Contract Rule
 
 Contracts are still the right idea, but only in the right form.
