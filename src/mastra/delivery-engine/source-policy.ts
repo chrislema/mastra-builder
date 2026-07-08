@@ -1,8 +1,30 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { z } from 'zod';
 import type { SourcePolicy } from './workflow-schemas';
 
 export type SourceDocument = { path: string; content: string };
+
+const sourceFeatureIntentSchema = z.enum([
+  'profile-state',
+  'latest-transcript',
+  'short-link-lifecycle',
+  'external-service-bindings',
+  'pages',
+]);
+
+export const sourcePolicyIntentSchema = z
+  .object({
+    featureIntents: z.array(sourceFeatureIntentSchema).default([]),
+    pagesRequired: z.boolean().optional(),
+    requiredProfileKinds: z.array(z.string().min(1)).optional(),
+    latestTranscriptRequired: z.boolean().optional(),
+    shortLinkLifecycleRequired: z.boolean().optional(),
+    externalServiceBindings: z.array(z.string().min(1)).optional(),
+  })
+  .passthrough();
+
+export type SourcePolicyIntent = z.infer<typeof sourcePolicyIntentSchema>;
 
 function sourceLineNegatesPages(line: string) {
   return (
@@ -100,12 +122,33 @@ export function sourceDocumentsDeclareShortLinkLifecycle(sourceDocuments: Source
   return /\b(?:short[-\s]?links?|url\s+shorteners?|link\s+shorteners?|shortened\s+urls?)\b/i.test(positiveText);
 }
 
-export function sourcePolicyFromDocuments(sourceDocuments: SourceDocument[]): SourcePolicy {
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function normalizeBindingName(binding: string) {
+  return binding.trim().toUpperCase();
+}
+
+export function sourcePolicyFromDocuments(sourceDocuments: SourceDocument[], intentInput?: unknown): SourcePolicy {
+  const intent = intentInput ? sourcePolicyIntentSchema.parse(intentInput) : undefined;
+  const featureIntents = new Set(intent?.featureIntents ?? []);
   return {
-    pagesRequired: sourceDocumentsDeclarePages(sourceDocuments),
-    requiredProfileKinds: sourceDocumentsRequiredProfileKinds(sourceDocuments),
-    latestTranscriptRequired: sourceDocumentsDeclareLatestTranscriptContract(sourceDocuments),
-    externalServiceBindings: sourceDocumentsDeclareExternalServiceBindings(sourceDocuments),
+    pagesRequired: intent?.pagesRequired ?? (featureIntents.has('pages') || sourceDocumentsDeclarePages(sourceDocuments)),
+    requiredProfileKinds: uniqueStrings([
+      ...sourceDocumentsRequiredProfileKinds(sourceDocuments),
+      ...(intent?.requiredProfileKinds ?? []),
+    ]),
+    latestTranscriptRequired:
+      intent?.latestTranscriptRequired ??
+      (featureIntents.has('latest-transcript') || sourceDocumentsDeclareLatestTranscriptContract(sourceDocuments)),
+    shortLinkLifecycleRequired:
+      intent?.shortLinkLifecycleRequired ??
+      (featureIntents.has('short-link-lifecycle') || sourceDocumentsDeclareShortLinkLifecycle(sourceDocuments)),
+    externalServiceBindings: uniqueStrings([
+      ...sourceDocumentsDeclareExternalServiceBindings(sourceDocuments),
+      ...(intent?.externalServiceBindings ?? []).map(normalizeBindingName),
+    ]).sort(),
   };
 }
 
@@ -124,6 +167,21 @@ export function sourceDocumentsFromRepo(repoPath: string) {
   });
 }
 
+const sourcePolicyIntentPaths = ['delivery.intent.json', 'project.intent.json', '.delivery/intent.json'];
+
+export function sourcePolicyIntentFromRepo(repoPath: string): SourcePolicyIntent | undefined {
+  const root = resolve(repoPath);
+  for (const path of sourcePolicyIntentPaths) {
+    const fullPath = join(root, path);
+    if (!existsSync(fullPath)) continue;
+
+    const parsed = JSON.parse(readFileSync(fullPath, 'utf8')) as unknown;
+    return sourcePolicyIntentSchema.parse(parsed);
+  }
+
+  return undefined;
+}
+
 export function sourcePolicyFromRepo(repoPath: string): SourcePolicy {
-  return sourcePolicyFromDocuments(sourceDocumentsFromRepo(repoPath));
+  return sourcePolicyFromDocuments(sourceDocumentsFromRepo(repoPath), sourcePolicyIntentFromRepo(repoPath));
 }

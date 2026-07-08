@@ -86,6 +86,7 @@ import {
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
   sourceDocumentsRequiredProfileKinds,
+  sourcePolicyFromDocuments,
   staleDownstreamVerificationSurfacePaths,
   staleOutOfPlanVerificationSurfacePaths,
   taskOwnedSurfaceRoleHygiene,
@@ -110,6 +111,7 @@ import { fileOwnership } from '../../src/mastra/delivery-engine/checks.ts';
 import { renderProjectScaffold } from '../../src/mastra/delivery-engine/project-factory/index.ts';
 import { verificationFailureSummaryFromCommandError } from '../../src/mastra/delivery-engine/implementation-retry-policy.ts';
 import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
+import { sourcePolicyFromRepo } from '../../src/mastra/delivery-engine/source-policy.ts';
 
 const currentCompatibilityDate = () => new Date().toISOString().slice(0, 10);
 
@@ -138,6 +140,7 @@ const talkingHeadSourcePolicy = {
   pagesRequired: false,
   requiredProfileKinds: ['audience_segments', 'voice_profile'],
   latestTranscriptRequired: true,
+  shortLinkLifecycleRequired: false,
   externalServiceBindings: ['BOOKMARKS'],
 };
 
@@ -376,6 +379,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       latestTranscriptRequired: false,
+      shortLinkLifecycleRequired: false,
       externalServiceBindings: [],
     }).passed,
     false,
@@ -385,6 +389,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       latestTranscriptRequired: false,
+      shortLinkLifecycleRequired: false,
       externalServiceBindings: [],
     }).reason,
     /did not declaratively require Cloudflare Pages/,
@@ -394,6 +399,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: true,
       requiredProfileKinds: [],
       latestTranscriptRequired: false,
+      shortLinkLifecycleRequired: false,
       externalServiceBindings: [],
     }),
     { passed: true, reason: 'ok' },
@@ -403,6 +409,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
       pagesRequired: false,
       requiredProfileKinds: [],
       latestTranscriptRequired: false,
+      shortLinkLifecycleRequired: false,
       externalServiceBindings: [],
     }),
     { passed: true, reason: 'ok' },
@@ -441,6 +448,13 @@ test('source docs declare product-specific profile and transcript policies', () 
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(talkingHeadDocs), ['audience_segments', 'voice_profile']);
   assert.equal(sourceDocumentsDeclareLatestTranscriptContract(talkingHeadDocs), true);
   assert.deepEqual(sourceDocumentsDeclareExternalServiceBindings(talkingHeadDocs), ['BOOKMARKS']);
+  assert.deepEqual(sourcePolicyFromDocuments(talkingHeadDocs), {
+    pagesRequired: false,
+    requiredProfileKinds: ['audience_segments', 'voice_profile'],
+    latestTranscriptRequired: true,
+    shortLinkLifecycleRequired: false,
+    externalServiceBindings: ['BOOKMARKS'],
+  });
 
   const shortLinkDocs = [
     { path: 'vision.md', content: 'Build a Cloudflare Worker URL shortener for customer short links.' },
@@ -454,6 +468,45 @@ test('source docs declare product-specific profile and transcript policies', () 
     ]),
     false,
   );
+  assert.equal(
+    sourcePolicyFromDocuments(genericDocs, {
+      featureIntents: ['short-link-lifecycle'],
+    }).shortLinkLifecycleRequired,
+    true,
+  );
+});
+
+test('source policy can be declared through delivery.intent.json beside vision', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-source-policy-intent-'));
+  writeFileSync(
+    join(repoPath, 'vision.md'),
+    [
+      '# Vision',
+      'Build a compact Worker API.',
+      'This note mentions GET /latest for health, but the product is not a transcript app.',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'delivery.intent.json'),
+    JSON.stringify(
+      {
+        featureIntents: ['short-link-lifecycle'],
+        latestTranscriptRequired: false,
+        requiredProfileKinds: ['audience_segments'],
+        externalServiceBindings: ['analytics'],
+      },
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(sourcePolicyFromRepo(repoPath), {
+    pagesRequired: false,
+    requiredProfileKinds: ['audience_segments'],
+    latestTranscriptRequired: false,
+    shortLinkLifecycleRequired: true,
+    externalServiceBindings: ['ANALYTICS'],
+  });
 });
 
 test('bare Worker project plan scaffold hygiene delegates root rails to the project factory', () => {
@@ -1443,6 +1496,7 @@ test('source policy gates profile and transcript route contract injection', () =
     pagesRequired: false,
     requiredProfileKinds: [],
     latestTranscriptRequired: false,
+    shortLinkLifecycleRequired: false,
     externalServiceBindings: [],
   });
   const criteria = normalized.tasks.flatMap((task) => task.acceptance_criteria).join('\n');

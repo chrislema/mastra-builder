@@ -267,6 +267,7 @@ export {
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
   sourceDocumentsRequiredProfileKinds,
+  sourcePolicyFromDocuments,
 } from './source-policy';
 
 const execFileAsync = promisify(execFile);
@@ -4872,8 +4873,7 @@ export function releaseGateRuntimeProbePlan(
   repoPath: string,
   adminToken = releaseGateLocalAdminToken,
 ): ReleaseGateRuntimeProbePlan | undefined {
-  const sourceDocuments = sourceDocumentsFromRepo(repoPath);
-  const sourcePolicy = sourcePolicyFromDocuments(sourceDocuments);
+  const sourcePolicy = sourcePolicyFromRepo(repoPath);
   return buildReleaseGateRuntimeProbePlan({
     command: releaseGateWorkerDevCommand(repoPath),
     adminToken,
@@ -4881,7 +4881,7 @@ export function releaseGateRuntimeProbePlan(
     healthRoutes: releaseGateHealthRoutes(repoPath),
     hasRoute: (route) => releaseGateRepoHasRoute(repoPath, route),
     latestTranscriptRequired: sourcePolicy.latestTranscriptRequired,
-    shortLinkLifecycleRequired: sourceDocumentsDeclareShortLinkLifecycle(sourceDocuments),
+    shortLinkLifecycleRequired: sourcePolicy.shortLinkLifecycleRequired,
     transcriptFixtureAvailable: releaseGateTranscriptFixtureAvailable(repoPath),
   });
 }

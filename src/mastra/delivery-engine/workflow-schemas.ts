@@ -175,6 +175,7 @@ export const sourcePolicySchema = z.object({
   pagesRequired: z.boolean().default(false),
   requiredProfileKinds: z.array(z.string()).default([]),
   latestTranscriptRequired: z.boolean().default(false),
+  shortLinkLifecycleRequired: z.boolean().default(false),
   externalServiceBindings: z.array(z.string()).default([]),
 });
 
