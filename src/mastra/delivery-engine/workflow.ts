@@ -116,6 +116,8 @@ import {
   type ReleaseGatePublicAssetProbeFile,
 } from './release-gate-runtime-probe-plan';
 import {
+  routeIntegrationCriterion,
+  sessionRouteCriteria,
   sourceScopedDeliveryContracts,
   taskPlanSourceContractCriteria as sourceTaskPlanContractCriteria,
   type SourceScopedDeliveryContracts,
@@ -1774,24 +1776,11 @@ function routeReachabilityCriterion(criterion: string) {
   return /\bmakes? .+ routes reachable through the Worker fetch path\b/i.test(criterion);
 }
 
-function routeIntegrationCriterion(routerSurface: string, routeNames: Array<string | undefined>) {
-  return `${routerSurface} makes ${routeNames.join(', ')} routes reachable through the Worker fetch path without importing route modules directly into src/index.js.`;
-}
-
 function taskRouterBoundarySurface(task: Task) {
   return (
     taskOwnedBoundaryPaths(task).find((path) => /^src\/(?:(?:http\/)?router|http)\.[cm]?[jt]s$/.test(path)) ??
     'src/router.js'
   );
-}
-
-function sessionRouteCriteria(surface: string) {
-  return [
-    `${surface} implements a dedicated browser session endpoint for the public UI before profile/run UI work begins.`,
-    `${surface} exchanges a valid operator credential for a short-lived HttpOnly SameSite cookie without persisting ADMIN_TOKEN in public assets, localStorage, sessionStorage, or query strings.`,
-    `${surface} issues a stateless signed expiring session cookie whose payload includes an expiration timestamp, whose signature is verified with WebCrypto HMAC using a separate SESSION_SECRET, and whose validation fails closed when SESSION_SECRET is missing or when cookies are tampered or expired before protected route handlers run.`,
-    `${surface} defines session validation and logout/status behavior, fails closed when ADMIN_TOKEN is missing, returns structured 401/403 responses for invalid credentials, and establishes the CSRF token or same-origin Origin validation contract used by cookie-authenticated browser mutations.`,
-  ];
 }
 
 function routeOwnershipDriftCriterion(task: Task, criterion: string) {

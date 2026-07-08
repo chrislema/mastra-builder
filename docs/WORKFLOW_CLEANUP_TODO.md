@@ -96,6 +96,9 @@ Completed cleanup checkpoints:
     acceptance-criterion classification, dependency normalization, and
     dependency hygiene into `task-plan-generated-slices.ts`, with `workflow.ts`
     providing only route-aware dependency policy callbacks.
+  - Move route integration and browser session route criteria text into
+    `task-plan-source-contracts.ts`, keeping route ordering and task insertion
+    logic in `workflow.ts`.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
