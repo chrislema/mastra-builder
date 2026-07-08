@@ -532,7 +532,7 @@ test('bare Worker project plans normalize root scaffold surfaces and static asse
   assert.deepEqual(normalized.tasks[0].owned_surfaces, ['package.json', 'src/index.js', '.gitignore', 'scripts/check-js.js']);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\.delivery/);
   assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /\*\.cpuprofile/);
-  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /scripts\.typecheck exactly "node scripts\/check-js\.js"/);
+  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /scripts\.typecheck exactly as "node scripts\/check-js\.js"/);
   assert.deepEqual(normalized.tasks[2].depends_on, ['T1']);
   assert.equal(projectScaffoldHygiene(repoPath, normalized).passed, false);
   assert.match(projectScaffoldHygiene(repoPath, normalized).reason, /root task/);
@@ -560,10 +560,47 @@ test('bare Worker project plans can auto-add missing root Wrangler config', () =
     'wrangler.jsonc',
     'scripts/check-js.js',
   ]);
-  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /Wrangler validation can run from the first build slice/);
-  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /node --check/);
+  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /first build slice is structurally runnable by Wrangler/);
+  assert.match(normalized.tasks[0].acceptance_criteria.join('\n'), /scripts\.typecheck exactly as "node scripts\/check-js\.js"/);
   assert.deepEqual(normalized.tasks[1].depends_on, ['T1']);
   assert.deepEqual(projectScaffoldHygiene(repoPath, normalized), { passed: true, reason: 'ok' });
+});
+
+test('bare TypeScript Worker root scaffolds normalize to canonical registry-backed contracts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-project-scaffold-canonical-contracts-'));
+  const plan = taskPlan([
+    {
+      depends_on: [],
+      owned_surfaces: ['package.json', 'src/index.ts'],
+      acceptance_criteria: ['Create the first runnable Worker scaffold.'],
+    },
+  ]);
+
+  const normalized = normalizeTaskPlanScaffoldDependencies(repoPath, plan);
+  const scaffoldTask = normalized.tasks[0];
+  const contracts = acceptanceContractsForTask({
+    task: scaffoldTask,
+    verification: { performed: [], missing: [] },
+  });
+  const ids = contracts.map((contract) => contract.id);
+  const criteria = scaffoldTask.acceptance_criteria.join('\n');
+
+  assert.deepEqual(scaffoldTask.owned_surfaces, [
+    'package.json',
+    'src/index.ts',
+    '.gitignore',
+    'wrangler.jsonc',
+    'tsconfig.json',
+  ]);
+  assert.match(criteria, /wrangler\.jsonc configures Workers AI with binding AI/);
+  assert.match(criteria, /src\/index\.ts exists as a valid Worker module entrypoint/);
+  assert.ok(ids.includes('T1:worker.scaffold.firstSliceRunnable'));
+  assert.ok(ids.includes('T1:worker.config.aiBinding'));
+  assert.ok(ids.includes('T1:worker.entrypoint.minimal'));
+  assert.ok(ids.includes('T1:repo.gitignore.runtimeArtifacts'));
+  assert.ok(ids.includes('T1:worker.tsconfig'));
+  assert.ok(ids.includes('T1:package.scripts.dev'));
+  assert.ok(ids.includes('T1:package.scripts.typecheck'));
 });
 
 test('profile contract consumers normalize behind validation task', () => {
@@ -3175,6 +3212,68 @@ test('acceptance contracts verify first build slice is Wrangler-runnable without
       id: 'T01',
       depends_on: [],
       owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.ts'],
+      acceptance_criteria: [
+        'The first build slice is structurally runnable by Wrangler without requiring database migrations, Pages, React/Vite, or public UI files.',
+      ],
+    },
+  ]).tasks;
+
+  const [contract] = acceptanceContractsForTask({
+    repoPath,
+    task,
+    verification: { performed: ['npm run typecheck passed'], missing: [] },
+  });
+
+  assert.equal(contract?.status, 'verified');
+  assert.match(contract?.evidence.join('\n') ?? '', /runnable by Wrangler without database migrations/);
+});
+
+test('acceptance contracts allow vanilla JavaScript Worker first build slices', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-first-slice-js-runnable-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'package.json'),
+    JSON.stringify(
+      {
+        scripts: {
+          dev: 'wrangler dev --env staging',
+          deploy: 'wrangler deploy --env production',
+          typecheck: 'node scripts/check-js.js',
+        },
+        devDependencies: {
+          wrangler: 'latest',
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      {
+        main: 'src/index.js',
+        compatibility_date: '2026-07-08',
+        compatibility_flags: ['nodejs_compat'],
+        ai: { binding: 'AI' },
+        env: {
+          staging: { ai: { binding: 'AI' } },
+          production: { ai: { binding: 'AI' } },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(repoPath, 'src/index.js'),
+    ['export default {', '  fetch() { return Response.json({ ok: true }); }', '};', ''].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T01',
+      depends_on: [],
+      owned_surfaces: ['package.json', 'wrangler.jsonc', 'src/index.js'],
       acceptance_criteria: [
         'The first build slice is structurally runnable by Wrangler without requiring database migrations, Pages, React/Vite, or public UI files.',
       ],

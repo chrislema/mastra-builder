@@ -59,7 +59,11 @@ import {
   deliveryWorkflowNormalizedInputSchema,
   normalizeDeliveryWorkflowInput,
 } from './run-input';
-import { evaluateWorkerScaffoldAcceptanceContract } from './acceptance-contracts';
+import {
+  canonicalRootWorkerScaffoldAcceptanceCriteria,
+  evaluateWorkerScaffoldAcceptanceContract,
+  workerScaffoldAcceptanceContractIdForCriterion,
+} from './acceptance-contracts';
 
 const execFileAsync = promisify(execFile);
 
@@ -901,7 +905,9 @@ function taskVerificationAcceptanceContractCriteria(task: Task) {
   );
 }
 
-function acceptanceContractId(task: Task, index: number) {
+function acceptanceContractId(task: Task, index: number, criterion?: string) {
+  const registryId = criterion ? workerScaffoldAcceptanceContractIdForCriterion(criterion) : undefined;
+  if (registryId) return `${taskSourceTaskId(task)}:${registryId}`;
   return `${taskSourceTaskId(task)}-AC${String(index + 1).padStart(2, '0')}`;
 }
 
@@ -934,29 +940,37 @@ function ownsWorkerConfigSurface(task: Task) {
 function normalizeScaffoldRootTask(repoPath: string, task: Task, includeWorkerConfig: boolean) {
   const ownedSurfaces = [...task.owned_surfaces];
   const acceptanceCriteria = [...task.acceptance_criteria];
+  const typeScriptScaffold = ownsTypeScriptInputSurface(task);
 
   if (!ownsExactSurface(task, '.gitignore')) {
     ownedSurfaces.push('.gitignore');
-    acceptanceCriteria.push(
-      '.gitignore excludes node_modules/, .wrangler/, .delivery/, .dev.vars*, .env*, and *.cpuprofile so local delivery artifacts, Wrangler state, startup profiles, dependencies, and local secrets stay out of git.',
-    );
   }
 
   if (includeWorkerConfig && !releaseGateWorkerConfigPath(repoPath) && !ownsWorkerConfigSurface(task)) {
     ownedSurfaces.push('wrangler.jsonc');
-    acceptanceCriteria.push(
-      'wrangler.jsonc exists in the root scaffold with the Worker entrypoint, env.staging/env.production, nodejs_compat, observability, and any required bindings so Wrangler validation can run from the first build slice.',
-    );
   }
 
-  if (ownsJavaScriptInputSurface(task) && !ownsTypeScriptInputSurface(task)) {
+  if (typeScriptScaffold && !ownsExactSurface(task, 'tsconfig.json')) {
+    ownedSurfaces.push('tsconfig.json');
+  }
+
+  if (ownsJavaScriptInputSurface(task) && !typeScriptScaffold) {
     if (!ownsExactSurface(task, 'scripts/check-js.js')) {
       ownedSurfaces.push('scripts/check-js.js');
     }
-    acceptanceCriteria.push(
-      'package.json includes scripts.typecheck exactly "node scripts/check-js.js" and scripts/check-js.js validates current repo JavaScript files with node --check without adding TypeScript or a no-op gate.',
-    );
   }
+
+  const normalizedSurfaces = Array.from(new Set(ownedSurfaces.map(normalizeDeliveryPathReference).filter(Boolean)));
+  const entrypointSurface = normalizedSurfaces.find((surface) => /^src\/index\.(?:js|ts)$/.test(surface));
+  acceptanceCriteria.push(
+    ...canonicalRootWorkerScaffoldAcceptanceCriteria({
+      entrypointSurface,
+      ownsGitignore: normalizedSurfaces.includes('.gitignore'),
+      ownsPackage: normalizedSurfaces.includes('package.json'),
+      ownsWorkerConfig: normalizedSurfaces.some((surface) => workerConfigSurfacePaths.includes(surface)),
+      typeScript: typeScriptScaffold,
+    }),
+  );
 
   return {
     ...task,
@@ -3153,7 +3167,7 @@ function allTaskAcceptanceContractCriteria(taskPlan: TaskPlan) {
     taskAcceptanceContractCriteria(task).map((criterion, index) => ({
       taskId: task.id,
       sourceTaskId: taskSourceTaskId(task),
-      contractId: acceptanceContractId(task, index),
+      contractId: acceptanceContractId(task, index, criterion),
       criterion,
     })),
   );
@@ -8575,7 +8589,7 @@ export function acceptanceContractsForTask({
       task,
     });
     return {
-      id: acceptanceContractId(task, index),
+      id: acceptanceContractId(task, index, criterion),
       criterion,
       status: result.passed ? ('verified' as const) : ('unverified' as const),
       evidence: result.evidence,
@@ -11582,7 +11596,7 @@ const executeBuildTaskAttemptStep = createStep({
       scope: taskPlan.scope,
       task,
       acceptance_contracts: taskVerificationAcceptanceContractCriteria(task).map((criterion, index) => ({
-        id: acceptanceContractId(task, index),
+        id: acceptanceContractId(task, index, criterion),
         criterion,
         status: 'required',
       })),
