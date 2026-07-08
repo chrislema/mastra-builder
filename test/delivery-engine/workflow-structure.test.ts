@@ -98,6 +98,15 @@ test('deployment completion is gated deterministically from evidence', () => {
   assert.doesNotMatch(deploymentGate, /rubricName: 'deployment-report'/);
 });
 
+test('workflow delegates route-family policy to a typed surface module', () => {
+  const source = workflowSource();
+
+  assert.match(source, /from '\.\/task-plan-surface-policy'/);
+  assert.doesNotMatch(source, /function genericRouteMentions/);
+  assert.doesNotMatch(source, /manual\\\/profile\\\/regeneration endpoints/);
+  assert.doesNotMatch(source, /candidate routes\?/);
+});
+
 test('delivery stage workflows close delivery state on workflow errors', () => {
   for (const workflow of [
     deliveryWorkflow,
