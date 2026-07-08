@@ -256,6 +256,9 @@ framework beside Mastra.
   ownership, active plan scaffold hygiene delegates root rails to the project
   factory, and task rows now receive workflow-derived `task`/`surface`/
   `evidence`/`runtime` metadata.
+- Phase 4: in progress; `test/fixtures/delivery-projects/` now covers minimal
+  JS Worker, TypeScript public UI, Workers AI, D1, KV/R2, explicit Pages, and
+  benchmark-shaped source docs through cheap project-factory fixture tests.
 
 ### Phase 0: Freeze Expensive Run Loop
 

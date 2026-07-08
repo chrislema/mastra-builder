@@ -21,8 +21,27 @@ function sourceText(input: NormalizedProjectFactoryInput) {
   return input.sourceDocuments.map((document) => document.content).join('\n\n');
 }
 
+function localFeaturePattern(pattern: RegExp) {
+  return new RegExp(pattern.source, pattern.flags.replaceAll('g', ''));
+}
+
+function sourceFeatureChunks(text: string) {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  return normalized.match(/[^.!?]+[.!?]?/g) ?? [normalized];
+}
+
 function sourceMentions(text: string, pattern: RegExp) {
-  return pattern.test(text);
+  const localPattern = localFeaturePattern(pattern);
+  return sourceFeatureChunks(text).some((chunk) => {
+    const match = localPattern.exec(chunk);
+    if (!match || match.index === undefined) return false;
+
+    const before = chunk.slice(Math.max(0, match.index - 100), match.index);
+    const after = chunk.slice(match.index + match[0].length, match.index + match[0].length + 100);
+    if (/\b(?:no|not|never|avoid|without|forbid|forbidden|ban|banned|do\s+not|don't)\b/i.test(before)) return false;
+    if (/\b(?:not|unsupported|forbidden|banned|unwanted|excluded)\b/i.test(after)) return false;
+    return true;
+  });
 }
 
 function wantsTypeScript(input: NormalizedProjectFactoryInput, featureProfiles: Set<ProjectProfile>): boolean {

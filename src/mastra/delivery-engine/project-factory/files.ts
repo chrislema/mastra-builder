@@ -405,7 +405,7 @@ export function renderProjectScaffold(input: unknown): ProjectScaffold {
     generatedFiles: files.map((file) => file.path),
     generatedFileSurfaces: Object.fromEntries(files.map((file) => [file.path, file.surfaceKind])),
     testRuntimeMatrix: testRuntimeMatrixForProfiles(profiles),
-    bindingMap: bindingMapForProfiles(profiles),
+    bindingMap: bindingMapForProfiles(profiles, externalServiceBindings),
     packageScripts: packageScriptsForLanguage(language),
     validationCommands: validationCommands(language),
   };

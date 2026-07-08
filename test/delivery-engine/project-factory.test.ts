@@ -56,6 +56,7 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
     DB: 'D1 database binding',
     KV: 'KV namespace binding',
     ARTIFACTS: 'R2 bucket binding',
+    BOOKMARKS: 'external Worker service binding',
   });
 
   const packageJson = JSON.parse(fileContent(scaffold, 'package.json')) as {
@@ -114,6 +115,21 @@ test('project factory keeps a minimal plain JavaScript Worker when source asks f
   assert.ok(scaffold.manifest.generatedFiles.includes('src/contracts.js'));
   assert.equal(scaffold.manifest.generatedFiles.includes('tsconfig.json'), false);
   assert.equal(JSON.parse(fileContent(scaffold, 'package.json')).scripts.check, 'npm test');
+});
+
+test('project factory ignores locally negated Cloudflare feature mentions', () => {
+  assert.deepEqual(
+    selectProjectProfiles({
+      projectName: 'No Storage Worker',
+      sourceDocuments: [
+        {
+          path: 'vision.md',
+          content: 'Build a plain JavaScript Worker. Do not use R2, object storage, Workers AI, Cloudflare Pages, KV, or D1.',
+        },
+      ],
+    }),
+    ['worker-vanilla-js'],
+  );
 });
 
 test('project factory materializes files only through the explicit writer helper', () => {

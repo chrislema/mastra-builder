@@ -30,13 +30,16 @@ function environmentMirror(config: JsonObject) {
   };
 }
 
-export function bindingMapForProfiles(profiles: ProjectProfile[]) {
+export function bindingMapForProfiles(profiles: ProjectProfile[], externalServiceBindings: string[] = []) {
   const bindings: Record<string, string> = { ASSETS: 'static assets binding for ./public' };
   if (hasProfile(profiles, 'worker-workers-ai')) bindings.AI = 'Workers AI binding';
   if (hasProfile(profiles, 'worker-d1')) bindings.DB = 'D1 database binding';
   if (hasProfile(profiles, 'worker-kv')) bindings.KV = 'KV namespace binding';
   if (hasProfile(profiles, 'worker-r2')) bindings.ARTIFACTS = 'R2 bucket binding';
   if (hasProfile(profiles, 'worker-workflows')) bindings.PROCESSING_WORKFLOW = 'Workers Workflow binding';
+  for (const binding of externalServiceBindings) {
+    bindings[binding] = 'external Worker service binding';
+  }
   return bindings;
 }
 
