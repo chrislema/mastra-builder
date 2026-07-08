@@ -1837,7 +1837,7 @@ test('task plan normalization injects session auth before late admin auth and ro
   assert.match(criteria('T08'), /internal credential-validation helper/);
   assert.doesNotMatch(criteria('T11'), /creates or loads a run and marks it running/);
   assert.doesNotMatch(criteria('T11'), /completed run with no transcript/);
-  assert.match(criteria('T11'), /completed_empty terminal run/);
+  assert.match(criteria('T11'), /empty input\/source item list as a completed_empty terminal run/);
 });
 
 test('task plan normalization keeps session auth before route-bearing auth and late router tasks', () => {
@@ -1989,7 +1989,7 @@ test('task plan normalization attaches Worker lifecycle contracts to workflow an
   assert.match(criteria, /transitions queued runs to running and then completed or failed/);
   assert.doesNotMatch(criteria, /create run/);
   assert.doesNotMatch(criteria, /completed run with no transcript/);
-  assert.match(criteria, /completed_empty terminal run/);
+  assert.match(criteria, /empty input\/source item list as a completed_empty terminal run/);
 });
 
 test('task plan normalization keeps scheduler-only slices out of workflow terminal-state ownership', () => {
@@ -2381,7 +2381,7 @@ test('task plan normalization infers contracts for generic routes and http auth 
   assert.match(byId.T12.acceptance_criteria.join('\n'), /browser-safe auth\/session flow/);
 });
 
-test('task plan normalization canonicalizes no-bookmark status and workflow export contracts', () => {
+test('task plan normalization canonicalizes empty-run status and workflow export contracts', () => {
   const plan = taskPlan([
     {
       id: 'T01',
@@ -2421,7 +2421,7 @@ test('task plan normalization canonicalizes no-bookmark status and workflow expo
   assert.doesNotMatch(criteria('T10'), /referenced by wrangler\.jsonc/);
   assert.doesNotMatch(criteria('T10'), /completed\/no_content/);
   assert.match(criteria('T10'), /fill in or delegate implementation details/);
-  assert.match(criteria('T10'), /completed_empty terminal run/);
+  assert.match(criteria('T10'), /empty input\/source item list as a completed_empty terminal run/);
 });
 
 test('task plan normalization removes empty-run lifecycle drift outside workflow-named files', () => {

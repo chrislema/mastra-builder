@@ -1528,18 +1528,20 @@ function workflowCreateRunStepCriterion(criterion: string) {
   );
 }
 
-function workflowEmptyBookmarkCompletedCriterion(criterion: string) {
-  return /\bempty (?:bookmark )?list\b[\s\S]{0,120}\bcompleted run with no transcript\b/i.test(criterion);
-}
-
-function emptyBookmarkCompletesWithoutTranscriptCriterion(criterion: string) {
-  return /\bempty (?:bookmark )?list\b[\s\S]{0,120}\bcompletes? (?:the )?run\b[\s\S]{0,120}\bwithout a transcript\b/i.test(
+function workflowEmptyInputCompletedCriterion(criterion: string) {
+  return /\bempty (?:[\w/-]+\s+){0,4}list\b[\s\S]{0,120}\bcompleted run with no (?:transcript|output|artifact|content)\b/i.test(
     criterion,
   );
 }
 
-function emptyBookmarkCompletedNoContentCriterion(criterion: string) {
-  return /\bempty (?:bookmark )?list\b[\s\S]{0,120}\b(?:completed\/no_content|completed_empty)\b[\s\S]{0,120}\bwithout transcript/i.test(
+function emptyInputCompletesWithoutOutputCriterion(criterion: string) {
+  return /\bempty (?:[\w/-]+\s+){0,4}list\b[\s\S]{0,120}\bcompletes? (?:the )?run\b[\s\S]{0,120}\bwithout (?:a )?(?:transcript|output|artifact|content)\b/i.test(
+    criterion,
+  );
+}
+
+function emptyInputCompletedNoContentCriterion(criterion: string) {
+  return /\bempty (?:[\w/-]+\s+){0,4}list\b[\s\S]{0,120}\b(?:completed\/no_content|completed_empty)\b[\s\S]{0,120}\bwithout (?:transcript|output|artifact|content)\b/i.test(
     criterion,
   );
 }
@@ -1547,9 +1549,9 @@ function emptyBookmarkCompletedNoContentCriterion(criterion: string) {
 function withoutLifecycleDriftCriteria(task: Task) {
   const isDriftCriterion = (criterion: string) =>
     runLifecycleWithoutEmptyTerminalCriterion(criterion) ||
-    workflowEmptyBookmarkCompletedCriterion(criterion) ||
-    emptyBookmarkCompletesWithoutTranscriptCriterion(criterion) ||
-    emptyBookmarkCompletedNoContentCriterion(criterion) ||
+    workflowEmptyInputCompletedCriterion(criterion) ||
+    emptyInputCompletesWithoutOutputCriterion(criterion) ||
+    emptyInputCompletedNoContentCriterion(criterion) ||
     (taskOwnsWorkflowSurface(task) &&
       (workflowCreatesRunningRunCriterion(criterion) || workflowCreateRunStepCriterion(criterion)));
   const acceptance_criteria = task.acceptance_criteria.filter((criterion) => !isDriftCriterion(criterion));
@@ -1573,7 +1575,7 @@ function persistentRunLifecycleCriterion(criterion: string) {
   return (
     /\bRun lifecycle contract defines\b/i.test(criterion) ||
     /\bScheduled trigger handling creates or reuses queued run records\b/i.test(criterion) ||
-    /\bWorkflow treats an empty bookmark list as a completed_empty terminal run\b/i.test(criterion) ||
+    /\bWorkflow treats an empty (?:[\w/-]+\s+){0,4}list as a completed_empty terminal run\b/i.test(criterion) ||
     /\broute handlers delegate[\s\S]{0,140}\b(?:latest transcript|transcript versioning|D1 state)\b/i.test(criterion) ||
     /\bTranscript regeneration inserts a new transcript row\b/i.test(criterion)
   );
@@ -1660,8 +1662,8 @@ function withoutBoundaryAuthorityDriftCriteria(task: Task) {
 function canonicalizeCompletedEmptyStatusText(criterion: string) {
   return criterion
     .replace(/\bcompleted\/no_content\b/gi, 'completed_empty')
-    .replace(/\bcompleted_no_bookmarks\b/gi, 'completed_empty')
-    .replace(/\bno_bookmarks\b/gi, 'completed_empty');
+    .replace(/\bcompleted_no_[a-z0-9_]+\b/gi, 'completed_empty')
+    .replace(/\bno_[a-z0-9_]+\b/gi, 'completed_empty');
 }
 
 function withCanonicalCompletedEmptyStatus(task: Task) {
@@ -1874,7 +1876,7 @@ function withoutRouteOwnershipDriftCriteria(task: Task) {
 function schedulerWorkflowExecutionCriterion(criterion: string) {
   return (
     /^Scheduled triggers and manual run routes create queued run records only/i.test(criterion) ||
-    /^Workflow treats an empty bookmark list as a completed_empty terminal run/i.test(criterion) ||
+    /^Workflow treats an empty (?:[\w/-]+\s+){0,4}list as a completed_empty terminal run/i.test(criterion) ||
     /^Workflow execution receives or resumes a queued run/i.test(criterion) ||
     /^Workflow profile-loading steps call the profile summary service boundary/i.test(criterion)
   );
@@ -2613,7 +2615,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     if (hasPersistentRunLifecycle && taskOwnsContractSurface(task)) {
       criteria.push(
-        'Run lifecycle contract defines the allowed state transitions queued -> running -> completed|completed_empty|failed, with route/scheduled code responsible for creating queued runs, workflow code responsible for running and terminal transitions, and latest transcript queries excluding completed_empty/no-transcript runs deterministically.',
+        'Run lifecycle contract defines the allowed state transitions queued -> running -> completed|completed_empty|failed, with route/scheduled code responsible for creating queued runs, workflow code responsible for running and terminal transitions, and latest-output queries excluding completed_empty/no-output runs deterministically.',
       );
     }
 
@@ -2625,7 +2627,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
 
     if (taskOwnsSchedulerSurface(task) && !taskOwnsWorkflowExecutionSurface(task) && !taskIsRootScaffold(task)) {
       criteria.push(
-        'Scheduled trigger handling creates or reuses queued run records and starts WEEKLY_WORKFLOW; scheduler code does not perform workflow execution, candidate scoring, transcript generation, or terminal completed/completed_empty/failed transitions directly.',
+        'Scheduled trigger handling creates or reuses queued run records and starts WEEKLY_WORKFLOW; scheduler code does not perform workflow execution, domain scoring, output generation, or terminal completed/completed_empty/failed transitions directly.',
       );
     }
 
@@ -2636,7 +2638,7 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan): 
       criteria.push(
         `${workflowSurface} owns workflow implementation logic consumed by the final src/index.js Worker entrypoint integration; it is not the configured Worker entry module unless this same task also owns src/index.js.`,
         'Scheduled triggers and manual run routes create queued run records only; workflow execution is the boundary that transitions queued runs to running and then completed or failed.',
-        'Workflow treats an empty bookmark list as a completed_empty terminal run with no transcript_id, records a no-bookmarks/no-transcript reason, and keeps latest transcript lookup focused on completed runs with transcripts.',
+        'Workflow treats an empty input/source item list as a completed_empty terminal run with no output artifact, records a no-input/no-output reason, and keeps latest-output lookup focused on completed runs with materialized outputs.',
         'Workflow execution receives or resumes a queued run, transitions it to running and then completed or failed, and does not create duplicate run records for the same workflow invocation.',
         'Workflow profile-loading steps call the profile summary service boundary to create or load derived summaries before prompt assembly, rather than owning derived_summary_r2_key state directly.',
       );

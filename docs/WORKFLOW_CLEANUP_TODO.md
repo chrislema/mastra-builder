@@ -69,6 +69,9 @@ Completed cleanup checkpoints:
     Worker service binding policy.
   - Keep project-specific vocabulary in source docs and eval/test fixtures, not
     in central helper names or global planner prompt rules.
+  - Replace bookmark-specific empty-run lifecycle normalization with generic
+    empty input/source item lifecycle language while preserving old generated
+    status canonicalization.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
