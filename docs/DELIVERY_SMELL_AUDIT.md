@@ -48,18 +48,19 @@ copying API route and frontend behavior criteria onto explicit evidence tasks,
 preserving those criteria on the implementation tasks as first-class contracts,
 and carrying non-endpoint behavior from tasks that already declare explicit API
 route behavior into the same route evidence task, and copying contract/validation
-behavior onto explicit domain evidence tasks:
+behavior onto explicit domain evidence tasks. Provider-adapter behavior is also
+copied onto the provider evidence task by provider surface ownership:
 
-- Acceptance contracts: 266
+- Acceptance contracts: 271
 - Structured evidence: 33
 - Command/test evidence: 42
 - Generic file evidence: 25
-- Unverified contracts: 166
-- Behavior-shaped criteria: 155
+- Unverified contracts: 171
+- Behavior-shaped criteria: 160
 - Behavior criteria verified by generic file evidence: 0
-- Behavior criteria still unverified: 5
-- Pending behavior evidence: 122
-- Total audit smells: 69
+- Behavior criteria still unverified: 3
+- Pending behavior evidence: 129
+- Total audit smells: 67
 
 This is an intentional intermediate state: behavior is no longer falsely marked
 verified by token overlap, behavior-only proof gaps no longer cause
@@ -80,8 +81,9 @@ Largest clusters:
 - `T06`, `T07`, `T08`, `T09`: frontend/runtime behavior now has explicit
   `*-frontend-behavior-tests` tasks; remaining smells are mostly structural
   generic-file evidence or non-behavior unverified UI/documentation contracts.
-- `T04-provider-behavior-tests`: good direction, but still needs fuller command
-  evidence for missing-key and Workers AI binding behavior.
+- `T04-provider-behavior-tests`: provider-adapter behavior now routes to the
+  provider evidence task by provider surface ownership. Remaining provider smells
+  are structural generic-file or non-behavior unverified contracts.
 - `T02`/`T02-part-2`: contract and validation behavior now have explicit
   `test/contracts.test.{ts,js}` and `test/validation.test.{ts,js}` evidence
   tasks. Remaining smells on those rows are structural generic-file evidence,

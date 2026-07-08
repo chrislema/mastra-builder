@@ -2482,7 +2482,9 @@ function withProviderAdapterBehaviorTestTasks(tasks: Task[]) {
 
   for (const providerTask of tasks) {
     if (!taskOwnsProviderAdapterSurface(providerTask)) continue;
-    const behaviorCriteria = providerTask.acceptance_criteria.filter(providerAdapterBehaviorCriterion);
+    const behaviorCriteria = providerTask.acceptance_criteria.filter(
+      (criterion) => providerAdapterBehaviorCriterion(criterion) || isBehaviorLikeAcceptanceCriterion(criterion),
+    );
     if (!behaviorCriteria.length) continue;
 
     const existingTestTask = next.find((task) => taskLooksLikeProviderAdapterBehaviorTest(task, providerTask.id));

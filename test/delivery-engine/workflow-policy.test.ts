@@ -1549,6 +1549,8 @@ test('task plan normalization copies provider failure behavior criteria to a smo
         'Provider adapter failures are converted to normalized provider_error or timeout_or_network_error values with client-safe messages defined by src/contracts.ts.',
         'Raw upstream response body snippets are bounded, stripped of obvious secret-bearing fields, and not displayed directly to the frontend as unredacted exception text.',
         'Workers AI adapter returns a normalized missing_binding error if env.AI is missing despite route validation.',
+        'Anthropic adapter uses @anthropic-ai/sdk messages.create with system prompt passed as a top-level system parameter.',
+        'OpenAI-compatible non-OK responses throw errors containing vendor, HTTP status, and approximately the first 200 characters of the response body.',
       ],
     },
     {
@@ -1572,6 +1574,8 @@ test('task plan normalization copies provider failure behavior criteria to a smo
   assert.match(testTask.acceptance_criteria.join('\n'), /provider_error/);
   assert.match(testTask.acceptance_criteria.join('\n'), /timeout_or_network_error/);
   assert.match(testTask.acceptance_criteria.join('\n'), /missing_binding/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /messages\.create/);
+  assert.match(testTask.acceptance_criteria.join('\n'), /OpenAI-compatible non-OK responses/);
   assert.ok(byId.T05.depends_on.includes('T04-provider-behavior-tests'));
   assert.deepEqual(taskOwnedSurfaceRoleHygiene(normalized), { passed: true, reason: 'ok' });
 });
@@ -4201,6 +4205,28 @@ test('provider failure contracts use provider-focused test evidence instead of g
 
   assert.equal(providerTestContracts[0].status, 'verified');
   assert.match(providerTestContracts[0].evidence.join('\n'), /provider behavior test evidence/);
+
+  const [adapterSpecificTask] = taskPlan([
+    {
+      id: 'T04-provider-behavior-tests',
+      owner: 'engineer',
+      depends_on: ['T04'],
+      owned_surfaces: ['test/provider-adapters.test.ts'],
+      acceptance_criteria: [
+        'Anthropic adapter uses @anthropic-ai/sdk messages.create with system prompt passed as a top-level system parameter.',
+      ],
+    },
+  ]).tasks;
+  const adapterSpecificContracts = acceptanceContractsForTask({
+    task: adapterSpecificTask,
+    verification: {
+      performed: [
+        'npm run test passed: test/provider-adapters.test.ts > Anthropic adapter calls messages.create with top-level system prompt',
+      ],
+      missing: [],
+    },
+  });
+  assert.equal(adapterSpecificContracts[0].status, 'verified');
 });
 
 test('API route behavior contracts use route-focused test evidence instead of generic test success', () => {

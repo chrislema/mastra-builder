@@ -1249,7 +1249,7 @@ function acceptanceCriterionTokens(criterion: string) {
 }
 
 function providerAdapterBehaviorCriterion(criterion: string) {
-  return /\b(?:configured-state validation|missing keyed secrets?|provider adapter failures?|provider_error|timeout_or_network_error|client-safe messages?|raw upstream response body snippets?|missing_binding|client-safe RunResult|unrelated model runs)\b/i.test(
+  return /\b(?:configured-state validation|missing keyed secrets?|provider adapter failures?|provider_error|timeout_or_network_error|client-safe messages?|raw upstream response body snippets?|missing_binding|client-safe RunResult|unrelated model runs|Anthropic adapter|messages\.create|system prompt|OpenAI-compatible non-OK responses?|approximately the first 200 characters|provider dispatch)\b/i.test(
     criterion,
   );
 }
@@ -1306,7 +1306,7 @@ function acceptanceCriterionCommandEvidence(context: AcceptanceContractContext) 
   if (
     providerAdapterBehaviorCriterion(criterion) &&
     /\bnpm run test passed\b|\bvitest\b/.test(evidence) &&
-    /\b(provider adapters?|provider_error|timeout_or_network_error|missing keyed secrets?|missing workers ai binding|execute model|client-safe)\b/.test(
+    /\b(provider adapters?|provider_error|timeout_or_network_error|missing keyed secrets?|missing workers ai binding|execute model|client-safe|anthropic adapter|messages\.create|top-level system prompt|openai-compatible non-ok)\b/.test(
       evidence,
     )
   ) {
