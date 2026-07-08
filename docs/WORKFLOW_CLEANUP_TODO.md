@@ -79,6 +79,8 @@ Do not redo these:
   `planning/readout-policy.ts`
 - Pages Functions exception policy:
   `planning/pages-policy.ts`
+- Owned-surface concreteness policy:
+  `planning/owned-surface-policy.ts`
 
 ## Cleanup Rules
 
