@@ -240,6 +240,8 @@ Completed extraction:
   consumer dependency normalization, and profile contract ordering hygiene.
 - `planning/scaffold-policy.ts` for root Worker scaffold dependency
   normalization, source-surface predicates, and scaffold hygiene gates.
+- `planning/acceptance-contract-preservation.ts` for task-plan revision
+  acceptance-contract IDs, preservation, and regression checks.
 
 Keep in planning workflow:
 

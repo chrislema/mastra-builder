@@ -97,6 +97,8 @@ Do not redo these:
   `planning/profile-contract-policy.ts`
 - Root Worker scaffold dependency and hygiene policy:
   `planning/scaffold-policy.ts`
+- Acceptance-contract preservation and revision regression policy:
+  `planning/acceptance-contract-preservation.ts`
 
 ## Cleanup Rules
 
