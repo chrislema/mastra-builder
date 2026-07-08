@@ -77,6 +77,9 @@ rerun `npm run build` with approved network access before diagnosing code.
 ## Enhanced Delivery Reset Rule
 
 The active reset is defined in `docs/enhanced-delivery-spec.md`.
+The active workflow cleanup plan is defined in `docs/workflow-enhance.md`.
+Read it before editing `src/mastra/delivery-engine/workflow.ts` or extracting
+workflow-adjacent modules.
 
 Until Phases 1-4 of that spec are implemented and green, do not run another
 full paid `delivery:run` loop unless Chris explicitly asks for it. Work should

@@ -1,7 +1,9 @@
 # Workflow Cleanup TODO
 
 Read this after `docs/OPERATING_DOCTRINE.md` whenever resuming Delivery Engine
-workflow work.
+workflow work. Then read `docs/workflow-enhance.md`, which is the active ordered
+plan for reducing `workflow.ts` into thin Mastra workflow composition plus
+focused modules.
 
 ## Goal
 
@@ -31,6 +33,9 @@ It failed because Codex interrupted the run with SIGINT. Do not treat it as a
 natural T06 failure.
 
 ## Active Cleanup Queue
+
+The active queue is the ordered phase list in `docs/workflow-enhance.md`.
+Continue there first; keep this file as the compact status and guardrail page.
 
 Acceptance-contract smell cleanup is active. Read
 `docs/DELIVERY_SMELL_AUDIT.md` before editing acceptance evidence,
