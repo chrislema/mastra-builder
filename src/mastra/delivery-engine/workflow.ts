@@ -115,9 +115,9 @@ import { appendBoundedOutput, availableTcpPort, delay, stopChildProcess } from '
 import {
   externalServiceAdapterPolicyLine,
   sourceDocumentsDeclareExternalServiceBindings,
+  sourceDocumentsDeclareLatestTranscriptContract,
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
-  sourceDocumentsDeclareTalkingHeadTranscriptContract,
   sourceDocumentsFromRepo,
   sourceDocumentsRequiredProfileKinds,
   sourcePolicyFromDocuments,
@@ -126,9 +126,9 @@ import {
 
 export {
   sourceDocumentsDeclareExternalServiceBindings,
+  sourceDocumentsDeclareLatestTranscriptContract,
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
-  sourceDocumentsDeclareTalkingHeadTranscriptContract,
   sourceDocumentsRequiredProfileKinds,
 } from './source-policy';
 
@@ -238,7 +238,7 @@ function parseReviewReportResponse(response: unknown, label: string) {
   }
 }
 
-const plannerPolicyVersion = 'worker-first-local-v16';
+const plannerPolicyVersion = 'worker-first-local-v17';
 
 function plannerSourceFingerprint(sourceDocuments: Array<{ path: string; content: string }>) {
   return createHash('sha256').update(JSON.stringify(sourceDocuments)).digest('hex');
@@ -6151,7 +6151,7 @@ function releaseGateMissingTableColumns(schema: string, tableName: string, requi
 
 export function releaseGateTranscriptFixtureSchemaGaps(repoPath: string) {
   const sourcePolicy = sourcePolicyFromRepo(repoPath);
-  if (!sourcePolicy.talkingHeadTranscriptRequired) return [];
+  if (!sourcePolicy.latestTranscriptRequired) return [];
   if (!releaseGateRepoHasRoute(repoPath, '/latest')) return [];
 
   const schema = releaseGateMigrationText(repoPath);
@@ -6228,7 +6228,7 @@ function releaseGateTranscriptFixtureAvailable(repoPath: string) {
   const sourcePolicy = sourcePolicyFromRepo(repoPath);
   const schema = releaseGateMigrationText(repoPath);
   return (
-    sourcePolicy.talkingHeadTranscriptRequired &&
+    sourcePolicy.latestTranscriptRequired &&
     Boolean(releaseGateLocalD1DatabaseName(repoPath)) &&
     releaseGateRepoHasRoute(repoPath, '/latest') &&
     /\bCREATE\s+TABLE\s+runs\b/i.test(schema) &&
@@ -6504,7 +6504,7 @@ export function releaseGateRuntimeProbePlan(
     probes.push(...releaseGateLinkLifecycleProbes());
   }
 
-  if (sourcePolicy.talkingHeadTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/latest')) {
+  if (sourcePolicy.latestTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/latest')) {
     if (releaseGateTranscriptFixtureAvailable(repoPath)) {
       probes.push({
         method: 'GET',
@@ -6532,7 +6532,7 @@ export function releaseGateRuntimeProbePlan(
     }
   }
 
-  if (sourcePolicy.talkingHeadTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/runs')) {
+  if (sourcePolicy.latestTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/runs')) {
     probes.push(
       {
         method: 'POST',
@@ -6557,7 +6557,7 @@ export function releaseGateRuntimeProbePlan(
     );
   }
 
-  if (sourcePolicy.talkingHeadTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/profiles')) {
+  if (sourcePolicy.latestTranscriptRequired && releaseGateRepoHasRoute(repoPath, '/profiles')) {
     probes.push(
       {
         method: 'POST',
@@ -6784,7 +6784,7 @@ export function releaseGateStaticEvidenceResults(repoPath: string): ReleaseGateE
   }
 
   if (
-    sourcePolicy.talkingHeadTranscriptRequired &&
+    sourcePolicy.latestTranscriptRequired &&
     releaseGateRepoHasRoute(repoPath, '/latest') &&
     releaseGateMigrationText(repoPath).trim()
   ) {

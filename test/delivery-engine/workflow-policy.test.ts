@@ -80,9 +80,9 @@ import {
   shouldProceedAfterNonActionableImplementationJudgment,
   shouldSuspendForPlannerQuestions,
   sourceDocumentsDeclareExternalServiceBindings,
+  sourceDocumentsDeclareLatestTranscriptContract,
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
-  sourceDocumentsDeclareTalkingHeadTranscriptContract,
   sourceDocumentsRequiredProfileKinds,
   staleDownstreamVerificationSurfacePaths,
   taskOwnedSurfaceRoleHygiene,
@@ -132,7 +132,7 @@ function writeTalkingHeadSourceDocs(repoPath: string) {
 const talkingHeadSourcePolicy = {
   pagesRequired: false,
   requiredProfileKinds: ['audience_segments', 'voice_profile'],
-  talkingHeadTranscriptRequired: true,
+  latestTranscriptRequired: true,
   externalServiceBindings: ['BOOKMARKS'],
 };
 
@@ -368,7 +368,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
     pagesFunctionsExceptionHygiene(pagesPlan, {
       pagesRequired: false,
       requiredProfileKinds: [],
-      talkingHeadTranscriptRequired: false,
+      latestTranscriptRequired: false,
       externalServiceBindings: [],
     }).passed,
     false,
@@ -377,7 +377,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
     pagesFunctionsExceptionHygiene(pagesPlan, {
       pagesRequired: false,
       requiredProfileKinds: [],
-      talkingHeadTranscriptRequired: false,
+      latestTranscriptRequired: false,
       externalServiceBindings: [],
     }).reason,
     /did not declaratively require Cloudflare Pages/,
@@ -386,7 +386,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
     pagesFunctionsExceptionHygiene(pagesPlan, {
       pagesRequired: true,
       requiredProfileKinds: [],
-      talkingHeadTranscriptRequired: false,
+      latestTranscriptRequired: false,
       externalServiceBindings: [],
     }),
     { passed: true, reason: 'ok' },
@@ -395,7 +395,7 @@ test('Pages Functions are allowed only when source docs declaratively require Pa
     pagesFunctionsExceptionHygiene(taskPlan([{ depends_on: [], owned_surfaces: ['workers/submit.js'] }]), {
       pagesRequired: false,
       requiredProfileKinds: [],
-      talkingHeadTranscriptRequired: false,
+      latestTranscriptRequired: false,
       externalServiceBindings: [],
     }),
     { passed: true, reason: 'ok' },
@@ -408,7 +408,7 @@ test('source docs declare product-specific profile and transcript policies', () 
     { path: 'spec.md', content: 'Use D1 for jobs. No creator profile artifacts are needed.' },
   ];
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(genericDocs), []);
-  assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(genericDocs), false);
+  assert.equal(sourceDocumentsDeclareLatestTranscriptContract(genericDocs), false);
   assert.deepEqual(sourceDocumentsDeclareExternalServiceBindings(genericDocs), []);
   assert.equal(sourceDocumentsDeclareShortLinkLifecycle(genericDocs), false);
 
@@ -432,7 +432,7 @@ test('source docs declare product-specific profile and transcript policies', () 
     { path: 'spec.md', content: 'Fetch recent bookmarks through the BOOKMARKS service binding.' },
   ];
   assert.deepEqual(sourceDocumentsRequiredProfileKinds(talkingHeadDocs), ['audience_segments', 'voice_profile']);
-  assert.equal(sourceDocumentsDeclareTalkingHeadTranscriptContract(talkingHeadDocs), true);
+  assert.equal(sourceDocumentsDeclareLatestTranscriptContract(talkingHeadDocs), true);
   assert.deepEqual(sourceDocumentsDeclareExternalServiceBindings(talkingHeadDocs), ['BOOKMARKS']);
 
   const shortLinkDocs = [

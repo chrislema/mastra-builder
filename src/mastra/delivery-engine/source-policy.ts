@@ -47,7 +47,7 @@ export function sourceDocumentsRequiredProfileKinds(sourceDocuments: SourceDocum
   return [...requiredKinds];
 }
 
-export function sourceDocumentsDeclareTalkingHeadTranscriptContract(sourceDocuments: SourceDocument[]) {
+export function sourceDocumentsDeclareLatestTranscriptContract(sourceDocuments: SourceDocument[]) {
   const text = sourceDocumentText(sourceDocuments);
   return (
     /\btalking[-\s]?head\b/i.test(text) &&
@@ -104,7 +104,7 @@ export function sourcePolicyFromDocuments(sourceDocuments: SourceDocument[]): So
   return {
     pagesRequired: sourceDocumentsDeclarePages(sourceDocuments),
     requiredProfileKinds: sourceDocumentsRequiredProfileKinds(sourceDocuments),
-    talkingHeadTranscriptRequired: sourceDocumentsDeclareTalkingHeadTranscriptContract(sourceDocuments),
+    latestTranscriptRequired: sourceDocumentsDeclareLatestTranscriptContract(sourceDocuments),
     externalServiceBindings: sourceDocumentsDeclareExternalServiceBindings(sourceDocuments),
   };
 }

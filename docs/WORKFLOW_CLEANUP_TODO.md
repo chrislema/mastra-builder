@@ -72,6 +72,8 @@ Completed cleanup checkpoints:
   - Replace bookmark-specific empty-run lifecycle normalization with generic
     empty input/source item lifecycle language while preserving old generated
     status canonicalization.
+  - Rename the source-gated transcript policy from a project label to the
+    generic `latestTranscriptRequired` capability.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
