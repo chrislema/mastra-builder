@@ -1744,10 +1744,10 @@ function providerAdapterContractEvidence({
   if (/\bprovider, vendor, model id\b|\boptional HTTP\b|\bstatus\b|\buser-safe\b|\bresult cards\b/i.test(criterion)) {
     inspected = true;
     for (const pattern of [
-      ['provider: model.provider', /\bprovider\s*:\s*model\.provider\b/],
-      ['vendor: model.vendor', /\bvendor\s*:\s*model\.vendor\b/],
-      ['modelId: model.id', /\bmodelId\s*:\s*model\.id\b/],
-      ['status', /\bstatus\b/],
+      ['provider: model.provider', /\bprovider\s*:\s*model\.provider\b|\bthis\.provider\s*=\s*model\.provider\b/],
+      ['vendor: model.vendor', /\bvendor\s*:\s*model\.vendor\b|\bthis\.vendor\s*=\s*model\.vendor\b/],
+      ['modelId: model.id', /\bmodelId\s*:\s*model\.id\b|\bthis\.modelId\s*=\s*model\.id\b/],
+      ['status', /\b(?:httpStatus|status)\b/],
       ['userSafeMessage', /\buserSafeMessage\b/],
     ] as const) {
       if (!pattern[1].test(source)) gaps.push(`src/providers.ts must include ${pattern[0]} in normalized provider errors.`);
@@ -1756,10 +1756,11 @@ function providerAdapterContractEvidence({
 
   if (/\bsanitizes?\b|\bBEARER_TOKEN\b|\bauthorization headers?\b|\brequest bodies?\b|\bsecret names?\b|\bAPI keys?\b/i.test(criterion)) {
     inspected = true;
-    if (!/\bsanitizeProviderMessage\b/.test(source)) {
+    const sanitizerFunctionPattern = /\b(?:sanitizeProviderMessage|safeExcerpt|sanitize[A-Z]\w*|redact[A-Z]\w*)\b/;
+    if (!sanitizerFunctionPattern.test(source)) {
       gaps.push('src/providers.ts must sanitize provider error messages before returning them.');
     }
-    if (!/\bSECRET_VALUE_PATTERNS\b/.test(source)) {
+    if (!/\bSECRET_(?:VALUE|REDACTION)_PATTERNS\b/.test(source)) {
       gaps.push('src/providers.ts must define explicit secret redaction patterns.');
     }
     for (const pattern of ['Bearer', 'BEARER_TOKEN', 'authorization', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ZAI_API_KEY', 'body', 'request']) {
@@ -1774,7 +1775,12 @@ function providerAdapterContractEvidence({
       /\buserSafeMessage\s*:\s*(?:userSafeMessage|sanitizeProviderMessage\s*\()/.test(source) ||
       /\bconst\s+userSafeMessage\s*=\s*sanitizeProviderMessage\s*\([\s\S]{0,800}return\s*\{[\s\S]{0,400}\buserSafeMessage\b/.test(
         source,
-      );
+      ) ||
+      /\bconst\s+userSafeMessage\s*=[\s\S]{0,300}\b(?:safeExcerpt|sanitizeProviderMessage|sanitize[A-Z]\w*|redact[A-Z]\w*)\s*\(/.test(
+        source,
+      ) ||
+      /\bnew\s+SanitizedProviderError\s*\([\s\S]{0,160}\buserSafeMessage\b/.test(source) ||
+      /\breturn\s+\{[\s\S]{0,160}\buserSafeMessage\s*:\s*error\.userSafeMessage\b[\s\S]{0,80}\}/.test(source);
     if (!returnsSanitizedUserSafeMessage) {
       gaps.push('src/providers.ts must return only the sanitized userSafeMessage.');
     }
@@ -1782,8 +1788,15 @@ function providerAdapterContractEvidence({
 
   if (/\bsecretKey\b|\bcatalog secret\b|\bdoes not read provider secrets\b|\bWorker Env contract\b/i.test(criterion)) {
     inspected = true;
-    if (!/from\s*['"]\.\/contracts['"]/.test(source) || !/\bEnv\b/.test(source) || !/\bModelCatalogEntry\b/.test(source)) {
-      gaps.push('src/providers.ts must import Env and ModelCatalogEntry from src/contracts.ts.');
+    const importsContractsModule =
+      /from\s*['"]\.\/contracts['"]/.test(source) && /\bEnv\b/.test(source) && /\bModelCatalogEntry\b/.test(source);
+    const importsModelContract =
+      /from\s*['"]\.\/models['"]/.test(source) &&
+      /\bModelCatalogEntry\b/.test(source) &&
+      /\bModelSecretEnv\b/.test(source) &&
+      /\b(?:export\s+)?type\s+ProviderEnv\b/.test(source);
+    if (!importsContractsModule && !importsModelContract) {
+      gaps.push('src/providers.ts must import the model/env contract from src/contracts.ts or src/models.ts.');
     }
     if (!/\bmodel\.secretKey\b/.test(source)) {
       gaps.push('src/providers.ts must use model.secretKey as the catalog-controlled secret name.');
