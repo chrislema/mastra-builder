@@ -53,6 +53,11 @@ Completed cleanup checkpoints:
   - `workflow.ts` still owns Wrangler process lifecycle and release-gate
     orchestration, but delegates probe execution to the focused module.
   - Verification passed: `npm run typecheck`, `npm test`.
+- `5558ad5 Extract delivery process utilities`
+  - Shared child-process output, TCP port allocation, retry delay, and shutdown
+    helpers now live in `process-utils.ts`.
+  - `workflow.ts` still owns release-gate runtime orchestration.
+  - Verification passed: `npm run typecheck`, `npm test`.
 
 If resuming after compaction, first run `git status --short`, then continue from
 the next cleanup target below. Do not redo either completed extraction.
