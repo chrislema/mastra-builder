@@ -37,6 +37,12 @@ test('behavior classifier excludes documentation and declarative config criteria
     ),
     true,
   );
+  assert.equal(
+    isBehaviorLikeAcceptanceCriterion(
+      'No task downstream needs to invent independent RunResult, error-code, or prompt-limit shapes outside src/contracts.ts.',
+    ),
+    true,
+  );
 });
 
 test('smell audit reports behavior criteria as unverified instead of file-evidence verified', () => {

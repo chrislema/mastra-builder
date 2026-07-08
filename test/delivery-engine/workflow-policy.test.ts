@@ -4869,6 +4869,70 @@ test('behavior acceptance gaps do not trigger deterministic implementation retri
   assert.doesNotMatch(implementationDeterministicRemediation(results).join('\n'), /acceptance_contracts_satisfied/);
 });
 
+test('cross-task contract drift criteria stay out of deterministic implementation retries', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-cross-task-contract-gap-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(
+    join(repoPath, 'src/contracts.ts'),
+    [
+      'export type RunResult = { ok: boolean };',
+      'export const MAX_MODELS_PER_RUN = 4;',
+      '',
+    ].join('\n'),
+  );
+  const [task] = taskPlan([
+    {
+      id: 'T02-contracts',
+      depends_on: [],
+      owned_surfaces: ['src/contracts.ts'],
+      acceptance_criteria: [
+        'No task downstream needs to invent independent RunResult, error-code, or prompt-limit shapes outside src/contracts.ts.',
+      ],
+    },
+  ]).tasks;
+  const verification = { performed: ['npm run typecheck passed', 'npm run test passed'], missing: [] };
+  const contracts = acceptanceContractsForTask({ repoPath, task, verification });
+  const note = {
+    artifact_type: 'implementation-note' as const,
+    task: 'T02-contracts',
+    changes: ['Implemented shared contracts.'],
+    files_touched: ['src/contracts.ts'],
+    acceptance_contracts: contracts,
+    assumptions: [],
+    verification,
+    risks: [],
+  };
+
+  const results = implementationDeterministicResults({
+    repoPath,
+    stage: 'build:T02-contracts',
+    role: 'engineer',
+    task,
+    note,
+    events: [
+      { type: 'stage_start', stage: 'build:T02-contracts', role: 'engineer' },
+      {
+        type: 'tool_use',
+        stage: 'build:T02-contracts',
+        role: 'engineer',
+        tool: 'mastra_workspace_write_file',
+        ok: true,
+        paths: ['src/contracts.ts'],
+      },
+      { type: 'run_code', stage: 'build:T02-contracts', command: 'npm run typecheck', ok: true },
+      { type: 'run_code', stage: 'build:T02-contracts', command: 'npm run test', ok: true },
+      { type: 'stage_end', stage: 'build:T02-contracts', reason: 'complete_stage' },
+    ],
+    verification,
+  });
+
+  const acceptanceGate = results.find((result) => result.id === 'acceptance_contracts_satisfied');
+  assert.equal(contracts[0].status, 'unverified');
+  assert.equal(acceptanceGate?.passed, true);
+  assert.equal(acceptanceGate?.reason, 'ok');
+  assert.doesNotMatch(implementationDeterministicRemediation(results).join('\n'), /acceptance_contracts_satisfied/);
+});
+
 test('structural acceptance gaps remain deterministic implementation blockers', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-structural-contract-blocker-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });

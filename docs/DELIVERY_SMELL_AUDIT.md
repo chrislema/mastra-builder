@@ -121,6 +121,29 @@ clusters:
   evidence path. Prefer generated guard behavior tests, likely in
   `test/guards.test.{ts,js}`, over deterministic implementation retries.
 
+## Active Benchmark Counts After Cross-Task Evidence Fix
+
+After CLI Resume Run 6, cross-task contract drift criteria such as "No task
+downstream needs to invent independent RunResult, error-code, or prompt-limit
+shapes outside src/contracts.ts" are classified as pending evidence instead of
+deterministic implementation blockers. The active benchmark cheap audit now
+reports:
+
+- Acceptance contracts: 281
+- Structured evidence: 24
+- Command/test evidence: 51
+- Generic file evidence: 20
+- Unverified contracts: 186
+- Behavior-shaped criteria: 116
+- Behavior criteria verified by generic file evidence: 0
+- Behavior criteria still unverified: 0
+- Pending behavior evidence: 91
+- Total audit smells: 0
+
+Remaining unverified rows are visible gap counters, not current smell blockers.
+The next paid run should answer whether `T02-contracts` can complete and move
+past the prior deterministic AC09 loop.
+
 ## Active Cleanup Queue
 
 1. Add the repeatable smell audit module, CLI command, tests, and this doc.

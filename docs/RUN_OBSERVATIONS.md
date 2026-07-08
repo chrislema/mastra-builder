@@ -322,3 +322,54 @@ For each run, record:
 - Stop decision: add a focused role-boundary normalization test and normalize
   all-public engineer tasks to designer, then run cheap checks before another
   paid delivery pass.
+
+### 2026-07-08 12:07 CDT - CLI Resume Run 6 Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved; pick up from existing generated files and
+  `.delivery` state instead of clearing the project.
+- Forward-progress question: after commit `9323d82` normalizes frontend-only
+  public tasks to `designer`, does the preserved benchmark pass planner
+  revision role hygiene, reach `T02-test-harness`, and validate commit
+  `c4b994c` by clearing the stale auto-repair note-accounting blocker?
+- Cheap/static verification already tried before this run:
+  - `node --import tsx --test test/delivery-engine/workflow-policy.test.ts`
+    passed with the new frontend-only role normalization test.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+  - Static probe against the active benchmark
+    `.delivery/artifacts/task-plan.revision-1.json` showed role hygiene
+    `passed: true`, with `T07`, `T08`, and `T09` normalized to `designer`.
+- Guardrail: if this run stalls, classify the failure from the report first.
+  Do not add broad string matching in `workflow.ts`.
+- Workflow run ID: `51ed258b-30ee-480b-92ea-002871d563dc`
+- Delivery run ID: `run-mrcc0sk7-f2204c68`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/51ed258b-30ee-480b-92ea-002871d563dc.json`
+- Result: `deliveryStatus` was `stuck`; workflow control path completed and
+  wrote a report.
+- Confirmed fix from commit `9323d82`: planner revision role hygiene passed in
+  the live workflow. The run reached the build cursor instead of stopping on
+  `public/app.js` ownership.
+- Build resume cursor: reused `T01`, `T02`, and `T05`; next task was
+  `T02-contracts` out of 20 tasks.
+- Newly executed stage: `T02-contracts` wrote `src/contracts.ts`; `npm run
+  typecheck` and `npm run test` passed on each attempt.
+- Farthest verified task: `T02-contracts` had passing verification commands but
+  did not complete because deterministic acceptance-contract verification kept
+  retrying it.
+- New blocker: `T02-contracts-AC09`, "No task downstream needs to invent
+  independent RunResult, error-code, or prompt-limit shapes outside
+  src/contracts.ts", was treated as a current-task structural blocker even
+  though it is a cross-task evidence invariant. The source contract task cannot
+  fully prove downstream non-duplication before downstream tasks exist; this
+  belongs as pending evidence for contract/downstream tests, not a deterministic
+  implementation retry.
+- Failure class: harness evidence-policy gap. This is the `T03/T02 contracts`
+  smell cluster documented in `docs/DELIVERY_SMELL_AUDIT.md`.
+- Stop decision: classify cross-task contract-drift criteria as behavior-like
+  evidence criteria so they stay visible as pending evidence but do not block
+  deterministic implementation completion for the source contract task.

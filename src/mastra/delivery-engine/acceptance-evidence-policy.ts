@@ -13,8 +13,15 @@ function isDeclarativeConfigCriterion(criterion: string) {
   );
 }
 
+function isCrossTaskContractEvidenceCriterion(criterion: string) {
+  return /\b(?:no\s+task\s+downstream|downstream\s+tasks?|downstream\s+consumers?)\b[\s\S]*\b(?:invent|duplicate|independent|outside\s+src\/contracts\.ts|same\s+(?:limits|contracts?|shapes?))\b/i.test(
+    criterion,
+  );
+}
+
 export function isBehaviorLikeAcceptanceCriterion(criterion: string) {
   if (isDocumentationCriterion(criterion) || isDeclarativeConfigCriterion(criterion)) return false;
+  if (isCrossTaskContractEvidenceCriterion(criterion)) return true;
   return behaviorCriterionPattern.test(criterion);
 }
 
