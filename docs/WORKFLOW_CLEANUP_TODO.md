@@ -66,6 +66,8 @@ Do not redo these:
 - Build verification and deployment report policy: `build-deployment-policy.ts`
 - Workflow error handling: `workflow-support/errors.ts`
 - Workflow state sync steps: `workflow-support/state-sync.ts`
+- Agent trace artifacts and response serialization:
+  `agent-runtime/trace-artifacts.ts`
 
 ## Cleanup Rules
 

@@ -139,6 +139,8 @@ Verification:
 
 ### Phase 2: Agent Runtime And Judge Infrastructure
 
+Status: in progress.
+
 Goal: make agent execution mechanics reusable and testable outside workflows.
 
 Extract to:
@@ -160,6 +162,11 @@ Move:
 - judge unavailable fallback output.
 - `judgeDeliveryArtifact`.
 - stage tool-use checks.
+
+Completed extraction:
+
+- `agent-runtime/trace-artifacts.ts` for response text extraction, agent
+  response serialization, secret redaction, and trace artifact writing.
 
 Keep in workflow steps:
 
