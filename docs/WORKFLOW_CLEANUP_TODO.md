@@ -32,9 +32,13 @@ natural T06 failure.
 
 ## Active Cleanup Queue
 
-No active workflow cleanup clusters are queued. Before adding another one, read
-the operating doctrine and verify the change makes `workflow.ts` smaller,
-clearer, and more Mastra-native without weakening delivery behavior.
+Acceptance-contract smell cleanup is active. Read
+`docs/DELIVERY_SMELL_AUDIT.md` before editing acceptance evidence,
+deterministic implementation gates, or task-plan criteria normalization.
+
+Before adding another workflow cleanup cluster, read the operating doctrine and
+verify the change makes `workflow.ts` smaller, clearer, and more Mastra-native
+without weakening delivery behavior.
 
 ## Already Extracted
 
