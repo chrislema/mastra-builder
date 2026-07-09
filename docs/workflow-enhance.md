@@ -503,6 +503,9 @@ Completed extraction:
 - `workflows/build-task.workflow.ts` and `workflows/build.workflow.ts` for the
   native per-task retry loop, build task expansion, sequential task execution,
   and build-result aggregation.
+- `workflows/review.workflow.ts` for the native architect review loop,
+  review-report parsing, planner-bounce revision, deterministic revision gates,
+  and reviewed-state sync.
 
 Keep `workflow.ts` temporarily as a compatibility barrel:
 

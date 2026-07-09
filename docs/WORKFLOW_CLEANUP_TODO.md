@@ -183,6 +183,8 @@ Do not redo these:
   `workflows/deployment.workflow.ts`
 - Native build task retry workflow and build aggregation workflow:
   `workflows/build-task.workflow.ts`, `workflows/build.workflow.ts`
+- Native architect review workflow and planner-bounce revision loop:
+  `workflows/review.workflow.ts`
 
 ## Cleanup Rules
 
