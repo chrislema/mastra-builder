@@ -89,9 +89,9 @@ test('delivery project fixtures generate deterministic Cloudflare Worker scaffol
       assert.equal(scaffold.manifest.bindingMap[binding] !== undefined, true, `${fixture.name}:${binding}`);
     }
     if (fixture.bindings?.includes('AI')) {
-      assert.deepEqual(wrangler.ai, { binding: 'AI' }, fixture.name);
-      assert.deepEqual(wrangler.env.staging.ai, { binding: 'AI' }, fixture.name);
-      assert.deepEqual(wrangler.env.production.ai, { binding: 'AI' }, fixture.name);
+      assert.deepEqual(wrangler.ai, { binding: 'AI', remote: true }, fixture.name);
+      assert.deepEqual(wrangler.env.staging.ai, { binding: 'AI', remote: true }, fixture.name);
+      assert.deepEqual(wrangler.env.production.ai, { binding: 'AI', remote: true }, fixture.name);
     }
     if (fixture.bindings?.includes('BOOKMARKS')) {
       assert.ok(wrangler.services.some((service: { binding: string }) => service.binding === 'BOOKMARKS'), fixture.name);

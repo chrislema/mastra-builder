@@ -62,6 +62,7 @@ export function renderVitestConfig(language: ProjectLanguage) {
     '      defineProject({',
     '        plugins: [',
     '          cloudflareTest({',
+    '            remoteBindings: false,',
     '            wrangler: {',
     "              configPath: './wrangler.jsonc',",
     "              environment: 'staging',",

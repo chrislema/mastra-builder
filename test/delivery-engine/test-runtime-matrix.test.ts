@@ -44,6 +44,7 @@ test('generated Vitest config uses Cloudflare worker plugin only for worker test
   assert.match(vitestConfig, /name: 'node'/);
   assert.match(vitestConfig, /include: \["test\/contracts\.test\.ts"/);
   assert.match(vitestConfig, /name: 'worker'/);
+  assert.match(vitestConfig, /remoteBindings: false/);
   assert.match(vitestConfig, /include: \["test\/api-routes\.test\.ts"/);
   assert.match(vitestConfig, /name: 'frontend'/);
   assert.match(vitestConfig, /environment: 'jsdom'/);

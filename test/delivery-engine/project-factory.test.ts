@@ -77,7 +77,7 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
   assert.equal(packageJson.devDependencies.vite, undefined);
 
   const wrangler = JSON.parse(fileContent(scaffold, 'wrangler.jsonc')) as {
-    ai: { binding: string };
+    ai: { binding: string; remote: boolean };
     assets: { binding: string };
     d1_databases: Array<{ binding: string }>;
     kv_namespaces: Array<{ binding: string }>;
@@ -88,7 +88,7 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
       production: Record<string, unknown>;
     };
   };
-  assert.deepEqual(wrangler.ai, { binding: 'AI' });
+  assert.deepEqual(wrangler.ai, { binding: 'AI', remote: true });
   assert.deepEqual(wrangler.assets, { directory: './public', binding: 'ASSETS' });
   assert.equal(wrangler.d1_databases[0]?.binding, 'DB');
   assert.equal(wrangler.kv_namespaces[0]?.binding, 'KV');
@@ -107,6 +107,8 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
   assert.match(fileContent(scaffold, '.gitignore'), /^\.dev\.vars\*$/m);
   assert.match(fileContent(scaffold, '.gitignore'), /^\.env\*$/m);
   assert.match(fileContent(scaffold, '.gitignore'), /^\*\.cpuprofile$/m);
+
+  assert.match(fileContent(scaffold, 'vitest.config.ts'), /remoteBindings: false/);
 
   const workerSource = fileContent(scaffold, 'src/index.ts');
   assert.match(workerSource, /export interface Env/);

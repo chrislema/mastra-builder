@@ -67,7 +67,7 @@ export function wranglerConfigObject({
     vars: { APP_ENV: 'development' },
   };
 
-  if (hasProfile(profiles, 'worker-workers-ai')) config.ai = { binding: 'AI' };
+  if (hasProfile(profiles, 'worker-workers-ai')) config.ai = { binding: 'AI', remote: true };
   if (hasProfile(profiles, 'worker-d1')) {
     config.d1_databases = [
       {
