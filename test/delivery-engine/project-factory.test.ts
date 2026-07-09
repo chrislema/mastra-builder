@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import Ajv from 'ajv';
 import {
   materializeProjectScaffold,
   renderProjectScaffold,
@@ -12,12 +13,24 @@ import {
   workerToolchainVersions,
 } from '../../src/mastra/delivery-engine/project-factory/index.ts';
 import { currentWorkerCompatibilityDate } from '../../src/mastra/delivery-engine/worker-compatibility-date.ts';
-import { workerPackageScaffoldGaps } from '../../src/mastra/delivery-engine/worker-hygiene.ts';
+import { workerConfigHygieneGaps, workerPackageScaffoldGaps } from '../../src/mastra/delivery-engine/worker-hygiene.ts';
 
 function fileContent(scaffold: ReturnType<typeof renderProjectScaffold>, path: string) {
   const file = scaffold.files.find((candidate) => candidate.path === path);
   assert.ok(file, `Expected scaffold file ${path}`);
   return file.content;
+}
+
+function assertValidWranglerConfig(config: unknown) {
+  const schema = JSON.parse(readFileSync(join(process.cwd(), 'node_modules/wrangler/config-schema.json'), 'utf8')) as object;
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  const validate = ajv.compile(schema);
+  assert.equal(
+    validate(config),
+    true,
+    validate.errors?.map((error) => `${error.instancePath || '/'} ${error.message ?? 'failed schema validation'}`).join('\n') ??
+      'Generated wrangler.jsonc failed Wrangler schema validation.',
+  );
 }
 
 test('project factory renders a TypeScript Worker scaffold with Cloudflare bindings mirrored into environments', () => {
@@ -201,6 +214,70 @@ test('project factory materialized scaffold passes Worker package hygiene used b
   materializeProjectScaffold(projectFolder, scaffold);
 
   assert.deepEqual(workerPackageScaffoldGaps(projectFolder), []);
+});
+
+test('project factory materialized Cloudflare binding profiles pass Wrangler schema and Worker config hygiene', () => {
+  const projectFolder = mkdtempSync(join(tmpdir(), 'project-factory-cloudflare-bindings-'));
+  const scaffold = renderProjectScaffold({
+    projectName: 'Cloudflare Binding Proof',
+    requestedProfiles: ['worker-workers-ai', 'worker-d1', 'worker-kv', 'worker-r2', 'worker-workflows'],
+  });
+  materializeProjectScaffold(projectFolder, scaffold);
+
+  const wrangler = JSON.parse(readFileSync(join(projectFolder, 'wrangler.jsonc'), 'utf8')) as {
+    ai: { binding: string; remote: boolean };
+    assets: { directory: string; binding: string };
+    d1_databases: Array<{ binding: string }>;
+    kv_namespaces: Array<{ binding: string }>;
+    r2_buckets: Array<{ binding: string }>;
+    workflows: Array<{ binding: string; class_name: string }>;
+    env: {
+      staging: Record<string, unknown>;
+      production: Record<string, unknown>;
+    };
+  };
+
+  assertValidWranglerConfig(wrangler);
+  assert.deepEqual(workerConfigHygieneGaps(projectFolder), []);
+  assert.deepEqual(
+    validateMaterializedScaffold(projectFolder, scaffold.manifest).filter((check) => !check.passed),
+    [],
+  );
+  assert.deepEqual(scaffold.manifest.bindingMap, {
+    ASSETS: 'static assets binding for ./public',
+    AI: 'Workers AI binding',
+    DB: 'D1 database binding',
+    KV: 'KV namespace binding',
+    ARTIFACTS: 'R2 bucket binding',
+    PROCESSING_WORKFLOW: 'Workers Workflow binding',
+  });
+  assert.deepEqual(wrangler.ai, { binding: 'AI', remote: true });
+  assert.deepEqual(wrangler.assets, { directory: './public', binding: 'ASSETS' });
+  assert.equal(wrangler.d1_databases[0]?.binding, 'DB');
+  assert.equal(wrangler.kv_namespaces[0]?.binding, 'KV');
+  assert.equal(wrangler.r2_buckets[0]?.binding, 'ARTIFACTS');
+  assert.equal(wrangler.workflows[0]?.binding, 'PROCESSING_WORKFLOW');
+  assert.equal(wrangler.workflows[0]?.class_name, 'ProcessingWorkflow');
+  assert.deepEqual(wrangler.env.staging.ai, wrangler.ai);
+  assert.deepEqual(wrangler.env.staging.assets, wrangler.assets);
+  assert.deepEqual(wrangler.env.staging.d1_databases, wrangler.d1_databases);
+  assert.deepEqual(wrangler.env.staging.kv_namespaces, wrangler.kv_namespaces);
+  assert.deepEqual(wrangler.env.staging.r2_buckets, wrangler.r2_buckets);
+  assert.deepEqual(wrangler.env.staging.workflows, wrangler.workflows);
+  assert.deepEqual(wrangler.env.production.ai, wrangler.ai);
+  assert.deepEqual(wrangler.env.production.assets, wrangler.assets);
+  assert.deepEqual(wrangler.env.production.d1_databases, wrangler.d1_databases);
+  assert.deepEqual(wrangler.env.production.kv_namespaces, wrangler.kv_namespaces);
+  assert.deepEqual(wrangler.env.production.r2_buckets, wrangler.r2_buckets);
+  assert.deepEqual(wrangler.env.production.workflows, wrangler.workflows);
+
+  const workerSource = readFileSync(join(projectFolder, 'src/index.ts'), 'utf8');
+  assert.match(workerSource, /ASSETS: Fetcher;/);
+  assert.match(workerSource, /AI: Ai;/);
+  assert.match(workerSource, /DB: D1Database;/);
+  assert.match(workerSource, /KV: KVNamespace;/);
+  assert.match(workerSource, /ARTIFACTS: R2Bucket;/);
+  assert.match(workerSource, /PROCESSING_WORKFLOW: Workflow;/);
 });
 
 test('generated Vitest config typechecks against the pinned Worker test toolchain', () => {

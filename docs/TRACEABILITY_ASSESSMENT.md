@@ -35,11 +35,11 @@ This is the active repo-wide loop until explicitly replaced:
    proof or record an explicit decision that the claim is out of scope.
 5. Update this file with the proof or decision, then commit and push.
 
-The current cursor is Phase 5: Cloudflare runtime proof. The next loop should
-close the remaining Cloudflare subclaims without a paid delivery rerun:
-Workers AI, Static Assets, Wrangler env mirrors, D1, KV, R2, Durable Object and
-Workflow decisions, Pages exceptions, generated scripts, local probes, and
-release-gate evidence.
+The current cursor is Phase 5: Cloudflare runtime proof. The all-profile Worker
+binding scaffold now has deterministic Wrangler schema and hygiene proof. The
+next loop should close the remaining Cloudflare subclaims without a paid
+delivery rerun: Durable Object decisions, Pages exceptions, generated scripts,
+local probes, and release-gate evidence.
 
 ## Traceability Assessment Trigger
 
@@ -142,7 +142,8 @@ If a feature claims to generate working software, Level 1 is not enough.
 | Closed | Worker compatibility date scaffold policy | New Worker scaffolds should use the same current compatibility date as the Worker config hygiene policy and task packet rails. | `worker-compatibility-date.ts`, `project-factory/schemas.ts`, `worker-hygiene.ts` | generated `wrangler.jsonc` compatibility_date and worker config hygiene diagnostics | `project-factory.test.ts`, full test suite, `npm run typecheck`, all-profile generated scaffold `workerConfigHygieneGaps`, all-profile generated scaffold `npm run typecheck` and `npm test` | Closed in this checkpoint; the project factory and Worker hygiene share one compatibility-date helper, fresh all-profile scaffolds emit `2026-07-09`, and `workerConfigHygieneGaps` returns no gaps. |
 | Closed | Static assets scaffold runtime smoke | Worker-first vanilla frontends need generated tests that exercise `env.ASSETS.fetch`, not only check file presence. | `project-factory/files.ts` | generated `test/worker-smoke.test.ts`, generated Worker static asset fallback | `project-factory.test.ts`, full test suite, `npm run typecheck`, fresh all-profile generated scaffold `npm test` | Closed in this checkpoint; the generated Worker smoke test now verifies `/api/health` and the ASSETS fallback path, and a fresh all-profile scaffold reports 3 passing tests. |
 | Closed | Source-declared custom domain routes | Custom domains are in Chris's Worker deployment scope, but should only affect config when source docs or intent declare exact domains. | `source-policy.ts`, `planner-prompt-policy.ts`, `project-factory/wrangler-config.ts` | source policy `customDomains`, planner policy line, generated production `routes` entries with `custom_domain: true` | `workflow-policy.test.ts`, `project-factory.test.ts`, full test suite, `npm run typecheck`, custom-domain generated scaffold `workerConfigHygieneGaps`, `npm run typecheck`, and `npm test` | Closed in this checkpoint; exact custom domains are normalized from source docs/intent, production-only custom-domain routes are emitted, staging remains route-neutral, and a fresh custom-domain scaffold has zero config hygiene gaps. |
-| P1 | Cloudflare runtime proof | Worker-first Cloudflare policy must be executable, not only structurally asserted. | project factory, Cloudflare profile policy, Worker config/package hygiene, release-gate evidence planner | generated Worker project config, bindings, scripts, tests, local evidence plans, release gate | Existing Cloudflare unit fixtures plus next repo-wide runtime proof audit. | Next loop: map Workers AI, Static Assets, Wrangler env mirrors, D1/KV/R2/DO/Workflow decisions, Pages exceptions, generated scripts, and local probes to concrete verifiers. |
+| Closed | Cloudflare binding profile schema and hygiene proof | Worker-first profiles for Workers AI, D1, KV, R2, Workers Workflows, Static Assets, and Wrangler env mirrors must compose in one generated scaffold and match the installed Wrangler toolchain. | `project-factory/profiles.ts`, `project-factory/files.ts`, `project-factory/wrangler-config.ts`, `worker-hygiene.ts` | generated `wrangler.jsonc`, `src/index.ts`, scaffold manifest binding map, generated environment mirrors | `project-factory.test.ts` materializes an all-profile scaffold, validates `wrangler.jsonc` against `node_modules/wrangler/config-schema.json` with AJV, runs `workerConfigHygieneGaps`, runs `validateMaterializedScaffold`, full test suite, and `npm run typecheck` | Closed in this checkpoint; the combined scaffold now proves schema-valid Wrangler config, top-level/staging/production binding mirrors, Env binding alignment, and scaffold validation for AI, D1, KV, R2, Workflows, and Static Assets without a paid delivery run. |
+| P1 | Cloudflare runtime proof | Worker-first Cloudflare policy must be executable, not only structurally asserted. | project factory, Cloudflare profile policy, Worker config/package hygiene, release-gate evidence planner | generated Worker project config, bindings, scripts, tests, local evidence plans, release gate | Existing Cloudflare unit fixtures plus next repo-wide runtime proof audit. | Next loop: map Durable Object scope decisions, Pages exceptions, generated scripts, local probes, and release-gate evidence to concrete verifiers or explicit out-of-scope decisions. |
 
 ## Completed Checkpoints
 
@@ -179,6 +180,10 @@ If a feature claims to generate working software, Level 1 is not enough.
 - this checkpoint: Added source-declared custom domain policy and production-only
   custom-domain Wrangler routes; a fresh custom-domain scaffold has zero config
   hygiene gaps and passes its own typecheck/test command path.
+- this checkpoint: Added an explicit all-profile Cloudflare Worker scaffold
+  proof that validates generated `wrangler.jsonc` against the installed
+  Wrangler schema, checks Worker config hygiene, confirms env binding mirrors,
+  and keeps project-factory scaffold validation green.
 
 ## Ordered Repo-Wide Pass
 
