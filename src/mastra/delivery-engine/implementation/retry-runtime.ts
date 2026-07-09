@@ -17,6 +17,7 @@ import {
   outOfPlanVerificationFailurePathsFromTasks,
   staleDownstreamVerificationSurfacePathsFromOrderedTasks,
   staleWorkspaceVerificationRemediation as staleWorkspaceVerificationRemediationFromTasks,
+  verificationFailurePaths,
   typeScriptDiagnosticsFromRemediation as typeScriptDiagnosticsFromRemediationBase,
   typeScriptDiagnosticsFromText as typeScriptDiagnosticsFromTextBase,
   type TypeScriptDiagnostic,
@@ -61,12 +62,57 @@ export function outOfPlanVerificationFailurePaths({
   taskPlan: TaskPlan;
   failure: string;
 }) {
+  const scaffoldOwnedPaths = new Set(scaffoldGeneratedFilePaths(repoPath));
   return outOfPlanVerificationFailurePathsFromTasks({
     repoPath,
     tasks: taskPlan.tasks,
     failure,
     taskBoundarySurfaces: (task) => taskBoundarySurfaces(repoPath, task),
+  }).filter((path) => !scaffoldOwnedPaths.has(path));
+}
+
+function scaffoldGeneratedFilePaths(repoPath: string) {
+  const manifestPath = join(resolve(repoPath), '.delivery/artifacts/scaffold-manifest.json');
+  if (!existsSync(manifestPath)) return [];
+
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { generatedFiles?: unknown };
+    if (!Array.isArray(manifest.generatedFiles)) return [];
+    return manifest.generatedFiles
+      .map((path) => (typeof path === 'string' ? normalizeDeliveryPathReference(path) : undefined))
+      .filter((path): path is string => Boolean(path));
+  } catch {
+    return [];
+  }
+}
+
+export function scaffoldOwnedVerificationFailurePaths({
+  repoPath,
+  failure,
+}: {
+  repoPath: string;
+  failure: string;
+}) {
+  const scaffoldOwnedPaths = new Set(scaffoldGeneratedFilePaths(repoPath));
+  if (!scaffoldOwnedPaths.size) return [];
+
+  return verificationFailurePaths(failure).filter((path) => {
+    if (!scaffoldOwnedPaths.has(path)) return false;
+    return existsSync(join(resolve(repoPath), path));
   });
+}
+
+export function scaffoldBaselineVerificationRemediation({
+  repoPath,
+  failure,
+}: {
+  repoPath: string;
+  failure: string;
+}) {
+  const paths = scaffoldOwnedVerificationFailurePaths({ repoPath, failure });
+  if (!paths.length) return undefined;
+
+  return `SCAFFOLD_BASELINE_VERIFICATION: repo-wide verification failed in deterministic scaffold-owned file(s): ${paths.join(', ')}. Fix the project factory scaffold producer and scaffold validation proof, not the current product task. Original failure: ${compactDiagnostic(failure, 500)}`;
 }
 
 function deliveryImplementationNoteTouchedPaths(repoPath: string) {

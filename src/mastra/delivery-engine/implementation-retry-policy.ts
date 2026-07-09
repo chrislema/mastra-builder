@@ -178,6 +178,10 @@ function remediationHasStaleWorkspaceVerificationFailure(remediation: string[]) 
   return remediation.some((item) => /\bSTALE_WORKSPACE_VERIFICATION\b/i.test(item));
 }
 
+function remediationHasScaffoldBaselineVerificationFailure(remediation: string[]) {
+  return remediation.some((item) => /\bSCAFFOLD_BASELINE_VERIFICATION\b/i.test(item));
+}
+
 function remediationHasImplementationJudgmentFailure(remediation: string[]) {
   return remediation.some((item) => /\b(GATE|DIMENSION|JUDGE|implementation judgment)\b/i.test(item));
 }
@@ -228,6 +232,7 @@ export function implementationFailureClass(remediation: string[]) {
   if (remediationHasReadBudgetFailure(remediation)) return 'read_budget' as const;
   if (remediationHasWorkerPackageFailure(remediation)) return 'worker_package' as const;
   if (remediationHasWorkerConfigFailure(remediation)) return 'worker_config' as const;
+  if (remediationHasScaffoldBaselineVerificationFailure(remediation)) return 'scaffold_baseline_verification' as const;
   if (remediationHasStaleWorkspaceVerificationFailure(remediation)) return 'stale_workspace_verification' as const;
   if (remediationHasVerificationFailure(remediation)) return 'code_verification' as const;
   if (remediationHasPolicyBoundaryFailure(remediation)) return 'policy_boundary' as const;

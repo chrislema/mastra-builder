@@ -351,6 +351,9 @@ export async function runBuildTaskAttempt({
     const staleWorkspaceVerification = deterministicRemediation.filter((item) =>
       /\bSTALE_WORKSPACE_VERIFICATION\b/i.test(item),
     );
+    const scaffoldBaselineVerification = deterministicRemediation.filter((item) =>
+      /\bSCAFFOLD_BASELINE_VERIFICATION\b/i.test(item),
+    );
     await appendDeliveryEventState({
       repoPath: inputData.repoPath,
       mastra,
@@ -364,6 +367,33 @@ export async function runBuildTaskAttempt({
         engine_policy_mismatch: enginePolicyMismatch,
       },
     });
+
+    if (scaffoldBaselineVerification.length) {
+      await updateDeliveryTaskState({
+        repoPath: inputData.repoPath,
+        id: task.id,
+        status: 'stuck',
+        owner: role,
+        note: scaffoldBaselineVerification.join(' | ').slice(0, 300),
+        mastra,
+      });
+
+      return buildAttemptOutput({
+        inputData,
+        task,
+        taskPlan,
+        artifacts,
+        checks,
+        judgments,
+        status: 'stuck',
+        summary: `Build task ${task.id} stopped because deterministic scaffold verification failed.`,
+        nextSteps: scaffoldBaselineVerification,
+        taskStatus: 'stuck',
+        attempt,
+        terminal: true,
+        remediation: scaffoldBaselineVerification,
+      });
+    }
 
     if (staleWorkspaceVerification.length) {
       await updateDeliveryTaskState({

@@ -20,6 +20,8 @@ import {
   repairStaleDownstreamVerificationSurfaces,
   repairStaleOutOfPlanVerificationSurfaces,
   repairUnknownNumberIntegerNarrowing,
+  scaffoldBaselineVerificationRemediation,
+  scaffoldOwnedVerificationFailurePaths,
   staleDownstreamVerificationSurfacePaths,
   staleOutOfPlanVerificationSurfacePaths,
   typeScriptDiagnosticsFromRemediation,
@@ -7808,6 +7810,37 @@ test('out-of-plan verification failures are classified as stale workspace contam
     ]),
     'stale_workspace_verification',
   );
+});
+
+test('fresh scaffold-owned verification failures are classified as scaffold baseline failures', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-scaffold-baseline-failure-'));
+  mkdirSync(join(repoPath, '.delivery/artifacts'), { recursive: true });
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/contracts.ts'), 'export type RunRequest = { prompt: string };\n');
+  writeFileSync(join(repoPath, 'vitest.config.ts'), 'export default {};\n');
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/scaffold-manifest.json'),
+    JSON.stringify(
+      {
+        generatedFiles: ['package.json', 'vitest.config.ts', 'src/contracts.ts'],
+      },
+      null,
+      2,
+    ),
+  );
+  const plan = taskPlan([{ depends_on: [], owned_surfaces: ['src/contracts.ts'] }]);
+  const failure = [
+    "vitest.config.ts(13,11): error TS2769: No overload matches this call.",
+    "Object literal may only specify known properties, and 'passWithNoTests' does not exist in type 'ProjectConfig'.",
+  ].join('\n');
+
+  assert.deepEqual(scaffoldOwnedVerificationFailurePaths({ repoPath, failure }), ['vitest.config.ts']);
+  assert.deepEqual(outOfPlanVerificationFailurePaths({ repoPath, taskPlan: plan, failure }), []);
+
+  const remediation = scaffoldBaselineVerificationRemediation({ repoPath, failure });
+  assert.match(remediation ?? '', /SCAFFOLD_BASELINE_VERIFICATION/);
+  assert.match(remediation ?? '', /project factory scaffold producer/);
+  assert.equal(implementationFailureClass([`DETERMINISTIC verification_passed failed: ${remediation}`]), 'scaffold_baseline_verification');
 });
 
 test('stale out-of-plan repair resets only delivery-generated surfaces', async () => {

@@ -8,6 +8,7 @@ import {
 import { missingInstalledPackageNames } from '../implementation/task-boundaries';
 import {
   applyBuildVerificationRepair,
+  scaffoldBaselineVerificationRemediation,
   staleWorkspaceVerificationRemediation,
 } from '../implementation/retry-runtime';
 import { appendDeliveryEventState } from '../state-service';
@@ -164,6 +165,14 @@ export async function runBuildVerification({
 
       if (allowRepair && (await applyBuildVerificationRepair({ repoPath, mastra, stage, taskPlan, taskIndex, failure }))) {
         return runBuildVerification({ repoPath, mastra, stage, taskPlan, taskIndex, allowRepair: false });
+      }
+
+      const scaffoldBaselineFailure = scaffoldBaselineVerificationRemediation({ repoPath, failure });
+      if (scaffoldBaselineFailure) {
+        return {
+          performed,
+          missing: [`${command} failed: ${scaffoldBaselineFailure}`],
+        };
       }
 
       const staleWorkspaceFailure = staleWorkspaceVerificationRemediation({ repoPath, taskPlan, failure });
