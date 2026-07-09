@@ -42,7 +42,12 @@ boundaries are explicit, and local runtime probe planning is covered by tests.
 Live Wrangler runtime evidence still belongs to the next approved local release
 gate because the Codex sandbox can deny local listener creation.
 
-The current cursor is Phase 6: evals, scorers, and observability.
+The Phase 6 deterministic audit is closed. Delivery and Cloudflare eval suites
+now prove scorer fixtures, gate thresholds, isolated Mastra experiment runs, and
+native `scores` domain read-back. Observability state, spans/logs, rubric score
+mirroring, and runner reports are covered by deterministic tests.
+
+The current cursor is Phase 7: operator docs and run discipline.
 
 ## Traceability Assessment Trigger
 
@@ -150,7 +155,8 @@ If a feature claims to generate working software, Level 1 is not enough.
 | Closed | Durable Object scope and hygiene proof | Durable Objects are a Worker architecture choice for real-time coordination/stateful connections, but not a deterministic scaffold profile in Chris's default Worker harness. If a task introduces DO config, binding names must align across Wrangler config, environments, and Env. | `cloudflare-evals.ts`, `skills/select-cloudflare-components/SKILL.md`, `worker-hygiene.ts`, task-boundary hygiene | Cloudflare architecture eval fixture, generated task-level `durable_objects.bindings`, `Env` `DurableObjectNamespace`, env mirrors | `scorers.test.ts`, Cloudflare eval fixtures/gates, `workflow-policy.test.ts` DO binding-alignment regression, full test suite, and `npm run typecheck` | Closed in this checkpoint; DO remains an architecture/scorer/task-level capability rather than a project-factory scaffold claim, and Worker config hygiene now explicitly catches and accepts DO binding alignment. |
 | Closed | Generated scripts and release-gate command alignment | Generated Worker package scripts and release-gate commands must agree, avoid redundant composite checks, and generate Wrangler types before checking freshness when `worker-configuration.d.ts` is absent. | `project-factory/package-manifest.ts`, `build-deployment-policy.ts`, `release-gate-command-plan.ts`, `evidence/release-gate-evidence.ts` | generated `package.json` scripts, scaffold `validationCommands`, release-gate command plan | `workflow-policy.test.ts` materializes a generated Worker scaffold and checks the release-gate command plan, `project-factory.test.ts`, full test suite, and `npm run typecheck` | Closed in this checkpoint; fresh TypeScript Worker scaffolds now plan `wrangler types` before package checks, existing generated types still use `wrangler types --check`, and generated `check` scripts no longer duplicate `typecheck`/`test` evidence. |
 | Closed | Local runtime probe planning boundary | Local runtime probes must be planned deterministically from Worker config, public assets, health/API routes, and source-gated product routes. Actual `wrangler dev` execution requires a local process that can bind `127.0.0.1`. | `release-gate-runtime-probe-plan.ts`, `release-gate-probes.ts`, `evidence/release-gate-evidence.ts` | `ReleaseGateRuntimeProbePlan`, static asset probes, health probes, short-link/profile/latest-transcript probes | `workflow-policy.test.ts` runtime-probe planner tests, release-gate evidence planner tests, full test suite, `npm run typecheck`, and observed sandbox `listen EPERM` for nested Worker-pool command execution | Closed as a deterministic audit decision; unit tests own probe planning, while live Wrangler listener/runtime evidence is deferred to the next approved local release gate outside the restricted sandbox. |
-| P1 | Evals, scorers, and observability proof | Every scorer/eval/observability claim should map to fixtures, registration, persisted state, score records, and diagnostic reports that a Mastra expert can inspect. | scorers, eval suites, observability/state services, Mastra registration, run reports | scorer outputs, eval gate reports, observability logs/scores, `.delivery` projections | Existing scorer/eval/observability tests plus next repo-wide Phase 6 audit. | Next loop: map delivery/cloudflare eval fixtures, scorer thresholds, observability persistence, score storage, and run-report diagnostics to concrete verifiers. |
+| Closed | Evals, scorers, and observability proof | Every scorer/eval/observability claim should map to fixtures, registration, persisted state, score records, and diagnostic reports that a Mastra expert can inspect. | `scorers.ts`, `evals.ts`, `cloudflare-evals.ts`, `observability.ts`, `state-service.ts`, `runner.ts`, Mastra registration | scorer outputs, eval gate reports, native `scores` rows, observability logs/spans/score events, `.delivery` projections, `.delivery/runs/latest.json` | `evals.test.ts` and `cloudflare-evals.test.ts` run isolated Mastra scorer experiments and read back native `scores` rows for every scorer; `observability.test.ts` writes/reads LibSQL observability state and rubric scores; `index-registration.test.ts`; `runner.test.ts`; full test suite; `npm run typecheck` | Closed in this checkpoint; scorer/eval/observability claims are backed by fixture coverage, threshold gate reports, persisted score read-back, storage-backed state diagnostics, and run reports without a paid delivery run. |
+| P1 | Operator docs and run discipline | Operator-facing docs should match actual Studio/CLI commands, source-document defaults, paid-run stop conditions, and run-journal discipline. | README, `docs/RUN_OBSERVATIONS.md`, runner/API schemas, launcher route, package scripts | documented commands, Studio launcher behavior, run observation entries, stop condition wording | Existing README/runner tests plus next Phase 7 audit. | Next loop: map README/operator claims to real package scripts, Studio entrypoints, default inputs, benchmark-run journal requirements, and current stop conditions. |
 
 ## Completed Checkpoints
 
@@ -206,6 +212,10 @@ If a feature claims to generate working software, Level 1 is not enough.
   documenting that local runtime probe planning is unit-tested while live
   `wrangler dev` listener evidence belongs to the next approved local release
   gate outside the restricted Codex sandbox.
+- this checkpoint: Proved delivery and Cloudflare eval suites persist native
+  Mastra score rows for every registered scorer, and tied Phase 6 to
+  registration, threshold gate reports, observability storage, and runner report
+  tests.
 
 ## Ordered Repo-Wide Pass
 
@@ -260,6 +270,12 @@ unit tests can block local listener creation.
   diagnose a run without asking Chris to paste terminal output.
 - Confirm failure reports use the same classification vocabulary as this doc.
 
+Status: closed. Delivery and Cloudflare eval experiments run through isolated
+Mastra storage, every scorer has positive and negative fixture coverage, score
+rows are read back from the native `scores` domain, and observability/runner
+tests cover storage-backed delivery state, rubric score mirroring, and diagnostic
+reports.
+
 ### Phase 7: Operator Docs And Run Discipline
 
 - Check README/operator docs against actual commands and Studio behavior.
@@ -273,5 +289,5 @@ Do not run another paid benchmark delivery pass until:
 
 - The active traceability matrix has no P1 rows, or Chris explicitly approves a
   paid run for a specific forward-progress question.
-- The current P1 row is Phase 6: evals, scorers, and observability proof.
+- The current P1 row is Phase 7: operator docs and run discipline.
 - The next proof or explicit decision is committed and pushed.

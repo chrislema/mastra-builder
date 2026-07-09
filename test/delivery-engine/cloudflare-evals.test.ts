@@ -207,4 +207,17 @@ test('cloudflare architecture experiment gates scorers through isolated Mastra s
     perPage: 10,
   });
   assert.equal(listed.datasets.some((dataset) => dataset.name === cloudflareArchitectureDatasetName), true);
+
+  const scoresStore = await storage.getStore('scores');
+  assert.ok(scoresStore, 'Mastra scores storage must be available for Cloudflare eval score read-back');
+  for (const scorerId of cloudflareArchitectureScorerIds) {
+    const listedScores = await scoresStore.listScoresByScorerId({
+      scorerId,
+      pagination: { page: 0, perPage: 100 },
+    });
+    assert.equal(listedScores.scores.length, cloudflareArchitectureDatasetItems.length, `${scorerId} score rows`);
+    assert.equal(listedScores.scores.every((score) => score.source === 'TEST'), true);
+    assert.equal(listedScores.scores.every((score) => score.scorerId === scorerId), true);
+    assert.equal(listedScores.scores.every((score) => typeof score.reason === 'string' && score.reason.length > 0), true);
+  }
 });
