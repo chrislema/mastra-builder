@@ -640,3 +640,53 @@ For each run, record:
 - Guardrail: this is a paid full run. Watch progress from CLI output and
   `.delivery` artifacts. If it stalls, read the latest run report, classify the
   failure first, and avoid patching forward with brittle text/string matching.
+- Workflow run ID: `f63f56b3-f776-413d-8c90-d2d7112acef4`
+- Delivery run ID: `run-mrcyjp2y-065fffa1`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/f63f56b3-f776-413d-8c90-d2d7112acef4.json`
+- Result: workflow status `success`, delivery status `stuck`.
+- Progress:
+  - Fresh folder was cleared to only `vision.md` before the run.
+  - Planner created the initial task plan.
+  - Deterministic plan gate caught an engineer-owned `.dev.vars.example`
+    ownership violation and requested a planner repair instead of proceeding.
+  - Planner repair produced `task-plan.plan-gate-revision-1.json`; the
+    deterministic plan gate then passed.
+  - Scaffold generation completed for `worker-typescript` and
+    `worker-workers-ai`.
+  - Scaffold checks passed, including `scaffold_vitest_config_typecheck`; the
+    previous fresh-run `vitest.config.ts` typecheck blocker is fixed.
+  - Architect review completed with a blocked review report; the review judge
+    passed at `0.75`.
+  - Architect-bounce planner revision produced `task-plan.revision-1.json`.
+- Farthest verified stage/task: scaffold generation and scaffold validation
+  passed; architect review and judge passed; no implementation task execution
+  began because the architect-bounce task-plan revision failed deterministic
+  gates.
+- Concrete blocker:
+  - `task_plan_acceptance_contract_regression:revision-1` failed because the
+    architect-bounce revision renamed frontend behavior evidence tasks from
+    `T06-frontend-behavior-tests` / `T07-frontend-behavior-tests` to
+    shell/run-specific evidence task IDs and omitted one inherited generic
+    `npm test passes and includes frontend behavior coverage` source criterion
+    from each renamed evidence task.
+  - The revision otherwise preserved the meaningful frontend source contracts
+    and refined them with safer rendering and shell/run-specific test criteria.
+- Failure class: harness bug in deterministic acceptance-contract preservation.
+  The hard preservation gate is valid, but its target mapping did not understand
+  renamed evidence/test tasks that share the same `TNN` lineage.
+- Current hypothesis:
+  - Do not loosen the gate with semantic string matching.
+  - Preserve contracts structurally by carrying missing inherited source
+    criteria into the renamed engineer-owned test/evidence task under the same
+    source task lineage.
+- Cheap/static verification to run before another paid delivery pass:
+  - Add a regression for `T06-frontend-behavior-tests` becoming
+    `T06-frontend-shell-behavior-tests` while carrying the missing prior source
+    criterion to the renamed evidence task.
+  - Run focused workflow-policy tests, `npm run typecheck`, and the run-journal
+    operator-doc test.
+- Stop decision: do not run another paid benchmark pass until the renamed
+  evidence-task preservation gap is fixed with deterministic tests and this run
+  result is committed and pushed.

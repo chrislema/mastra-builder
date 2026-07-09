@@ -1354,6 +1354,64 @@ test('task plan revision normalization carries forward dropped product contracts
   assert.deepEqual(preserved.taskPlan.tasks[0].source_acceptance_criteria, previous.tasks[0].acceptance_criteria);
 });
 
+test('task plan repair preservation carries contracts to renamed evidence tasks in the same lineage', () => {
+  const previous = taskPlan([
+    {
+      id: 'T06',
+      depends_on: [],
+      owned_surfaces: ['public/index.html', 'public/styles.css', 'public/app.js'],
+      acceptance_criteria: [
+        'public/app.js supports All and Clear model actions and keeps selected model count synchronized.',
+      ],
+    },
+    {
+      id: 'T06-frontend-behavior-tests',
+      depends_on: ['T06'],
+      owned_surfaces: ['test/frontend-behavior.test.js'],
+      acceptance_criteria: [
+        'test/frontend-behavior.test.js exercises the vanilla public UI with DOM fixtures and mocked fetch/FileReader behavior instead of a frontend framework build.',
+        'test/frontend-behavior.test.js proves UI behavior contracts for state changes, run controls, result cards, sorting/highlighting, and visible recovery messages that exist in the source task.',
+        'npm test passes and includes frontend behavior coverage.',
+      ],
+    },
+  ]);
+  const revised = taskPlan([
+    {
+      id: 'T06',
+      depends_on: [],
+      owned_surfaces: ['public/index.html', 'public/styles.css', 'public/app.js'],
+      acceptance_criteria: [
+        'public/app.js supports All and Clear model actions and keeps selected model count synchronized.',
+        'public/app.js renders model catalog labels and vendors using text nodes or equivalent escaping.',
+      ],
+    },
+    {
+      id: 'T06-frontend-shell-behavior-tests',
+      depends_on: ['T06'],
+      owned_surfaces: ['test/frontend-shell-behavior.test.js'],
+      acceptance_criteria: [
+        'test/frontend-shell-behavior.test.js exercises the vanilla public UI with DOM fixtures and mocked fetch behavior instead of a frontend framework build.',
+        'npm test passes and includes frontend shell behavior coverage through the scaffold frontend test runtime.',
+      ],
+      source_acceptance_criteria: [
+        'test/frontend-behavior.test.js exercises the vanilla public UI with DOM fixtures and mocked fetch/FileReader behavior instead of a frontend framework build.',
+        'test/frontend-behavior.test.js proves UI behavior contracts for state changes, run controls, result cards, sorting/highlighting, and visible recovery messages that exist in the source task.',
+      ],
+    },
+  ]);
+
+  assert.equal(taskPlanAcceptanceContractRegression(previous, revised).passed, false);
+
+  const preserved = preserveTaskPlanAcceptanceContracts(previous, revised);
+  const sourceTask = preserved.taskPlan.tasks.find((task) => task.id === 'T06');
+  const evidenceTask = preserved.taskPlan.tasks.find((task) => task.id === 'T06-frontend-shell-behavior-tests');
+
+  assert.equal(preserved.carried, 1);
+  assert.deepEqual(taskPlanAcceptanceContractRegression(previous, preserved.taskPlan), { passed: true, reason: 'ok' });
+  assert.doesNotMatch((sourceTask?.source_acceptance_criteria ?? []).join('\n'), /frontend behavior coverage/);
+  assert.match((evidenceTask?.source_acceptance_criteria ?? []).join('\n'), /frontend behavior coverage/);
+});
+
 test('task plan repair preservation ignores conditional generated policy contracts', () => {
   const previous = taskPlan([
     {

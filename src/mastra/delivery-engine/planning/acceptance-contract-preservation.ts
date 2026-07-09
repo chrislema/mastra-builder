@@ -78,7 +78,45 @@ function revisedContractTargetIndex(tasks: Task[], contract: { taskId: string; s
   if (sourceMatch >= 0) return sourceMatch;
 
   const familyId = generatedSliceFamilyId(contract.taskId);
-  return tasks.findIndex((task) => generatedSliceFamilyId(task.id) === familyId);
+  const generatedFamily = tasks.findIndex((task) => generatedSliceFamilyId(task.id) === familyId);
+  if (generatedFamily >= 0) return generatedFamily;
+
+  return revisedEvidenceTaskTargetIndex(tasks, contract);
+}
+
+function taskLineageRootId(taskId: string) {
+  return taskId.match(/^(T\d+)(?:-|$)/i)?.[1] ?? taskId;
+}
+
+function taskIdLooksLikeEvidenceTask(taskId: string) {
+  return /(?:test|tests|evidence|behavior)/i.test(taskId);
+}
+
+function taskOwnsTestSurface(task: Task) {
+  return task.owned_surfaces.some((surface) => /^test\//i.test(surface));
+}
+
+function revisedEvidenceTaskTargetIndex(tasks: Task[], contract: { taskId: string; sourceTaskId: string }) {
+  if (!taskIdLooksLikeEvidenceTask(contract.taskId) && !taskIdLooksLikeEvidenceTask(contract.sourceTaskId)) {
+    return -1;
+  }
+
+  const contractRootIds = new Set([taskLineageRootId(contract.taskId), taskLineageRootId(contract.sourceTaskId)]);
+  const evidenceCandidates = tasks
+    .map((task, index) => ({ task, index }))
+    .filter(({ task }) => {
+      const taskRootIds = new Set([taskLineageRootId(task.id), taskLineageRootId(taskSourceTaskId(task))]);
+      return (
+        task.owner === 'engineer' &&
+        taskOwnsTestSurface(task) &&
+        [...contractRootIds].some((rootId) => taskRootIds.has(rootId))
+      );
+    });
+
+  if (evidenceCandidates.length === 1) return evidenceCandidates[0].index;
+
+  const preferred = evidenceCandidates.find(({ task }) => taskIdLooksLikeEvidenceTask(task.id));
+  return preferred?.index ?? -1;
 }
 
 export function preserveTaskPlanAcceptanceContracts(previousTaskPlan: TaskPlan, revisedTaskPlan: TaskPlan) {
