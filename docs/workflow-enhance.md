@@ -497,6 +497,9 @@ Completed extraction:
 - `workflows/release-gate.workflow.ts` for the native release-gate retry loop,
   evidence synthesis, deterministic release readiness gates, and release state
   sync.
+- `workflows/deployment.workflow.ts` for local/production deployment branching,
+  production approval, deployment report persistence, deterministic completion
+  gates, and final state sync.
 
 Keep `workflow.ts` temporarily as a compatibility barrel:
 

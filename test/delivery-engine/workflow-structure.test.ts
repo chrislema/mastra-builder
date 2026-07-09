@@ -16,6 +16,8 @@ import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaff
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
 const releaseGateWorkflowSource = () =>
   readFileSync('src/mastra/delivery-engine/workflows/release-gate.workflow.ts', 'utf8');
+const deploymentWorkflowSource = () =>
+  readFileSync('src/mastra/delivery-engine/workflows/deployment.workflow.ts', 'utf8');
 const implementationAttemptPromptSource = () =>
   readFileSync('src/mastra/delivery-engine/implementation/attempt-prompt.ts', 'utf8');
 const taskPacketRailsSource = () => readFileSync('src/mastra/delivery-engine/task-packet-rails.ts', 'utf8');
@@ -104,7 +106,7 @@ test('release gate is synthesized deterministically from evidence', () => {
 });
 
 test('deployment completion is gated deterministically from evidence', () => {
-  const source = workflowSource();
+  const source = deploymentWorkflowSource();
   const deploymentGate = source.slice(
     source.indexOf("id: 'gate-deployment-report'"),
     source.indexOf('export const deliveryDeploymentWorkflow'),

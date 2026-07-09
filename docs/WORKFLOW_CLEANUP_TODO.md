@@ -177,6 +177,10 @@ Do not redo these:
 - Native release-gate stage workflow, retry loop, evidence synthesis, and
   release readiness state sync:
   `workflows/release-gate.workflow.ts`
+- Native deployment stage workflow, local/production branching, human approval,
+  deployment report persistence, deterministic completion gates, and final state
+  sync:
+  `workflows/deployment.workflow.ts`
 
 ## Cleanup Rules
 
