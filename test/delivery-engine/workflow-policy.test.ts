@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8907,6 +8907,94 @@ test('reusable implementation artifacts reject stale Worker AI config artifacts'
   const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.toml', 'src/index.ts'] }]).tasks;
 
   assert.equal(reusableImplementationArtifactForTask(repoPath, task), undefined);
+});
+
+test('reusable implementation artifacts reject notes older than current owned files', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-reuse-current-file-freshness-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, '.delivery/artifacts/judgments'), { recursive: true });
+  const sourcePath = join(repoPath, 'src/index.ts');
+  const notePath = join(repoPath, '.delivery/artifacts/note-T1.a1.json');
+  writeFileSync(sourcePath, 'export const current = true;\n');
+  writeFileSync(
+    notePath,
+    JSON.stringify({
+      ...implementationNote,
+      task: 'T1',
+      files_touched: ['src/index.ts'],
+    }),
+  );
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/judgments/implementation-T1-a1.judgment.json'),
+    JSON.stringify({
+      rubric: 'implementation',
+      overall: 0.91,
+      passed: true,
+      gates_failed: [],
+      dimensions_missing: [],
+    }),
+  );
+  const oldTime = new Date('2026-01-01T00:00:00.000Z');
+  const newTime = new Date('2026-01-01T00:01:00.000Z');
+  utimesSync(notePath, oldTime, oldTime);
+  utimesSync(sourcePath, newTime, newTime);
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['src/index.ts'] }]).tasks;
+
+  assert.equal(reusableImplementationArtifactForTask(repoPath, task), undefined);
+});
+
+test('reusable implementation artifacts reject downstream notes older than dependency artifacts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-reuse-dependency-freshness-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, '.delivery/artifacts/judgments'), { recursive: true });
+  const contractsPath = join(repoPath, 'src/contracts.ts');
+  const providersPath = join(repoPath, 'src/providers.ts');
+  const t1NotePath = join(repoPath, '.delivery/artifacts/note-T1.a1.json');
+  const t2NotePath = join(repoPath, '.delivery/artifacts/note-T2.a1.json');
+  writeFileSync(contractsPath, 'export const contract = true;\n');
+  writeFileSync(providersPath, 'export const provider = true;\n');
+  writeFileSync(
+    t1NotePath,
+    JSON.stringify({
+      ...implementationNote,
+      task: 'T1',
+      files_touched: ['src/contracts.ts'],
+    }),
+  );
+  writeFileSync(
+    t2NotePath,
+    JSON.stringify({
+      ...implementationNote,
+      task: 'T2',
+      files_touched: ['src/providers.ts'],
+    }),
+  );
+  for (const id of ['T1', 'T2']) {
+    writeFileSync(
+      join(repoPath, `.delivery/artifacts/judgments/implementation-${id}-a1.judgment.json`),
+      JSON.stringify({
+        rubric: 'implementation',
+        overall: 0.91,
+        passed: true,
+        gates_failed: [],
+        dimensions_missing: [],
+      }),
+    );
+  }
+  const earlyTime = new Date('2026-01-01T00:00:00.000Z');
+  const t2Time = new Date('2026-01-01T00:01:00.000Z');
+  const t1Time = new Date('2026-01-01T00:02:00.000Z');
+  utimesSync(providersPath, earlyTime, earlyTime);
+  utimesSync(t2NotePath, t2Time, t2Time);
+  utimesSync(contractsPath, earlyTime, earlyTime);
+  utimesSync(t1NotePath, t1Time, t1Time);
+  const plan = taskPlan([
+    { id: 'T1', depends_on: [], owned_surfaces: ['src/contracts.ts'] },
+    { id: 'T2', depends_on: ['T1'], owned_surfaces: ['src/providers.ts'] },
+  ]);
+  const [, providerTask] = plan.tasks;
+
+  assert.equal(reusableImplementationArtifactForTask(repoPath, providerTask), undefined);
 });
 
 test('build resume plan points to the next task after the passing artifact prefix', () => {

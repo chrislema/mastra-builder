@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { languageForProfiles, normalizeProjectFactoryInput, normalizeProjectName, selectProjectProfiles } from './profiles';
 import { packageScriptsForLanguage, renderPackageJson } from './package-manifest';
@@ -443,9 +443,15 @@ export function renderProjectScaffold(input: unknown): ProjectScaffold {
   return projectScaffoldSchema.parse({ manifest, files });
 }
 
-export function materializeProjectScaffold(projectFolder: string, scaffold: ProjectScaffold) {
+export function materializeProjectScaffold(
+  projectFolder: string,
+  scaffold: ProjectScaffold,
+  options: { overwriteExisting?: boolean } = {},
+) {
+  const overwriteExisting = options.overwriteExisting ?? true;
   for (const file of scaffold.files) {
     const fullPath = join(projectFolder, file.path);
+    if (!overwriteExisting && existsSync(fullPath)) continue;
     mkdirSync(dirname(fullPath), { recursive: true });
     writeFileSync(fullPath, file.content);
   }

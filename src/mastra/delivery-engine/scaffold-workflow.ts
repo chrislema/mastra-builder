@@ -63,7 +63,7 @@ export async function executeDeliveryScaffold(input: DeliveryScaffoldInput, mast
     surfaces: scaffold.manifest.generatedFiles,
   });
 
-  materializeProjectScaffold(repoPath, scaffold);
+  materializeProjectScaffold(repoPath, scaffold, { overwriteExisting: false });
   const checks = validateMaterializedScaffold(repoPath, scaffold.manifest);
 
   const manifestPath = '.delivery/artifacts/scaffold-manifest.json';

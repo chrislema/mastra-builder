@@ -1,7 +1,7 @@
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { runDeterministicCheck, type DeliveryEvent } from '../checks';
+import { normalizeDeliveryPathReference, runDeterministicCheck, type DeliveryEvent } from '../checks';
 import type { AggregatedJudgment } from '../judgment';
 import { topoOrderTasks } from '../task-plan-dependencies';
 import {
@@ -28,6 +28,8 @@ const implementationWriteTools = new Set<string>([
   WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT,
 ]);
 
+const MTIME_SKEW_MS = 5;
+
 function readJsonArtifact(repoPath: string, artifactPath: string) {
   const fullPath = resolve(repoPath, artifactPath);
   if (!existsSync(fullPath)) return undefined;
@@ -36,6 +38,75 @@ function readJsonArtifact(repoPath: string, artifactPath: string) {
 
 function buildRoleForTask(task: Task) {
   return (task.owner === 'designer' ? 'designer' : 'engineer') as 'designer' | 'engineer';
+}
+
+function fileMtimeMs(path: string) {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+function implementationArtifactCandidates(repoPath: string, taskId: string) {
+  const judgmentDir = join(resolve(repoPath), '.delivery/artifacts/judgments');
+  if (!existsSync(judgmentDir)) return [];
+
+  const prefix = `implementation-${taskId}-a`;
+  return readdirSync(judgmentDir)
+    .map((file) => {
+      const match = file.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)\\.judgment\\.json$`));
+      return match ? { file, attempt: Number(match[1]) } : undefined;
+    })
+    .filter((candidate): candidate is { file: string; attempt: number } => Boolean(candidate))
+    .sort((a, b) => b.attempt - a.attempt);
+}
+
+function latestPassingImplementationNoteMtime(repoPath: string, taskId: string) {
+  for (const candidate of implementationArtifactCandidates(repoPath, taskId)) {
+    const judgmentPath = `.delivery/artifacts/judgments/${candidate.file}`;
+    const judgment = readJsonArtifact(repoPath, judgmentPath) as Partial<AggregatedJudgment> | undefined;
+    if (!judgment?.passed || typeof judgment.overall !== 'number') continue;
+
+    const notePath = `.delivery/artifacts/note-${taskId}.a${candidate.attempt}.json`;
+    const note = implementationNoteSchema.safeParse(readJsonArtifact(repoPath, notePath));
+    if (!note.success || note.data.task !== taskId) continue;
+
+    const mtime = fileMtimeMs(join(resolve(repoPath), notePath));
+    if (typeof mtime === 'number') return mtime;
+  }
+
+  return undefined;
+}
+
+function implementationArtifactIsFreshForCurrentFiles({
+  repoPath,
+  task,
+  note,
+  notePath,
+}: {
+  repoPath: string;
+  task: Task;
+  note: ImplementationNote;
+  notePath: string;
+}) {
+  const noteMtime = fileMtimeMs(join(resolve(repoPath), notePath));
+  if (typeof noteMtime !== 'number') return false;
+
+  const paths = new Set([...note.files_touched, ...existingOwnedFiles(repoPath, task)]);
+  for (const rawPath of paths) {
+    const path = normalizeDeliveryPathReference(rawPath);
+    if (!path || path.startsWith('.delivery/')) continue;
+    const mtime = fileMtimeMs(join(resolve(repoPath), path));
+    if (typeof mtime === 'number' && mtime > noteMtime + MTIME_SKEW_MS) return false;
+  }
+
+  for (const dependencyId of task.depends_on) {
+    const dependencyMtime = latestPassingImplementationNoteMtime(repoPath, dependencyId);
+    if (typeof dependencyMtime === 'number' && dependencyMtime > noteMtime + MTIME_SKEW_MS) return false;
+  }
+
+  return true;
 }
 
 export function priorStoppedBuildTaskIds({
@@ -59,19 +130,7 @@ export function reusableImplementationArtifactForTask(repoPath: string, task: Ta
   if (workflowStepIntegrationGaps(repoPath, task).length) return undefined;
   if (workersAiBindingGaps(repoPath, task).length) return undefined;
 
-  const judgmentDir = join(resolve(repoPath), '.delivery/artifacts/judgments');
-  if (!existsSync(judgmentDir)) return undefined;
-
-  const prefix = `implementation-${task.id}-a`;
-  const candidates = readdirSync(judgmentDir)
-    .map((file) => {
-      const match = file.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)\\.judgment\\.json$`));
-      return match ? { file, attempt: Number(match[1]) } : undefined;
-    })
-    .filter((candidate): candidate is { file: string; attempt: number } => Boolean(candidate))
-    .sort((a, b) => b.attempt - a.attempt);
-
-  for (const candidate of candidates) {
+  for (const candidate of implementationArtifactCandidates(repoPath, task.id)) {
     const judgmentPath = `.delivery/artifacts/judgments/${candidate.file}`;
     const judgment = readJsonArtifact(repoPath, judgmentPath) as Partial<AggregatedJudgment> | undefined;
     if (!judgment?.passed || typeof judgment.overall !== 'number') continue;
@@ -86,6 +145,7 @@ export function reusableImplementationArtifactForTask(repoPath: string, task: Ta
       paths: note.data.files_touched,
     });
     if (!ownership.passed) continue;
+    if (!implementationArtifactIsFreshForCurrentFiles({ repoPath, task, note: note.data, notePath })) continue;
 
     const judgeOutputPath = judgmentPath.replace(/\.judgment\.json$/, '.judge.json');
     return {

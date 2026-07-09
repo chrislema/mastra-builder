@@ -67,6 +67,23 @@ test('delivery scaffold workflow writes deterministic Worker scaffold and record
   assert.ok(events.some((event) => event.type === 'stage_end' && event.stage === 'scaffold'));
 });
 
+test('delivery scaffold workflow preserves existing project files on rerun', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-scaffold-preserve-'));
+  writeFileSync(join(repoPath, 'vision.md'), '# Vision\nBuild a Cloudflare Worker app.\n');
+
+  const run = await initializeDeliveryRunState({ repoPath, visionPath: 'vision.md' });
+  await executeDeliveryScaffold({ repoPath, runId: run.run_id });
+
+  const implementedContracts = 'export const IMPLEMENTED_CONTRACT = true;\n';
+  writeFileSync(join(repoPath, 'src/contracts.ts'), implementedContracts);
+
+  await executeDeliveryScaffold({ repoPath, runId: run.run_id });
+
+  assert.equal(readFileSync(join(repoPath, 'src/contracts.ts'), 'utf8'), implementedContracts);
+  assert.equal(existsSync(join(repoPath, 'package.json')), true);
+  assert.equal(existsSync(join(repoPath, '.delivery/artifacts/scaffold-manifest.json')), true);
+});
+
 test('delivery scaffold workflow fails fast for explicit Pages projects', async () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-scaffold-pages-'));
   writeFileSync(

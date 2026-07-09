@@ -768,3 +768,79 @@ For each run, record:
   - Run focused workflow policy tests and `npm run typecheck`.
 - Stop decision: do not run another paid benchmark pass until the
   task-aware scaffold-baseline classifier is committed and pushed.
+
+### 2026-07-09 00:25 CDT - CLI Preserved Benchmark Rerun Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved/non-empty rerun. Do not clear generated files,
+  dependencies, git metadata, or `.delivery`; this run should reuse the
+  progress and evidence from the prior fresh run.
+- Forward-progress question: after `dfbe09d` made scaffold-baseline
+  classification task-aware, does a preserved rerun resume around `T04`,
+  treat the `src/index.ts` `TS2532` as a repairable implementation miss, and
+  continue toward local human review instead of stopping as
+  `SCAFFOLD_BASELINE_VERIFICATION`?
+- Cheap/static verification already tried before this run:
+  - `npm test -- test/delivery-engine/workflow-policy.test.ts
+    test/delivery-engine/operator-docs.test.ts` passed with 411 tests,
+    including the task-owned scaffold surface regression.
+  - `npm run typecheck` passed.
+  - Commit `dfbe09d` was pushed to `main`.
+- Guardrail: this is a paid preserved rerun. Monitor CLI output and
+  `.delivery` artifacts, classify any stop from structured evidence first, and
+  avoid brittle string/pattern fixes.
+- Workflow run ID: `b1c03a1f-a45f-4464-8efc-8384b267251c`
+- Delivery run ID: `run-mrczcx9t-ba0dc939`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/b1c03a1f-a45f-4464-8efc-8384b267251c.json`
+- Result: workflow status `success`, delivery status `stuck`.
+- Progress:
+  - The run confirmed commit `dfbe09d` addressed the previous T04
+    scaffold-baseline misclassification; no `SCAFFOLD_BASELINE_VERIFICATION`
+    stop occurred.
+  - Planning, scaffold generation, architect review, architect-bounce, and the
+    revised task-plan judge completed.
+  - The build cursor reused passing artifacts for `T01`, `T02`,
+    `T01-contract-behavior-tests`, and `T01-part-2`.
+  - The revised plan introduced/renamed `T01-model-catalog-behavior-tests`,
+    which started implementation and reached three deterministic attempts.
+- Farthest verified task: `T01-part-2` reused as complete; the run stopped on
+  `T01-model-catalog-behavior-tests` before reaching the old `T04` point.
+- Concrete blocker:
+  - `T01-model-catalog-behavior-tests` failed repo-wide typecheck because stale
+    downstream/provider surfaces still imported old contract exports:
+    `src/providers.ts` imported `@anthropic-ai/sdk`, `runFailure`,
+    `runSuccess`, `RunErrorCode`, and `RunResult`; `src/types.ts` and
+    `test/provider-adapters.test.ts` also reflected old contract shapes.
+  - The out-of-plan stale repair reset only
+    `test/model-catalog.node.test.ts`. It did not reset `src/providers.ts`
+    because that file is a planned downstream `T03` surface.
+  - The downstream stale repair skipped `src/providers.ts` because
+    `reusableImplementationArtifactForTask(T03)` treated old passing T03 notes
+    as reusable without proving the current filesystem or current dependency
+    chain still matched those notes.
+  - The delivery scaffold also rewrote scaffold-owned files on a preserved
+    rerun before reuse, so reused implementation artifacts could be marked
+    complete even after their current files had been replaced by scaffold
+    baseline content.
+- Failure class: preserved-rerun harness bug in non-destructive scaffold and
+  reusable-artifact freshness, not a product-code issue and not a text parsing
+  problem.
+- Current hypothesis:
+  - Delivery scaffold should create missing scaffold files but preserve existing
+    project files during non-empty reruns.
+  - Reusable implementation artifacts should be accepted only when current
+    owned files are not newer than the note and dependency artifacts are not
+    newer than the downstream note.
+- Cheap/static verification before another paid delivery pass:
+  - Add scaffold workflow regression proving reruns preserve existing
+    `src/contracts.ts` content.
+  - Add reuse regressions proving artifacts are rejected when current owned
+    files or dependency notes are newer than the candidate note.
+  - Run focused scaffold/workflow-policy tests and `npm run typecheck`.
+- Stop decision: do not run another paid benchmark pass until preserved
+  scaffold materialization and reusable-artifact freshness are committed and
+  pushed.
