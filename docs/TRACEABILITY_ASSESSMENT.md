@@ -25,6 +25,18 @@ cheap deterministic tests before any paid delivery rerun. Keep this process
 durable across context compaction by updating this file at each natural
 checkpoint.
 
+## Compaction Re-Entry Checklist
+
+When context has been compressed, resume from here before touching code:
+
+1. Read `docs/OPERATING_DOCTRINE.md`, then this file.
+2. Check `git status --short` and identify the most recent completed checkpoint.
+3. Continue the first open row in the Active Traceability Matrix.
+4. Use the Required Loop for that row: requirement -> producer -> artifact ->
+   verifier -> observed evidence -> gap classification -> cheap fix.
+5. Update this file with the new evidence, then commit and push at the next
+   natural checkpoint.
+
 ## Required Loop
 
 For every significant feature, gate, scaffold file, workflow stage, agent
