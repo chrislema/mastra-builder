@@ -2,7 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { isBehaviorLikeAcceptanceCriterion } from './acceptance-evidence-policy';
 import { acceptanceContractsForTask } from './implementation/evidence';
-import { normalizeTaskPlanCloudflareWorkerContracts } from './planning/cloudflare-worker-contracts-policy';
+import {
+  normalizeTaskPlanCloudflareWorkerContracts,
+  taskDeferredAcceptanceContractCriteria,
+} from './planning/cloudflare-worker-contracts-policy';
 import { taskPlanSchema, type TaskPlan } from './workflow-schemas';
 
 type AcceptanceContract = ReturnType<typeof acceptanceContractsForTask>[number];
@@ -132,8 +135,9 @@ export function auditDeliveryTaskPlan({
       pendingBehaviorEvidence: 0,
     };
     const evidenceTask = taskIsEvidenceTask(task);
+    row.pendingBehaviorEvidence += taskDeferredAcceptanceContractCriteria(normalizedPlan, task).filter(isBehaviorCriterion).length;
 
-    for (const contract of acceptanceContractsForTask({ repoPath, task, verification })) {
+    for (const contract of acceptanceContractsForTask({ repoPath, task, taskPlan: normalizedPlan, verification })) {
       const evidenceKind = acceptanceContractEvidenceKind(contract);
       const behaviorCriterion = isBehaviorCriterion(contract.criterion);
       const coveredByEvidenceTask =
@@ -190,12 +194,7 @@ export function auditDeliveryTaskPlan({
     behaviorCriteria: contracts.filter((contract) => contract.behaviorCriterion).length,
     behaviorByFileEvidence: contracts.filter((contract) => contract.smell === 'behavior_by_file_evidence').length,
     behaviorUnverified: contracts.filter((contract) => contract.smell === 'behavior_unverified').length,
-    pendingBehaviorEvidence: contracts.filter(
-      (contract) =>
-        contract.behaviorCriterion &&
-        contract.evidenceKind === 'unverified' &&
-        (contract.evidenceTask || contract.coveredByEvidenceTask !== undefined),
-    ).length,
+    pendingBehaviorEvidence: [...taskRows.values()].reduce((sum, row) => sum + row.pendingBehaviorEvidence, 0),
     smellCount: smells.length,
   };
 

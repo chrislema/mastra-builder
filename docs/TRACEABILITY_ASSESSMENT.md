@@ -82,7 +82,8 @@ If a feature claims to generate working software, Level 1 is not enough.
 | Closed | Fresh failure classification | Clean generated projects should not be labeled stale workspace contamination. | implementation verification/retry classification using recorded scaffold manifest provenance | `SCAFFOLD_BASELINE_VERIFICATION` remediation | `workflow-policy.test.ts` covers fresh scaffold-owned `vitest.config.ts` failure. | Closed in `fc4617e`; scaffold-owned verification failures are not stale and stop as harness scaffold baseline failures. |
 | Closed | Scaffold validation gate | Deterministic scaffold should be safe before T01 builds on it. | `project-factory/validation.ts`, scaffold workflow | scaffold manifest and checks | `scaffold_vitest_config_typecheck` runs before T01 and compiles generated `vitest.config.ts` against the pinned Worker test toolchain. | Closed in `ddeff36`; bad generated Vitest config fails during scaffold validation before model build tasks. |
 | Closed | Dependency drift | Generated project toolchain versions must not silently drift under the harness. | `project-factory/toolchain.ts`, `project-factory/package-manifest.ts` | generated `package.json` | Exact-version package assertions plus generated `vitest.config.ts` compile proof. | Closed in `3d129a7`; generated packages no longer use `latest`. |
-| P1 | Acceptance-contract sequencing | Source contract tasks should not be blocked by behavior only provable in downstream tests. | acceptance contract/evidence policy | implementation notes and deterministic gates | Mixed structural/behavior checks. | Fresh T01 still reports unverified behavior-like contract criteria; review after scaffold P0. |
+| Closed | Acceptance-contract sequencing | Source contract tasks should not be blocked by behavior only provable in downstream tests. | `taskVerificationAcceptanceContractCriteria`, `taskDeferredAcceptanceContractCriteria`, implementation task packets, smell audit | immediate `acceptance_contracts`, explicit `deferred_acceptance_contracts`, pending evidence counts | `acceptance-contract-sequencing.test.ts`, `smell-audit.test.ts`, benchmark artifact smell audit, typecheck, Mastra build | Closed in this checkpoint; benchmark T01 now has four immediate structural contracts and three pending deferred evidence contracts instead of blocking on behavior evidence. |
+| P1 | Remaining static smell audit findings | Cheap static audits should be clean or explicitly classified before another paid run. | `smell-audit.ts`, acceptance-contract evidence helpers, Worker config/package evidence, model catalog evidence policy | smell audit report for `/Users/chrislema/mastra/projects/benchmark/.delivery/artifacts/task-plan.revision-1.json` | `npm run audit:smells -- --projectFolder /Users/chrislema/mastra/projects/benchmark --taskPlan /Users/chrislema/mastra/projects/benchmark/.delivery/artifacts/task-plan.revision-1.json --assume-typecheck --assume-tests --json` | Current audit reports four smells: two T02 generic file evidence findings and two T03 unverified model-catalog helper behavior findings. Classify/fix with deterministic tests before any paid rerun. |
 
 ## Completed Checkpoints
 
@@ -95,6 +96,9 @@ If a feature claims to generate working software, Level 1 is not enough.
   of calling them stale workspace contamination.
 - `ddeff36`: Added a scaffold workflow validation check that typechecks
   generated `vitest.config.ts` before any T01 model build task runs.
+- this checkpoint: Split immediate and deferred acceptance contracts so source tasks no
+  longer stall on behavior evidence owned by downstream test tasks; smell audit
+  preserves those deferred source requirements as pending evidence.
 
 ## Ordered Repo-Wide Pass
 
@@ -156,7 +160,6 @@ If a feature claims to generate working software, Level 1 is not enough.
 
 Do not run another paid benchmark delivery pass until:
 
-- Phase 3 P1 acceptance-contract sequencing is reviewed so behavior-only source
-  requirements do not block early implementation tasks that cannot yet prove
-  runtime behavior.
+- The remaining static smell audit findings are classified or fixed with cheap
+  deterministic tests.
 - The new proof or decision is committed and pushed.

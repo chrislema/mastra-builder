@@ -1,4 +1,5 @@
 import { acceptanceContractReferences } from '../acceptance-contracts';
+import { isBehaviorLikeAcceptanceCriterion } from '../acceptance-evidence-policy';
 import { normalizeDeliveryPathReference } from '../checks';
 import { generatedSliceAcceptanceCriterion } from '../task-plan-generated-slices';
 import {
@@ -115,13 +116,63 @@ function sourceAcceptanceCriterionBelongsToTask(task: Task, criterion: string) {
   return references.every((reference) => owned.has(reference));
 }
 
-export function taskVerificationAcceptanceContractCriteria(task: Task) {
+function taskBaseVerificationAcceptanceContractCriteria(task: Task) {
   return Array.from(
     new Set([
       ...(task.source_acceptance_criteria ?? []).filter((criterion) => sourceAcceptanceCriterionBelongsToTask(task, criterion)),
       ...task.acceptance_criteria.filter((criterion) => !generatedSliceAcceptanceCriterion(criterion)),
     ]),
   );
+}
+
+function taskIsEvidenceTask(task: Task) {
+  const evidenceKind = task.metadata?.evidence?.kind;
+  return (
+    (evidenceKind !== undefined && evidenceKind !== 'none') ||
+    taskOwnedBoundaryPaths(task).some((path) => /^test\/.+\.test\.[cm]?[jt]s$/i.test(path))
+  );
+}
+
+function sourceCriterionCoveredByEvidenceTask({
+  taskPlan,
+  sourceTask,
+  criterion,
+}: {
+  taskPlan: TaskPlan;
+  sourceTask: Task;
+  criterion: string;
+}) {
+  return taskPlan.tasks.some(
+    (task) =>
+      task.id !== sourceTask.id &&
+      taskIsEvidenceTask(task) &&
+      task.depends_on.includes(sourceTask.id) &&
+      (task.source_acceptance_criteria ?? []).includes(criterion),
+  );
+}
+
+function criterionNeedsDownstreamEvidenceTask(criterion: string) {
+  return (
+    isBehaviorLikeAcceptanceCriterion(criterion) ||
+    /\b(?:400-level|client-safe|consumed\s+by|without\s+duplicat|normalization|normalize|redaction|prevent(?:s|ing)?|timeout|network\s+failure|provider\s+failure|unknown\s+model|unconfigured\s+model|single-model\s+request|frontend)\b/i.test(
+      criterion,
+    )
+  );
+}
+
+export function taskDeferredAcceptanceContractCriteria(taskPlan: TaskPlan | undefined, task: Task) {
+  if (!taskPlan || taskIsEvidenceTask(task)) return [];
+
+  return taskBaseVerificationAcceptanceContractCriteria(task).filter(
+    (criterion) =>
+      criterionNeedsDownstreamEvidenceTask(criterion) &&
+      sourceCriterionCoveredByEvidenceTask({ taskPlan, sourceTask: task, criterion }),
+  );
+}
+
+export function taskVerificationAcceptanceContractCriteria(task: Task, taskPlan?: TaskPlan) {
+  const deferred = new Set(taskDeferredAcceptanceContractCriteria(taskPlan, task));
+  return taskBaseVerificationAcceptanceContractCriteria(task).filter((criterion) => !deferred.has(criterion));
 }
 
 function taskPlanDeclaresWorkerWorkflow(tasks: Task[]) {

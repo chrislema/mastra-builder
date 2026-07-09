@@ -34,17 +34,19 @@ import {
 export function acceptanceContractsForTask({
   repoPath,
   task,
+  taskPlan,
   verification,
 }: {
   repoPath?: string;
   task: Task;
+  taskPlan?: TaskPlan;
   verification: { performed: string[]; missing: string[] };
 }) {
   return acceptanceContractsForCriteria({
     repoPath,
     task,
     verification,
-    criteria: taskVerificationAcceptanceContractCriteria(task),
+    criteria: taskVerificationAcceptanceContractCriteria(task, taskPlan),
     contractIdForCriterion: (criterion, index) => acceptanceContractId(task, index, criterion),
   });
 }
@@ -52,17 +54,19 @@ export function acceptanceContractsForTask({
 export function verificationWithAcceptanceGaps({
   repoPath,
   task,
+  taskPlan,
   verification,
 }: {
   repoPath?: string;
   task: Task;
+  taskPlan?: TaskPlan;
   verification: { performed: string[]; missing: string[] };
 }) {
   return verificationWithAcceptanceContractGaps({
     repoPath,
     task,
     verification,
-    criteria: taskVerificationAcceptanceContractCriteria(task),
+    criteria: taskVerificationAcceptanceContractCriteria(task, taskPlan),
     missingOwnedSurfacePaths: repoPath ? missingOwnedSurfacePaths(repoPath, task) : [],
   });
 }
@@ -86,8 +90,8 @@ export function synthesizeImplementationNote({
 }): ImplementationNote {
   const filesTouched = implementationFilesTouched({ repoPath, stage, task, events });
   const summary = responseText(buildResponse);
-  const honestVerification = verificationWithAcceptanceGaps({ repoPath, task, verification });
-  const acceptanceContracts = acceptanceContractsForTask({ repoPath, task, verification: honestVerification });
+  const honestVerification = verificationWithAcceptanceGaps({ repoPath, task, taskPlan, verification });
+  const acceptanceContracts = acceptanceContractsForTask({ repoPath, task, taskPlan, verification: honestVerification });
 
   return {
     artifact_type: 'implementation-note',

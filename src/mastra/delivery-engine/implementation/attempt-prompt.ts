@@ -7,7 +7,10 @@ import {
 } from '../agent-runtime/options';
 import { remediationHasVerificationFailure } from '../implementation-retry-policy';
 import { acceptanceContractId } from '../planning/acceptance-contract-preservation';
-import { taskVerificationAcceptanceContractCriteria } from '../planning/cloudflare-worker-contracts-policy';
+import {
+  taskDeferredAcceptanceContractCriteria,
+  taskVerificationAcceptanceContractCriteria,
+} from '../planning/cloudflare-worker-contracts-policy';
 import { repoFileContents } from '../repo-files';
 import { taskPacketRailsForTask } from '../task-packet-rails';
 import { packageDependencyNames } from '../worker-hygiene';
@@ -84,10 +87,15 @@ export function buildImplementationAttemptPrompt({
   const existingPackageDependencies = packageDependencyNames(repoPath);
   const dependencySurfaces = directDependencySurfacePaths(taskPlan, task);
   const verificationFailureDiagnostics = typeScriptDiagnosticsFromRemediation(remediation);
-  const acceptanceContracts = taskVerificationAcceptanceContractCriteria(task).map((criterion, index) => ({
+  const acceptanceContracts = taskVerificationAcceptanceContractCriteria(task, taskPlan).map((criterion, index) => ({
     id: acceptanceContractId(task, index, criterion),
     criterion,
     status: 'required' as const,
+  }));
+  const deferredAcceptanceContracts = taskDeferredAcceptanceContractCriteria(taskPlan, task).map((criterion, index) => ({
+    id: acceptanceContractId(task, acceptanceContracts.length + index, criterion),
+    criterion,
+    status: 'deferred_to_evidence_task' as const,
   }));
   const taskRails = taskPacketRailsForTask({
     taskPlan,
@@ -108,6 +116,7 @@ export function buildImplementationAttemptPrompt({
     task,
     task_rails: taskRails,
     acceptance_contracts: acceptanceContracts,
+    deferred_acceptance_contracts: deferredAcceptanceContracts,
     technology_decisions: taskPlan.technology_decisions,
     open_decisions: taskPlan.open_decisions,
     risks: taskPlan.risks,
@@ -147,6 +156,7 @@ Execution rules:
 - task_rails.verification_command_class is the verification class this task is preparing for; do not change runtime config to escape it.
 - Stay within task_rails.model_budget. If the task cannot be completed inside the allowed surfaces, return a blocker instead of expanding scope.
 - Treat task_packet.acceptance_contracts as mandatory contracts. Do not return until every listed AC has concrete code evidence in the task's boundary surfaces, or until you surface a real blocker.
+- task_packet.deferred_acceptance_contracts are source contracts assigned to downstream evidence tasks. Keep your code compatible with them, but do not stall this task waiting for runtime/test evidence that the downstream evidence task owns.
 - Do not replace a product acceptance contract with a weaker "slice completed" claim. If the contract names behavior, implement the behavior or leave the task incomplete.
 - Touch only the boundary surfaces in the task packet unless a dependency blocks the task; task_rails.allowed_surfaces is the normalized edit list.
 - generated_surfaces are workflow-generated evidence outputs, not source files. Do not write or edit generated_surfaces directly; configure their source inputs and scripts so workflow verification generates them.
