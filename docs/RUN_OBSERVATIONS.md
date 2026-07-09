@@ -614,3 +614,29 @@ For each run, record:
 - Stop decision: do not run another paid benchmark pass until the scaffold
   Vitest config and fresh-scaffold verification classification are fixed with
   cheap tests.
+
+### 2026-07-08 22:37 CDT - CLI Fresh Benchmark Run Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: clean slate requested; preserve only `vision.md` and remove
+  all generated project files, dependencies, git metadata, and `.delivery`
+  artifacts before starting.
+- Forward-progress question: after closing the predictable fresh-run scaffold
+  and release-gate traceability gaps through commits `9d3890c`, `8c92ac4`, and
+  `18986f9`, can the Delivery Engine start from only `vision.md`, create a
+  Worker-first project, and progress beyond the previous T01 scaffold/typecheck
+  and stale-classification failures toward local-test human approval?
+- Cheap/static verification already tried before this run:
+  - `npm run typecheck` passed.
+  - `npm test -- test/delivery-engine/operator-docs.test.ts
+    test/delivery-engine/runner.test.ts` passed via the configured test script,
+    running the repo suite.
+  - `git diff --check` passed.
+  - Previous traceability checkpoints closed scaffold Vitest config,
+    fresh-scaffold failure classification, release-gate command planning, eval
+    score persistence, and operator-doc entrypoint drift.
+- Guardrail: this is a paid full run. Watch progress from CLI output and
+  `.delivery` artifacts. If it stalls, read the latest run report, classify the
+  failure first, and avoid patching forward with brittle text/string matching.
