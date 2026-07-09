@@ -66,3 +66,22 @@ test('delivery scaffold workflow writes deterministic Worker scaffold and record
   assert.ok(events.some((event) => event.type === 'scaffold_generated'));
   assert.ok(events.some((event) => event.type === 'stage_end' && event.stage === 'scaffold'));
 });
+
+test('delivery scaffold workflow fails fast for explicit Pages projects', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-scaffold-pages-'));
+  writeFileSync(
+    join(repoPath, 'vision.md'),
+    [
+      '# Vision',
+      'Deployment: Cloudflare Pages.',
+      'Use Pages Functions for the API routes.',
+    ].join('\n'),
+  );
+
+  await assert.rejects(
+    () => executeDeliveryScaffold({ repoPath }),
+    /deterministic delivery scaffold is Worker-only/,
+  );
+  assert.equal(existsSync(join(repoPath, 'package.json')), false);
+  assert.equal(existsSync(join(repoPath, 'wrangler.jsonc')), false);
+});

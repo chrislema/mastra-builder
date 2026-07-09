@@ -41,6 +41,14 @@ export async function executeDeliveryScaffold(input: DeliveryScaffoldInput, mast
   const repoPath = resolve(parsed.repoPath);
   const sourceDocuments = sourceDocumentsFromRepo(repoPath);
   const sourcePolicy = parsed.sourcePolicy ?? sourcePolicyFromDocuments(sourceDocuments);
+  if (sourcePolicy.pagesRequired) {
+    throw new Error(
+      [
+        'Cloudflare Pages was explicitly requested by the source policy, but the deterministic delivery scaffold is Worker-only.',
+        'Do not generate a standalone Worker scaffold for a Pages project until a dedicated Pages scaffold factory and runtime proof exist.',
+      ].join(' '),
+    );
+  }
   const scaffold = renderProjectScaffold({
     projectName: parsed.projectName ?? normalizeProjectName(basename(repoPath)),
     sourceDocuments,

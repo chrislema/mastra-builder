@@ -142,7 +142,9 @@ left blank.
 Target projects are assumed to be standalone Cloudflare Workers projects with vanilla
 JavaScript Worker modules and vanilla HTML, CSS, and JavaScript frontends. Pages Functions
 are allowed only when `vision.md` or `spec.md` declaratively requires Cloudflare Pages or
-Pages Functions. TypeScript Worker source is also an explicit exception, not the default.
+Pages Functions, but the deterministic scaffold is Worker-only and will fail fast rather
+than generate a misleading Worker scaffold for an explicit Pages project. TypeScript Worker
+source is also an explicit exception, not the default.
 The delivery agents should not introduce React, JSX/TSX, frontend frameworks,
 preprocessors, generic Node/Express servers, filesystem-backed runtime state, or a new
 frontend build step.
