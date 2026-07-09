@@ -45,6 +45,25 @@ If a run previously reached late tasks and a new approach stalls at T01/T02,
 stop and reassess. Do not keep adding patches just because each patch has a
 local explanation.
 
+## Traceability Rule
+
+When the work is repo-wide review, correctness assessment, scaffold repair,
+benchmark failure analysis, or any request to avoid guessing, read
+`docs/TRACEABILITY_ASSESSMENT.md` and follow its loop:
+
+- Map source requirement -> harness producer -> generated artifact -> verifier
+  -> observed evidence.
+- Do not treat structural checks as proof of executable correctness.
+- Materialize and verify generated projects when the claim is that generated
+  projects work.
+- Classify failures accurately; a wrong failure class is itself a harness bug.
+- Do not run another paid benchmark pass when a cheap traceability test can
+  prove or disprove the next fix.
+
+The current traceability stop condition blocks another paid benchmark run until
+fresh scaffold typecheck and fresh-scaffold failure classification are fixed and
+committed.
+
 ## Run Journal Rule
 
 Every CLI or Studio delivery run must be recorded in
