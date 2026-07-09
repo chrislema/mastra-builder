@@ -713,3 +713,58 @@ For each run, record:
 - Guardrail: this is a paid full run. Watch progress from CLI output and
   `.delivery` artifacts. If it stalls, read the latest run report, classify the
   failure first, and avoid patching forward with brittle text/string matching.
+- Workflow run ID: `d1200db9-f4e3-4548-b065-cfea602cbb44`
+- Delivery run ID: `run-mrczcx9t-ba0dc939`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/d1200db9-f4e3-4548-b065-cfea602cbb44.json`
+- Result: workflow status `success`, delivery status `stuck`.
+- Progress:
+  - Fresh folder was cleared to only `vision.md` before the run.
+  - Planning, scaffold generation, architect review, and architect-bounce
+    task-plan revision all passed.
+  - `T01` completed after one deterministic contract repair and judged `0.813`.
+  - `T02` completed after two deterministic Workers AI binding repairs and
+    judged `1.0`.
+  - `T01-contract-behavior-tests` completed and judged `0.825`.
+  - `T01-part-2` completed and judged `0.846`.
+  - `T01-contract-catalog-behavior-tests` completed after retrying failing
+    client-safe error tests and judged `0.825`.
+  - `T03` completed after the provider dispatcher contract forced a retry and
+    judged `0.85`.
+  - `T05` completed after a visual/style contract retry and judged `0.846`.
+  - `T03-provider-behavior-tests` completed with 27 passing tests and judged
+    `0.825`.
+  - `T05-frontend-shell-tests` completed with 31 passing tests and judged `1.0`.
+  - `T04` first attempt passed typecheck and tests, then failed a deterministic
+    configured-status contract. Attempt 2 changed `src/index.ts` but introduced
+    `TS2532: Object is possibly 'undefined'`.
+- Farthest verified task: `T05-frontend-shell-tests` complete and `T04`
+  reached a second implementation attempt; this run progressed well beyond the
+  previous pre-implementation stop.
+- Concrete blocker:
+  - `T04` stopped because repo-wide verification failed in `src/index.ts` with
+    `TS2532: Object is possibly 'undefined'`.
+  - The harness then labeled that failure as
+    `SCAFFOLD_BASELINE_VERIFICATION` because `src/index.ts` appears in the
+    scaffold manifest.
+  - That classification is wrong when the active task explicitly owns
+    `src/index.ts`; it should remain an implementation retry/blocker, not a
+    project-factory scaffold baseline stop.
+- Failure class: harness retry-classification bug, with a normal generated
+  product TypeScript miss underneath it.
+- Current hypothesis:
+  - Scaffold-baseline protection should apply only to read-only scaffold
+    surfaces. If a task owns a scaffold-generated surface through task rails,
+    verification failures in that file must be handled as normal task
+    implementation failures.
+  - Do not fix this by editing the generated benchmark project or adding string
+    criteria. Make the classifier task-aware and cover it with a focused
+    workflow-policy regression.
+- Cheap/static verification to run before another paid delivery pass:
+  - Add a regression where `src/index.ts` is both scaffold-generated and
+    task-owned, and prove no `SCAFFOLD_BASELINE_VERIFICATION` remediation is
+    emitted for that current task.
+  - Run focused workflow policy tests and `npm run typecheck`.
+- Stop decision: do not run another paid benchmark pass until the
+  task-aware scaffold-baseline classifier is committed and pushed.

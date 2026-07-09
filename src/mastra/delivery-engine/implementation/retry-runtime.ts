@@ -89,15 +89,18 @@ function scaffoldGeneratedFilePaths(repoPath: string) {
 export function scaffoldOwnedVerificationFailurePaths({
   repoPath,
   failure,
+  task,
 }: {
   repoPath: string;
   failure: string;
+  task?: Task;
 }) {
   const scaffoldOwnedPaths = new Set(scaffoldGeneratedFilePaths(repoPath));
   if (!scaffoldOwnedPaths.size) return [];
 
   return verificationFailurePaths(failure).filter((path) => {
     if (!scaffoldOwnedPaths.has(path)) return false;
+    if (task && taskBoundaryAllowsRepairPath(repoPath, task, path)) return false;
     return existsSync(join(resolve(repoPath), path));
   });
 }
@@ -105,11 +108,13 @@ export function scaffoldOwnedVerificationFailurePaths({
 export function scaffoldBaselineVerificationRemediation({
   repoPath,
   failure,
+  task,
 }: {
   repoPath: string;
   failure: string;
+  task?: Task;
 }) {
-  const paths = scaffoldOwnedVerificationFailurePaths({ repoPath, failure });
+  const paths = scaffoldOwnedVerificationFailurePaths({ repoPath, failure, task });
   if (!paths.length) return undefined;
 
   return `SCAFFOLD_BASELINE_VERIFICATION: repo-wide verification failed in deterministic scaffold-owned file(s): ${paths.join(', ')}. Fix the project factory scaffold producer and scaffold validation proof, not the current product task. Original failure: ${compactDiagnostic(failure, 500)}`;

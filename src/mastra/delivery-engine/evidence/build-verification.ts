@@ -12,7 +12,7 @@ import {
   staleWorkspaceVerificationRemediation,
 } from '../implementation/retry-runtime';
 import { appendDeliveryEventState } from '../state-service';
-import type { TaskPlan } from '../workflow-schemas';
+import type { Task, TaskPlan } from '../workflow-schemas';
 import { commandFailureSummary, execFileAsync, recordRunCodeStart } from './command-runner';
 
 export function buildVerificationCommandPlan(repoPath: string) {
@@ -115,6 +115,8 @@ export async function runBuildVerification({
   taskIndex?: number;
   allowRepair?: boolean;
 }) {
+  const task: Task | undefined =
+    taskPlan && taskIndex !== undefined && taskIndex >= 0 ? taskPlan.tasks[taskIndex] : undefined;
   const verificationCommands = buildVerificationCommandPlans(repoPath);
   if (!verificationCommands.length) {
     return {
@@ -167,7 +169,7 @@ export async function runBuildVerification({
         return runBuildVerification({ repoPath, mastra, stage, taskPlan, taskIndex, allowRepair: false });
       }
 
-      const scaffoldBaselineFailure = scaffoldBaselineVerificationRemediation({ repoPath, failure });
+      const scaffoldBaselineFailure = scaffoldBaselineVerificationRemediation({ repoPath, failure, task });
       if (scaffoldBaselineFailure) {
         return {
           performed,

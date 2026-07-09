@@ -8007,6 +8007,29 @@ test('fresh scaffold-owned verification failures are classified as scaffold base
   assert.equal(implementationFailureClass([`DETERMINISTIC verification_passed failed: ${remediation}`]), 'scaffold_baseline_verification');
 });
 
+test('task-owned scaffold surfaces are not classified as scaffold baseline failures', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-scaffold-owned-task-surface-'));
+  mkdirSync(join(repoPath, '.delivery/artifacts'), { recursive: true });
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default {};\n');
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/scaffold-manifest.json'),
+    JSON.stringify(
+      {
+        generatedFiles: ['package.json', 'src/index.ts'],
+      },
+      null,
+      2,
+    ),
+  );
+  const task = taskPlan([{ depends_on: [], owned_surfaces: ['src/index.ts'] }]).tasks[0];
+  const failure = 'src/index.ts(31,99): error TS2532: Object is possibly undefined.';
+
+  assert.deepEqual(scaffoldOwnedVerificationFailurePaths({ repoPath, failure }), ['src/index.ts']);
+  assert.deepEqual(scaffoldOwnedVerificationFailurePaths({ repoPath, failure, task }), []);
+  assert.equal(scaffoldBaselineVerificationRemediation({ repoPath, failure, task }), undefined);
+});
+
 test('stale out-of-plan repair resets only delivery-generated surfaces', async () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-stale-out-of-plan-repair-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
