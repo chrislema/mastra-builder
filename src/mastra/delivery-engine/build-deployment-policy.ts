@@ -24,7 +24,21 @@ function packageScripts(repoPath: string) {
 
 export function packageVerificationScripts(repoPath: string) {
   const scripts = packageScripts(repoPath);
-  return ['typecheck', 'check', 'test', 'build'].filter((script) => typeof scripts[script] === 'string');
+  const selected: string[] = [];
+  const hasScript = (script: string) => typeof scripts[script] === 'string';
+
+  if (hasScript('typecheck')) selected.push('typecheck');
+
+  if (hasScript('check')) {
+    const checkCommand = String(scripts.check);
+    const duplicatesTypecheck = hasScript('typecheck') && /\bnpm\s+run\s+typecheck\b/.test(checkCommand);
+    const duplicatesTest = hasScript('test') && /\bnpm\s+(?:run\s+)?test\b/.test(checkCommand);
+    if (!duplicatesTypecheck && !duplicatesTest) selected.push('check');
+  }
+
+  if (hasScript('test')) selected.push('test');
+  if (hasScript('build')) selected.push('build');
+  return selected;
 }
 
 function buildVerificationScript(repoPath: string) {

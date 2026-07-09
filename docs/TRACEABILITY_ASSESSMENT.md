@@ -35,10 +35,14 @@ This is the active repo-wide loop until explicitly replaced:
    proof or record an explicit decision that the claim is out of scope.
 5. Update this file with the proof or decision, then commit and push.
 
-The current cursor is Phase 5: Cloudflare runtime proof. The all-profile Worker
-binding scaffold now has deterministic Wrangler schema and hygiene proof. The
-next loop should close the remaining Cloudflare subclaims without a paid
-delivery rerun: generated scripts, local probes, and release-gate evidence.
+The Phase 5 deterministic audit is closed. The all-profile Worker binding
+scaffold has deterministic Wrangler schema and hygiene proof, generated scaffold
+scripts align with release-gate command planning, Pages and Durable Object scope
+boundaries are explicit, and local runtime probe planning is covered by tests.
+Live Wrangler runtime evidence still belongs to the next approved local release
+gate because the Codex sandbox can deny local listener creation.
+
+The current cursor is Phase 6: evals, scorers, and observability.
 
 ## Traceability Assessment Trigger
 
@@ -144,7 +148,9 @@ If a feature claims to generate working software, Level 1 is not enough.
 | Closed | Cloudflare binding profile schema and hygiene proof | Worker-first profiles for Workers AI, D1, KV, R2, Workers Workflows, Static Assets, and Wrangler env mirrors must compose in one generated scaffold and match the installed Wrangler toolchain. | `project-factory/profiles.ts`, `project-factory/files.ts`, `project-factory/wrangler-config.ts`, `worker-hygiene.ts` | generated `wrangler.jsonc`, `src/index.ts`, scaffold manifest binding map, generated environment mirrors | `project-factory.test.ts` materializes an all-profile scaffold, validates `wrangler.jsonc` against `node_modules/wrangler/config-schema.json` with AJV, runs `workerConfigHygieneGaps`, runs `validateMaterializedScaffold`, full test suite, and `npm run typecheck` | Closed in this checkpoint; the combined scaffold now proves schema-valid Wrangler config, top-level/staging/production binding mirrors, Env binding alignment, and scaffold validation for AI, D1, KV, R2, Workflows, and Static Assets without a paid delivery run. |
 | Closed | Pages exception scope guard | Pages Functions are allowed only when source docs require Pages, but the deterministic scaffold baseline must not pretend to support Pages runtime output. | `source-policy.ts`, `planning/pages-policy.ts`, `scaffold-workflow.ts`, README operator scope | source policy `pagesRequired`, task-plan Pages hygiene, scaffold fail-fast error, no Worker scaffold written for explicit Pages source | `workflow-policy.test.ts`, `project-factory.test.ts`, `project-factory-fixtures.test.ts`, `scaffold-workflow.test.ts`, full test suite, and `npm run typecheck` | Closed in this checkpoint; Pages remains a source-gated planning/scoring exception, and explicit Pages projects now fail fast at the Worker-only deterministic scaffold boundary until a dedicated Pages scaffold and runtime proof are intentionally added. |
 | Closed | Durable Object scope and hygiene proof | Durable Objects are a Worker architecture choice for real-time coordination/stateful connections, but not a deterministic scaffold profile in Chris's default Worker harness. If a task introduces DO config, binding names must align across Wrangler config, environments, and Env. | `cloudflare-evals.ts`, `skills/select-cloudflare-components/SKILL.md`, `worker-hygiene.ts`, task-boundary hygiene | Cloudflare architecture eval fixture, generated task-level `durable_objects.bindings`, `Env` `DurableObjectNamespace`, env mirrors | `scorers.test.ts`, Cloudflare eval fixtures/gates, `workflow-policy.test.ts` DO binding-alignment regression, full test suite, and `npm run typecheck` | Closed in this checkpoint; DO remains an architecture/scorer/task-level capability rather than a project-factory scaffold claim, and Worker config hygiene now explicitly catches and accepts DO binding alignment. |
-| P1 | Cloudflare runtime proof | Worker-first Cloudflare policy must be executable, not only structurally asserted. | project factory, Cloudflare profile policy, Worker config/package hygiene, release-gate evidence planner | generated Worker project config, bindings, scripts, tests, local evidence plans, release gate | Existing Cloudflare unit fixtures plus next repo-wide runtime proof audit. | Next loop: map generated scripts, local probes, and release-gate evidence to concrete verifiers or explicit out-of-scope decisions. |
+| Closed | Generated scripts and release-gate command alignment | Generated Worker package scripts and release-gate commands must agree, avoid redundant composite checks, and generate Wrangler types before checking freshness when `worker-configuration.d.ts` is absent. | `project-factory/package-manifest.ts`, `build-deployment-policy.ts`, `release-gate-command-plan.ts`, `evidence/release-gate-evidence.ts` | generated `package.json` scripts, scaffold `validationCommands`, release-gate command plan | `workflow-policy.test.ts` materializes a generated Worker scaffold and checks the release-gate command plan, `project-factory.test.ts`, full test suite, and `npm run typecheck` | Closed in this checkpoint; fresh TypeScript Worker scaffolds now plan `wrangler types` before package checks, existing generated types still use `wrangler types --check`, and generated `check` scripts no longer duplicate `typecheck`/`test` evidence. |
+| Closed | Local runtime probe planning boundary | Local runtime probes must be planned deterministically from Worker config, public assets, health/API routes, and source-gated product routes. Actual `wrangler dev` execution requires a local process that can bind `127.0.0.1`. | `release-gate-runtime-probe-plan.ts`, `release-gate-probes.ts`, `evidence/release-gate-evidence.ts` | `ReleaseGateRuntimeProbePlan`, static asset probes, health probes, short-link/profile/latest-transcript probes | `workflow-policy.test.ts` runtime-probe planner tests, release-gate evidence planner tests, full test suite, `npm run typecheck`, and observed sandbox `listen EPERM` for nested Worker-pool command execution | Closed as a deterministic audit decision; unit tests own probe planning, while live Wrangler listener/runtime evidence is deferred to the next approved local release gate outside the restricted sandbox. |
+| P1 | Evals, scorers, and observability proof | Every scorer/eval/observability claim should map to fixtures, registration, persisted state, score records, and diagnostic reports that a Mastra expert can inspect. | scorers, eval suites, observability/state services, Mastra registration, run reports | scorer outputs, eval gate reports, observability logs/scores, `.delivery` projections | Existing scorer/eval/observability tests plus next repo-wide Phase 6 audit. | Next loop: map delivery/cloudflare eval fixtures, scorer thresholds, observability persistence, score storage, and run-report diagnostics to concrete verifiers. |
 
 ## Completed Checkpoints
 
@@ -192,6 +198,14 @@ If a feature claims to generate working software, Level 1 is not enough.
 - this checkpoint: Clarified Durable Objects as an architecture/scorer/task-level
   capability, not a deterministic scaffold profile, and added Worker config
   hygiene coverage for DO binding alignment.
+- this checkpoint: Aligned generated Worker scaffold scripts with release-gate
+  command planning, generating missing Wrangler types before freshness checks
+  and avoiding duplicate composite `check` execution when `typecheck` and
+  `test` are already planned.
+- this checkpoint: Closed the deterministic half of Cloudflare runtime proof by
+  documenting that local runtime probe planning is unit-tested while live
+  `wrangler dev` listener evidence belongs to the next approved local release
+  gate outside the restricted Codex sandbox.
 
 ## Ordered Repo-Wide Pass
 
@@ -235,6 +249,10 @@ If a feature claims to generate working software, Level 1 is not enough.
   decisions, and Pages exceptions with fixtures and local commands.
 - Prefer Wrangler/local probes over static claims where behavior matters.
 
+Status: deterministic audit closed. Live Wrangler runtime execution remains a
+release-gate responsibility for the next approved local run because sandboxed
+unit tests can block local listener creation.
+
 ### Phase 6: Evals, Scorers, And Observability
 
 - Trace every scorer/eval to positive and negative fixtures.
@@ -253,7 +271,7 @@ If a feature claims to generate working software, Level 1 is not enough.
 
 Do not run another paid benchmark delivery pass until:
 
-- The Phase 5 Cloudflare runtime proof audit is completed or an explicit
-  decision is recorded that existing fixture and release-gate tests are
-  sufficient.
-- The new proof or decision is committed and pushed.
+- The active traceability matrix has no P1 rows, or Chris explicitly approves a
+  paid run for a specific forward-progress question.
+- The current P1 row is Phase 6: evals, scorers, and observability proof.
+- The next proof or explicit decision is committed and pushed.

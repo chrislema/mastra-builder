@@ -151,7 +151,7 @@ import { routeBoundaryConsistencyHygiene } from '../../src/mastra/delivery-engin
 import { normalizeTaskPlanCloudflareWorkerContracts } from '../../src/mastra/delivery-engine/planning/cloudflare-worker-contracts-policy.ts';
 import { releaseGateForInvalidTesterOutput } from '../../src/mastra/delivery-engine/release-gate-policy.ts';
 import { fileOwnership } from '../../src/mastra/delivery-engine/checks.ts';
-import { renderProjectScaffold } from '../../src/mastra/delivery-engine/project-factory/index.ts';
+import { materializeProjectScaffold, renderProjectScaffold } from '../../src/mastra/delivery-engine/project-factory/index.ts';
 import { verificationFailureSummaryFromCommandError } from '../../src/mastra/delivery-engine/implementation-retry-policy.ts';
 import { aggregateJudgment, loadDeliveryEngineRubric } from '../../src/mastra/delivery-engine/judgment.ts';
 import { sourcePolicyFromRepo } from '../../src/mastra/delivery-engine/source-policy.ts';
@@ -5694,6 +5694,35 @@ test('release gate evidence planner runs the available package verification matr
   );
 });
 
+test('release gate evidence planner aligns with generated Worker scaffold scripts', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-release-generated-scaffold-'));
+  const scaffold = renderProjectScaffold({
+    projectName: 'Release Generated Scaffold',
+    requestedProfiles: ['worker-d1'],
+  });
+  materializeProjectScaffold(repoPath, scaffold);
+
+  assert.deepEqual(
+    releaseGateEvidenceCommandPlan(repoPath).map((command) => ({
+      tier: command.tier,
+      command: command.command,
+      required: command.required,
+    })),
+    [
+      { tier: 'smoke', command: 'npx wrangler types', required: true },
+      { tier: 'smoke', command: 'npm run typecheck', required: true },
+      { tier: 'smoke', command: 'npm run test', required: true },
+      { tier: 'api', command: 'npx wrangler deploy --dry-run --env production', required: true },
+      { tier: 'api', command: 'npx wrangler check startup --args="--env production"', required: true },
+      {
+        tier: 'api',
+        command: 'npx wrangler d1 migrations apply release-generated-scaffold --env staging --local',
+        required: true,
+      },
+    ],
+  );
+});
+
 test('build verification plans typecheck plus behavior tests without build scripts', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-build-verification-matrix-'));
   writeFileSync(
@@ -5816,9 +5845,9 @@ test('release gate evidence planner checks generated Wrangler types for TypeScri
   );
 
   assert.deepEqual(releaseGateWorkerTypesCheckCommand(repoPath), {
-    command: 'npx wrangler types --check',
+    command: 'npx wrangler types',
     executable: 'npx',
-    args: ['wrangler', 'types', '--check'],
+    args: ['wrangler', 'types'],
   });
   assert.deepEqual(
     releaseGateEvidenceCommandPlan(repoPath).map((command) => ({
@@ -5827,12 +5856,18 @@ test('release gate evidence planner checks generated Wrangler types for TypeScri
       required: command.required,
     })),
     [
-      { tier: 'smoke', command: 'npx wrangler types --check', required: true },
+      { tier: 'smoke', command: 'npx wrangler types', required: true },
       { tier: 'smoke', command: 'npm run typecheck', required: true },
       { tier: 'api', command: 'npx wrangler deploy --dry-run --env production', required: true },
       { tier: 'api', command: 'npx wrangler check startup --args="--env production"', required: true },
     ],
   );
+  writeFileSync(join(repoPath, 'worker-configuration.d.ts'), 'interface Env {}\n');
+  assert.deepEqual(releaseGateWorkerTypesCheckCommand(repoPath), {
+    command: 'npx wrangler types --check',
+    executable: 'npx',
+    args: ['wrangler', 'types', '--check'],
+  });
 });
 
 test('release gate evidence planner uses wrangler.jsonc D1 config for required local migrations', () => {
@@ -5980,7 +6015,7 @@ test('release gate Wrangler commands prefer the installed local binary', () => {
 
   assert.equal(
     releaseGateEvidenceCommandPlan(repoPath)[0].command,
-    './node_modules/.bin/wrangler types --check',
+    './node_modules/.bin/wrangler types',
   );
   assert.equal(
     releaseGateEvidenceCommandPlan(repoPath)[1].command,
@@ -5994,7 +6029,7 @@ test('release gate Wrangler commands prefer the installed local binary', () => {
     releaseGateEvidenceCommandPlan(repoPath)[3].command,
     './node_modules/.bin/wrangler d1 migrations apply demo-db --env staging --local',
   );
-  assert.equal(releaseGateWorkerTypesCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler types --check');
+  assert.equal(releaseGateWorkerTypesCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler types');
   assert.equal(releaseGateWorkerDeployDryRunCommand(repoPath)?.command, './node_modules/.bin/wrangler deploy --dry-run --env production');
   assert.equal(releaseGateWorkerStartupCheckCommand(repoPath)?.command, './node_modules/.bin/wrangler check startup --args="--env production"');
   assert.equal(releaseGateWorkerDevCommand(repoPath, 8787)?.command, './node_modules/.bin/wrangler dev --env staging --ip 127.0.0.1 --port 8787');
@@ -6523,7 +6558,7 @@ test('release gate evidence planner seeds latest transcript and version audit fi
 
   const commands = releaseGateEvidenceCommandPlan(repoPath, '/tmp/probe-state').map((command) => command.command);
   assert.deepEqual(commands, [
-    'npx wrangler types --check',
+    'npx wrangler types',
     'npx wrangler deploy --dry-run --env production',
     'npx wrangler check startup --args="--env production"',
     'npx wrangler d1 migrations apply demo-db --env staging --local --persist-to /tmp/probe-state',

@@ -137,6 +137,8 @@ export function releaseGateHasTypeScriptWorkerSource(repoPath: string) {
 
 export function releaseGateWorkerTypesCheckCommand(repoPath: string) {
   if (!workerConfigPath(repoPath) || !releaseGateHasTypeScriptWorkerSource(repoPath)) return undefined;
+  const generatedTypesPath = join(resolve(repoPath), 'worker-configuration.d.ts');
+  if (!existsSync(generatedTypesPath)) return wranglerProcessCommand(repoPath, 'types', ['types']);
   return wranglerProcessCommand(repoPath, 'types --check', ['types', '--check']);
 }
 
@@ -197,14 +199,16 @@ export function releaseGateEvidenceCommandPlanFromOptions({
   const commands: ReleaseGateEvidenceCommand[] = [];
   const typesCheckCommand = releaseGateWorkerTypesCheckCommand(repoPath);
   if (typesCheckCommand) {
+    const checksExistingGeneratedTypes = typesCheckCommand.args.includes('--check');
     commands.push({
       tier: 'smoke',
       command: typesCheckCommand.command,
       executable: typesCheckCommand.executable,
       args: typesCheckCommand.args,
       required: true,
-      reason:
-        'TypeScript Worker source and Wrangler config were present, so generated Worker binding types must be current before local validation.',
+      reason: checksExistingGeneratedTypes
+        ? 'TypeScript Worker source and Wrangler config were present, so generated Worker binding types must be current before local validation.'
+        : 'TypeScript Worker source and Wrangler config were present, and worker-configuration.d.ts was absent, so Wrangler types must be generated before local validation.',
     });
   }
 
