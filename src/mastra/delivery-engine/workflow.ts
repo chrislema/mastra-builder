@@ -10,7 +10,6 @@ import {
   recordDeliveryArtifactState,
   recordDeliveryJudgmentState,
   startDeliveryStageState,
-  updateDeliveryTaskState,
 } from './state-service';
 import { readDeliveryEvents, writeDeliveryArtifact } from './state';
 import {
@@ -22,7 +21,6 @@ import { createDeliveryControlRequestContext, createDeliveryRequestContext } fro
 import { deliveryRunMemory } from './memory';
 import type { AggregatedJudgment, DeterministicGateResult } from './judgment';
 import {
-  deliveryBuildStepScorers,
   deliveryPlanStepScorers,
   deliveryReviewStepScorers,
   deliveryScaffoldStepScorers,
@@ -36,12 +34,11 @@ import {
 } from './run-input';
 import { markDeliveryRunFailedOnWorkflowError } from './workflow-support/errors';
 import {
-  syncBuildStateStep,
   syncDeliveryWorkflowState,
   syncPlanStateStep,
   syncReviewStateStep,
 } from './workflow-support/state-sync';
-import { scaffoldStageFields } from './workflow-support/stage-fields';
+import { scaffoldManifestPromptSummary, scaffoldStageFields } from './workflow-support/stage-fields';
 import { compactDiagnostic } from './agent-runtime/diagnostics';
 import {
   judgeDeliveryArtifact,
@@ -95,13 +92,6 @@ import {
   workflowStepIntegrationGaps,
 } from './implementation/deterministic-gates';
 import {
-  deliveryBuildResumePlan,
-  deliveryBuildResumeReason,
-  implementationFilesTouched,
-  priorStoppedBuildTaskIds,
-  reusableImplementationArtifactForTask,
-} from './implementation/reusable-artifacts';
-import {
   implementationActionableJudgmentRemediation,
   implementationWeakDimensionRemediation,
   shouldProceedAfterNonActionableImplementationJudgment,
@@ -123,16 +113,9 @@ import {
   typeScriptDiagnosticsFromRemediation,
   typeScriptDiagnosticsFromText,
 } from './implementation/retry-runtime';
-import { runBuildTaskAttempt } from './implementation/build-task-runner';
 import { repoFileContents } from './repo-files';
 import { annotateTaskPlanWithTypedMetadata } from './task-plan-metadata';
-import { taskPacketRailsForTask } from './task-packet-rails';
 import {
-  buildTaskAttemptStateSchema,
-  buildTaskResultSchema,
-  buildTaskResultsSchema,
-  buildTaskWorkItemsSchema,
-  buildTaskWorkItemSchema,
   deliveryStageOutputSchema,
   deliveryWorkflowStateSchema,
   initializedSchema,
@@ -162,10 +145,11 @@ import {
   type TaskPlan,
 } from './workflow-schemas';
 import { runBuildVerification } from './evidence/build-verification';
+import { deliveryBuildTaskWorkflow } from './workflows/build-task.workflow';
+import { deliveryBuildWorkflow } from './workflows/build.workflow';
 import { deliveryReleaseGateWorkflow } from './workflows/release-gate.workflow';
 import { deliveryDeploymentWorkflow } from './workflows/deployment.workflow';
 import { concreteOwnedSurfacePath } from './task-plan-surface-policy';
-import { topoOrderTasks } from './task-plan-dependencies';
 import {
   sourceDocumentsDeclareExternalServiceBindings,
   sourceDocumentsDeclareLatestTranscriptContract,
@@ -337,6 +321,8 @@ export {
   productionDeploymentReportFromWranglerResult,
   productionWranglerDeployCommand,
 } from './deployment/production-wrangler';
+export { deliveryBuildTaskWorkflow } from './workflows/build-task.workflow';
+export { deliveryBuildWorkflow } from './workflows/build.workflow';
 export { deliveryReleaseGateWorkflow } from './workflows/release-gate.workflow';
 export { deliveryDeploymentWorkflow } from './workflows/deployment.workflow';
 
@@ -407,31 +393,12 @@ function readCachedPlannerOutput({
   return { readout: readout.data, taskPlan: taskPlan.data, cacheValidated: cache.success };
 }
 
-function scaffoldManifestPromptSummary(manifest: DeliveryWorkflowState['scaffoldManifest'] | undefined) {
-  if (!manifest) return null;
-  return {
-    profiles: manifest.profileList,
-    language: manifest.language,
-    main: manifest.main,
-    generated_files: manifest.generatedFiles,
-    binding_map: manifest.bindingMap,
-    package_scripts: manifest.packageScripts,
-    validation_commands: manifest.validationCommands,
-    test_runtime_matrix: manifest.testRuntimeMatrix,
-  };
-}
-
 const checkSummaries = (results: DeterministicGateResult[], suffix?: string): CheckSummary[] =>
   results.map((check) => ({
     check: `${check.check ?? check.id ?? 'unknown'}${suffix ? `:${suffix}` : ''}`,
     passed: check.passed,
     reason: check.reason ?? 'deterministic check',
   }));
-
-const buildRoleForTask = (task: Task) => (task.owner === 'designer' ? 'designer' : 'engineer') as 'designer' | 'engineer';
-
-const taskStatusSummary = (state: Record<string, 'complete' | 'stuck' | 'blocked'>) =>
-  Object.entries(state).map(([id, status]) => `${id}:${status}`);
 
 const initializeRunStep = createStep({
   id: 'initialize-delivery-run',
@@ -1472,532 +1439,6 @@ export const deliveryReviewWorkflow = createWorkflow({
   .dountil(executeReviewAttemptStep, async ({ inputData }) => inputData.terminal)
   .then(finalizeReviewLoopStep)
   .then(syncReviewStateStep)
-  .commit();
-
-const prepareBuildTasksStep = createStep({
-  id: 'prepare-build-tasks',
-  description: 'Expand the reviewed task plan into workflow-native build work items.',
-  inputSchema: deliveryStageOutputSchema,
-  outputSchema: buildTaskWorkItemsSchema,
-  execute: async ({ inputData, mastra }) => {
-    const passThrough = () => ({
-      repoPath: inputData.repoPath,
-      maxRetries: inputData.maxRetries,
-      deployMode: inputData.deployMode,
-      reviewMode: inputData.reviewMode,
-      taskPlan: inputData.taskPlan,
-      releaseGate: inputData.releaseGate,
-      ...scaffoldStageFields(inputData),
-      status: inputData.status,
-      runId: inputData.runId,
-      summary: inputData.summary,
-      artifacts: inputData.artifacts,
-      checks: inputData.checks,
-      judgments: inputData.judgments,
-      questions: inputData.questions,
-      nextSteps: inputData.nextSteps,
-      taskIndex: 0,
-      skipped: true,
-    });
-
-    if (inputData.status !== 'reviewed') return [passThrough()];
-    if (!inputData.taskPlan) throw new Error('review stage did not provide a task plan for the build loop');
-
-    const orderedTasks = topoOrderTasks(inputData.taskPlan.tasks);
-    if (!orderedTasks.length) {
-      return [
-        {
-          ...passThrough(),
-          status: 'built' as const,
-          summary: 'Build loop completed: no implementation tasks were present.',
-          nextSteps: ['Run the release gate stage against the reviewed task plan.'],
-        },
-      ];
-    }
-    const taskPlan = inputData.taskPlan;
-
-    const resumePlan = deliveryBuildResumePlan(inputData.repoPath, taskPlan);
-    const resumeReason = deliveryBuildResumeReason(resumePlan);
-    const checks = resumeReason
-      ? [...inputData.checks, { check: 'build_resume_cursor', passed: true, reason: resumeReason }]
-      : inputData.checks;
-
-    if (resumeReason) {
-      await appendDeliveryEventState({
-        repoPath: inputData.repoPath,
-        mastra,
-        event: {
-          type: 'build_resume_cursor',
-          stage: 'build',
-          ok: true,
-          reusable_task_ids: resumePlan.reusableTaskIds,
-          resume_after_task: resumePlan.resumeAfterTaskId,
-          next_task: resumePlan.nextTaskId,
-          total_tasks: resumePlan.totalTasks,
-        },
-      }).catch(() => undefined);
-    }
-
-    await appendDeliveryEventState({
-      repoPath: inputData.repoPath,
-      mastra,
-      event: {
-        type: 'task_packets_emitted',
-        stage: 'build',
-        total_tasks: orderedTasks.length,
-        tasks: orderedTasks.map((task) => {
-          const rails = taskPacketRailsForTask({
-            taskPlan,
-            task,
-            scaffoldManifest: inputData.scaffoldManifest,
-            maxAttempts: inputData.maxRetries + 1,
-          });
-
-          return {
-            id: task.id,
-            owner: task.owner,
-            task_kind: rails.task_kind,
-            surface_kind: rails.surface_kind,
-            evidence_kind: rails.evidence_kind,
-            runtime_kind: rails.runtime_class,
-            verification_command_class: rails.verification_command_class,
-            allowed_surfaces: rails.allowed_surfaces,
-            scaffold_owned_allowed_surfaces: rails.scaffold_owned_allowed_surfaces,
-            model_budget: rails.model_budget,
-          };
-        }),
-      },
-    }).catch(() => undefined);
-
-    return orderedTasks.map((task, taskIndex) => ({
-      repoPath: inputData.repoPath,
-      maxRetries: inputData.maxRetries,
-      deployMode: inputData.deployMode,
-      reviewMode: inputData.reviewMode,
-      taskPlan: inputData.taskPlan,
-      releaseGate: inputData.releaseGate,
-      ...scaffoldStageFields(inputData),
-      status: inputData.status,
-      runId: inputData.runId,
-      summary: inputData.summary,
-      artifacts: inputData.artifacts,
-      checks,
-      judgments: inputData.judgments,
-      questions: inputData.questions,
-      nextSteps: inputData.nextSteps,
-      task,
-      taskIndex,
-      skipped: false,
-    }));
-  },
-});
-
-const prepareBuildTaskAttemptLoopStep = createStep({
-  id: 'prepare-build-task-attempt-loop',
-  description: 'Prepare one build task for native retry attempts.',
-  inputSchema: buildTaskWorkItemSchema,
-  outputSchema: buildTaskAttemptStateSchema,
-  execute: async ({ inputData, mastra }) => {
-    const passThrough = (taskStatus: 'complete' | 'stuck' | 'blocked' | 'skipped' = 'skipped') => ({
-      repoPath: inputData.repoPath,
-      maxRetries: inputData.maxRetries,
-      deployMode: inputData.deployMode,
-      reviewMode: inputData.reviewMode,
-      taskPlan: inputData.taskPlan,
-      releaseGate: inputData.releaseGate,
-      ...scaffoldStageFields(inputData),
-      status: inputData.status,
-      runId: inputData.runId,
-      summary: inputData.summary,
-      artifacts: inputData.artifacts,
-      checks: inputData.checks,
-      judgments: inputData.judgments,
-      questions: inputData.questions,
-      nextSteps: inputData.nextSteps,
-      taskId: inputData.task?.id,
-      taskIndex: inputData.taskIndex,
-      skipped: inputData.skipped,
-      taskStatus,
-      attempt: 0,
-      terminal: true,
-      remediation: [],
-    });
-
-    if (inputData.skipped) return passThrough();
-    if (inputData.status !== 'reviewed') return passThrough();
-    if (!inputData.taskPlan) throw new Error('review stage did not provide a task plan for the build task');
-    if (!inputData.task) throw new Error('build task work item did not include a task');
-
-    const taskPlan = inputData.taskPlan;
-    const task = inputData.task;
-    const artifacts = [...inputData.artifacts];
-    const checks = [...inputData.checks];
-    const judgments = [...inputData.judgments];
-
-    const run = await readDeliveryRunState({ repoPath: inputData.repoPath, mastra });
-    const priorStopped = priorStoppedBuildTaskIds({
-      taskPlan,
-      taskIndex: inputData.taskIndex,
-      taskStatuses: run.tasks,
-    });
-    if (priorStopped.length) {
-      await updateDeliveryTaskState({
-        repoPath: inputData.repoPath,
-        id: task.id,
-        status: 'blocked',
-        owner: task.owner,
-        note: `paused by earlier stopped task ${priorStopped.join(', ')}`,
-        mastra,
-      });
-
-      return {
-        repoPath: inputData.repoPath,
-        maxRetries: inputData.maxRetries,
-        deployMode: inputData.deployMode,
-        reviewMode: inputData.reviewMode,
-        taskPlan,
-        releaseGate: inputData.releaseGate,
-        status: 'stuck' as const,
-        runId: inputData.runId,
-        summary: `Build task ${task.id} paused because earlier build tasks stopped.`,
-        artifacts,
-        checks,
-        judgments,
-        questions: [],
-        nextSteps: priorStopped.map((dependency) => `${task.id} paused by earlier stopped task ${dependency}`),
-        task,
-        taskIndex: inputData.taskIndex,
-        skipped: false,
-        taskId: task.id,
-        taskStatus: 'blocked' as const,
-        attempt: 0,
-        terminal: true,
-        remediation: [],
-      };
-    }
-
-    const blockedBy = task.depends_on.filter((dependency) => run.tasks[dependency]?.status !== 'complete');
-    if (blockedBy.length) {
-      await updateDeliveryTaskState({
-        repoPath: inputData.repoPath,
-        id: task.id,
-        status: 'blocked',
-        owner: task.owner,
-        note: `blocked by dependency ${blockedBy.join(', ')}`,
-        mastra,
-      });
-
-      return {
-        repoPath: inputData.repoPath,
-        maxRetries: inputData.maxRetries,
-        deployMode: inputData.deployMode,
-        reviewMode: inputData.reviewMode,
-        taskPlan,
-        releaseGate: inputData.releaseGate,
-        status: 'stuck' as const,
-        runId: inputData.runId,
-        summary: `Build task ${task.id} blocked by dependencies.`,
-        artifacts,
-        checks,
-        judgments,
-        questions: [],
-        nextSteps: blockedBy.map((dependency) => `${task.id} blocked by ${dependency}`),
-        task,
-        taskIndex: inputData.taskIndex,
-        skipped: false,
-        taskId: task.id,
-        taskStatus: 'blocked' as const,
-        attempt: 0,
-        terminal: true,
-        remediation: [],
-      };
-    }
-
-    const reusable = reusableImplementationArtifactForTask(inputData.repoPath, task);
-    if (reusable) {
-      const judgmentRef: JudgmentRef = {
-        subject: reusable.notePath,
-        rubric: reusable.judgment.rubric ?? 'implementation',
-        path: reusable.judgmentPath,
-        overall: reusable.judgment.overall ?? 0,
-        passed: true,
-      };
-      const reusedArtifacts = [
-        reusable.notePath,
-        reusable.judgmentPath,
-        ...(reusable.judgeOutputPath ? [reusable.judgeOutputPath] : []),
-      ];
-      artifacts.push(...reusedArtifacts);
-      checks.push({
-        check: `reused_implementation_artifact:${task.id}`,
-        passed: true,
-        reason: `Reused passing implementation judgment ${reusable.judgmentPath} after owned surfaces were present.`,
-      });
-      judgments.push(judgmentRef);
-
-      await recordDeliveryArtifactState({
-        repoPath: inputData.repoPath,
-        type: `note-${task.id}`,
-        path: reusable.notePath,
-        mastra,
-      });
-      await recordDeliveryJudgmentState({
-        repoPath: inputData.repoPath,
-        subject: reusable.notePath,
-        rubric: judgmentRef.rubric,
-        path: judgmentRef.path,
-        overall: judgmentRef.overall,
-        passed: judgmentRef.passed,
-        mastra,
-      });
-      await appendDeliveryEventState({
-        repoPath: inputData.repoPath,
-        mastra,
-        event: {
-          type: 'implementation_artifact_reused',
-          stage: `build:${task.id}`,
-          ok: true,
-          task: task.id,
-          attempt: reusable.attempt,
-          notePath: reusable.notePath,
-          judgmentPath: reusable.judgmentPath,
-        },
-      });
-      await updateDeliveryTaskState({
-        repoPath: inputData.repoPath,
-        id: task.id,
-        status: 'complete',
-        owner: task.owner,
-        note: `reused passing judgment ${reusable.judgment.overall}`,
-        mastra,
-      });
-
-      return {
-        repoPath: inputData.repoPath,
-        maxRetries: inputData.maxRetries,
-        deployMode: inputData.deployMode,
-        reviewMode: inputData.reviewMode,
-        taskPlan,
-        releaseGate: inputData.releaseGate,
-        status: 'built' as const,
-        runId: inputData.runId,
-        summary: `Build task ${task.id} reused a prior passing implementation artifact.`,
-        artifacts,
-        checks,
-        judgments,
-        questions: [],
-        nextSteps: ['Continue the delivery build loop.'],
-        task,
-        taskIndex: inputData.taskIndex,
-        skipped: false,
-        taskId: task.id,
-        taskStatus: 'complete' as const,
-        attempt: 0,
-        terminal: true,
-        remediation: [],
-      };
-    }
-
-    return {
-      repoPath: inputData.repoPath,
-      maxRetries: inputData.maxRetries,
-      deployMode: inputData.deployMode,
-      reviewMode: inputData.reviewMode,
-      taskPlan,
-      releaseGate: inputData.releaseGate,
-      status: inputData.status,
-      runId: inputData.runId,
-      summary: inputData.summary,
-      artifacts,
-      checks,
-      judgments,
-      questions: inputData.questions,
-      nextSteps: inputData.nextSteps,
-      task,
-      taskIndex: inputData.taskIndex,
-      skipped: false,
-      taskId: task.id,
-      taskStatus: undefined,
-      attempt: 0,
-      terminal: false,
-      remediation: [],
-    };
-  },
-});
-
-const executeBuildTaskAttemptStep = createStep({
-  id: 'execute-build-task-attempt',
-  description: 'Run one implementation attempt for a build task and decide whether another attempt is needed.',
-  inputSchema: buildTaskAttemptStateSchema,
-  outputSchema: buildTaskAttemptStateSchema,
-  execute: async ({ inputData, mastra }) =>
-    runBuildTaskAttempt({
-      inputData,
-      mastra,
-      scaffoldManifestSummary: scaffoldManifestPromptSummary(inputData.scaffoldManifest),
-    }),
-});
-
-const finalizeBuildTaskAttemptLoopStep = createStep({
-  id: 'execute-build-task',
-  description: 'Finalize native build task attempt loop output.',
-  inputSchema: buildTaskAttemptStateSchema,
-  outputSchema: buildTaskResultSchema,
-  stateSchema: deliveryWorkflowStateSchema,
-  execute: async ({ inputData, state }) => ({
-    repoPath: inputData.repoPath,
-    maxRetries: inputData.maxRetries,
-    deployMode: inputData.deployMode,
-    reviewMode: inputData.reviewMode,
-    taskPlan: inputData.taskPlan,
-    releaseGate: inputData.releaseGate,
-    ...scaffoldStageFields(inputData.scaffoldManifest ? inputData : state),
-    status: inputData.status === 'reviewed' ? ('stuck' as const) : inputData.status,
-    runId: inputData.runId,
-    summary:
-      inputData.status === 'reviewed' ? 'Build task attempt loop ended before a terminal result.' : inputData.summary,
-    artifacts: inputData.artifacts,
-    checks: inputData.checks,
-    judgments: inputData.judgments,
-    questions: inputData.questions,
-    nextSteps:
-      inputData.status === 'reviewed'
-        ? inputData.remediation.length
-          ? inputData.remediation
-          : ['Inspect build task attempt state and rerun the build loop.']
-        : inputData.nextSteps,
-    taskId: inputData.taskId,
-    taskStatus: inputData.taskStatus ?? (inputData.status === 'reviewed' ? ('stuck' as const) : undefined),
-  }),
-});
-
-export const deliveryBuildTaskWorkflow = createWorkflow({
-  id: 'delivery-build-task',
-  description: 'Nested workflow that executes one implementation task with role boundary and judgment gates.',
-  inputSchema: buildTaskWorkItemSchema,
-  outputSchema: buildTaskResultSchema,
-  stateSchema: deliveryWorkflowStateSchema,
-  options: {
-    onError: markDeliveryRunFailedOnWorkflowError,
-  },
-})
-  .then(prepareBuildTaskAttemptLoopStep)
-  .dountil(executeBuildTaskAttemptStep, async ({ inputData }) => inputData.terminal)
-  .then(finalizeBuildTaskAttemptLoopStep)
-  .commit();
-
-const aggregateBuildTaskResultsStep = createStep({
-  id: 'delivery-build-loop',
-  description: 'Aggregate workflow-native build task results into the delivery stage output.',
-  inputSchema: buildTaskResultsSchema,
-  outputSchema: deliveryStageOutputSchema,
-  stateSchema: deliveryWorkflowStateSchema,
-  scorers: deliveryBuildStepScorers,
-  execute: async ({ inputData, state }) => {
-    const first = inputData[0];
-    if (!first) throw new Error('build loop did not receive any task results');
-    const scaffoldFields = scaffoldStageFields(first.scaffoldManifest ? first : state);
-
-    const uniqueArtifacts = Array.from(new Set(inputData.flatMap((result) => result.artifacts)));
-    const checkKeys = new Set<string>();
-    const checks = inputData
-      .flatMap((result) => result.checks)
-      .filter((check) => {
-        const key = `${check.check}:${check.passed}:${check.reason}`;
-        if (checkKeys.has(key)) return false;
-        checkKeys.add(key);
-        return true;
-      });
-    const judgmentKeys = new Set<string>();
-    const judgments = inputData
-      .flatMap((result) => result.judgments)
-      .filter((judgment) => {
-        if (judgmentKeys.has(judgment.path)) return false;
-        judgmentKeys.add(judgment.path);
-        return true;
-      });
-    const taskState = Object.fromEntries(
-      inputData
-        .filter((result) => result.taskId && result.taskStatus && result.taskStatus !== 'skipped')
-        .map((result) => [result.taskId, result.taskStatus]),
-    ) as Record<string, 'complete' | 'stuck' | 'blocked'>;
-
-    const allSkipped = inputData.every((result) => result.taskStatus === 'skipped' || !result.taskId);
-    if (allSkipped) {
-      return {
-        repoPath: first.repoPath,
-        maxRetries: first.maxRetries,
-        deployMode: first.deployMode,
-        reviewMode: first.reviewMode,
-        taskPlan: first.taskPlan,
-        releaseGate: first.releaseGate,
-        ...scaffoldFields,
-        status: first.status,
-        runId: first.runId,
-        summary: first.summary,
-        artifacts: uniqueArtifacts,
-        checks,
-        judgments,
-        questions: first.questions,
-        nextSteps: first.nextSteps,
-      };
-    }
-
-    const blockedOrStuck = Object.entries(taskState).filter(([, status]) => status !== 'complete');
-    if (blockedOrStuck.length) {
-      return {
-        repoPath: first.repoPath,
-        maxRetries: first.maxRetries,
-        deployMode: first.deployMode,
-        reviewMode: first.reviewMode,
-        taskPlan: first.taskPlan,
-        releaseGate: first.releaseGate,
-        ...scaffoldFields,
-        status: 'stuck' as const,
-        runId: first.runId,
-        summary: 'Build loop stopped with stuck or blocked tasks.',
-        artifacts: uniqueArtifacts,
-        checks,
-        judgments,
-        questions: [],
-        nextSteps: blockedOrStuck.map(([id, status]) => `${id}:${status}`),
-      };
-    }
-
-    return {
-      repoPath: first.repoPath,
-      maxRetries: first.maxRetries,
-      deployMode: first.deployMode,
-      reviewMode: first.reviewMode,
-      taskPlan: first.taskPlan,
-      releaseGate: first.releaseGate,
-      ...scaffoldFields,
-      status: 'built' as const,
-      runId: first.runId,
-      summary: `Build loop completed: ${taskStatusSummary(taskState).join(', ')}`,
-      artifacts: uniqueArtifacts,
-      checks,
-      judgments,
-      questions: [],
-      nextSteps: ['Run the release gate stage against implementation notes and changed code.'],
-    };
-  },
-});
-
-export const deliveryBuildWorkflow = createWorkflow({
-  id: 'delivery-build',
-  description: 'Prepare implementation tasks, run the nested build-task workflow, and persist build-stage state.',
-  inputSchema: deliveryStageOutputSchema,
-  outputSchema: deliveryStageOutputSchema,
-  stateSchema: deliveryWorkflowStateSchema,
-  options: {
-    onError: markDeliveryRunFailedOnWorkflowError,
-  },
-})
-  .then(prepareBuildTasksStep)
-  .foreach(deliveryBuildTaskWorkflow, { concurrency: 1 })
-  .then(aggregateBuildTaskResultsStep)
-  .then(syncBuildStateStep)
   .commit();
 
 export const deliveryWorkflow = createWorkflow({

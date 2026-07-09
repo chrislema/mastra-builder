@@ -14,6 +14,10 @@ import {
 import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaffold-workflow.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
+const buildWorkflowSource = () =>
+  readFileSync('src/mastra/delivery-engine/workflows/build.workflow.ts', 'utf8');
+const buildTaskWorkflowSource = () =>
+  readFileSync('src/mastra/delivery-engine/workflows/build-task.workflow.ts', 'utf8');
 const releaseGateWorkflowSource = () =>
   readFileSync('src/mastra/delivery-engine/workflows/release-gate.workflow.ts', 'utf8');
 const deploymentWorkflowSource = () =>
@@ -54,7 +58,7 @@ test('delivery workflow is split into native stage workflows', () => {
 });
 
 test('delivery workflow scaffolds deterministically between planning and review', () => {
-  const source = workflowSource();
+  const source = [workflowSource(), buildTaskWorkflowSource()].join('\n');
   const promptSource = implementationAttemptPromptSource();
 
   assert.match(source, /\.then\(deliveryPlanningWorkflow\)\s+\.then\(createScaffoldArtifactsStep\)\s+\.then\(deliveryReviewWorkflow\)/);
@@ -78,7 +82,7 @@ test('workflow agent calls use run-scoped Mastra memory', () => {
 });
 
 test('delivery workflow records structured gate and task packet observability events', () => {
-  const source = workflowSource();
+  const source = [workflowSource(), buildWorkflowSource()].join('\n');
   const promptSource = implementationAttemptPromptSource();
   const railsSource = taskPacketRailsSource();
 

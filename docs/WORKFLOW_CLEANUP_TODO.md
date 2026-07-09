@@ -181,6 +181,8 @@ Do not redo these:
   deployment report persistence, deterministic completion gates, and final state
   sync:
   `workflows/deployment.workflow.ts`
+- Native build task retry workflow and build aggregation workflow:
+  `workflows/build-task.workflow.ts`, `workflows/build.workflow.ts`
 
 ## Cleanup Rules
 

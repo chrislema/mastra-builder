@@ -500,6 +500,9 @@ Completed extraction:
 - `workflows/deployment.workflow.ts` for local/production deployment branching,
   production approval, deployment report persistence, deterministic completion
   gates, and final state sync.
+- `workflows/build-task.workflow.ts` and `workflows/build.workflow.ts` for the
+  native per-task retry loop, build task expansion, sequential task execution,
+  and build-result aggregation.
 
 Keep `workflow.ts` temporarily as a compatibility barrel:
 
