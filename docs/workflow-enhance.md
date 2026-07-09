@@ -506,6 +506,9 @@ Completed extraction:
 - `workflows/review.workflow.ts` for the native architect review loop,
   review-report parsing, planner-bounce revision, deterministic revision gates,
   and reviewed-state sync.
+- `workflows/planning.workflow.ts` for native run initialization, planner
+  artifact/cache handling, question suspension, deterministic plan gates,
+  bounded plan-gate repair, and plan-state sync.
 
 Keep `workflow.ts` temporarily as a compatibility barrel:
 

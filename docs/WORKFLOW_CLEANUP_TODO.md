@@ -185,6 +185,9 @@ Do not redo these:
   `workflows/build-task.workflow.ts`, `workflows/build.workflow.ts`
 - Native architect review workflow and planner-bounce revision loop:
   `workflows/review.workflow.ts`
+- Native planning workflow, run initialization, planner cache, question
+  suspension, plan-gate repair, and plan-state sync:
+  `workflows/planning.workflow.ts`
 
 ## Cleanup Rules
 

@@ -14,6 +14,8 @@ import {
 import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaffold-workflow.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
+const planningWorkflowSource = () =>
+  readFileSync('src/mastra/delivery-engine/workflows/planning.workflow.ts', 'utf8');
 const buildWorkflowSource = () =>
   readFileSync('src/mastra/delivery-engine/workflows/build.workflow.ts', 'utf8');
 const buildTaskWorkflowSource = () =>
@@ -25,9 +27,12 @@ const deploymentWorkflowSource = () =>
 const implementationAttemptPromptSource = () =>
   readFileSync('src/mastra/delivery-engine/implementation/attempt-prompt.ts', 'utf8');
 const taskPacketRailsSource = () => readFileSync('src/mastra/delivery-engine/task-packet-rails.ts', 'utf8');
+const routeBoundaryPolicySource = () =>
+  readFileSync('src/mastra/delivery-engine/planning/route-boundary-policy.ts', 'utf8');
 const agentRuntimeSource = () =>
   [
     readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8'),
+    readFileSync('src/mastra/delivery-engine/workflows/planning.workflow.ts', 'utf8'),
     readFileSync('src/mastra/delivery-engine/workflows/review.workflow.ts', 'utf8'),
     readFileSync('src/mastra/delivery-engine/implementation/build-task-runner.ts', 'utf8'),
     readFileSync('src/mastra/delivery-engine/agent-runtime/judge-runtime.ts', 'utf8'),
@@ -83,7 +88,7 @@ test('workflow agent calls use run-scoped Mastra memory', () => {
 });
 
 test('delivery workflow records structured gate and task packet observability events', () => {
-  const source = [workflowSource(), buildWorkflowSource()].join('\n');
+  const source = [workflowSource(), planningWorkflowSource(), buildWorkflowSource()].join('\n');
   const promptSource = implementationAttemptPromptSource();
   const railsSource = taskPacketRailsSource();
 
@@ -125,9 +130,9 @@ test('deployment completion is gated deterministically from evidence', () => {
 });
 
 test('workflow delegates route-family policy to a typed surface module', () => {
-  const source = workflowSource();
+  const source = [workflowSource(), routeBoundaryPolicySource()].join('\n');
 
-  assert.match(source, /from '\.\/task-plan-surface-policy'/);
+  assert.match(source, /from '\.\.\/task-plan-surface-policy'/);
   assert.doesNotMatch(source, /function genericRouteMentions/);
   assert.doesNotMatch(source, /manual\\\/profile\\\/regeneration endpoints/);
   assert.doesNotMatch(source, /candidate routes\?/);
