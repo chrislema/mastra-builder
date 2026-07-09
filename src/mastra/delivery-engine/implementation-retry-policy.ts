@@ -38,13 +38,28 @@ export function staleDownstreamVerificationSurfacePathsFromOrderedTasks({
     .map(concretePath)
     .filter((path): path is string => Boolean(path));
   const downstreamTasks = orderedTasks.slice(currentTaskIndex + 1);
+  const activeTaskId = orderedTasks[currentTaskIndex]?.id;
+  const nonReusableDownstreamTaskIds = new Set<string>();
+  const reusableDownstreamTaskIds = new Set<string>();
+
+  for (const task of downstreamTasks) {
+    const dependencyInvalidated = task.depends_on.some(
+      (dependencyId) => dependencyId === activeTaskId || nonReusableDownstreamTaskIds.has(dependencyId),
+    );
+    const reusable = !dependencyInvalidated && Boolean(reusableImplementationArtifactForTask(task));
+    if (reusable) {
+      reusableDownstreamTaskIds.add(task.id);
+    } else {
+      nonReusableDownstreamTaskIds.add(task.id);
+    }
+  }
 
   return verificationFailurePaths(failure).filter((path) => {
     if (!existsSync(join(resolve(repoPath), path))) return false;
     if (matchesAny(path, protectedSurfaces)) return false;
 
     return downstreamTasks.some((task) => {
-      if (reusableImplementationArtifactForTask(task)) return false;
+      if (reusableDownstreamTaskIds.has(task.id)) return false;
       return matchesAny(path, taskBoundarySurfaces(task));
     });
   });

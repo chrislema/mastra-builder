@@ -7953,6 +7953,76 @@ test('stale downstream verification repair resets only future failed task surfac
   assert.match(readFileSync(join(repoPath, 'src/workflows/steps/generate-transcript.ts'), 'utf8'), /Delivery preflight stub/);
 });
 
+test('stale downstream repair invalidates reusable evidence tasks behind stale implementation dependencies', async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-stale-downstream-transitive-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  mkdirSync(join(repoPath, 'test'), { recursive: true });
+  mkdirSync(join(repoPath, '.delivery/artifacts/judgments'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/contracts.ts'), 'export const ERROR_CODES = ["provider_error"] as const;\n');
+  writeFileSync(
+    join(repoPath, 'src/providers.ts'),
+    'import { runFailure } from "./contracts";\nexport const runModel = () => runFailure();\n',
+  );
+  writeFileSync(
+    join(repoPath, 'test/provider-adapters.test.ts'),
+    'import { runModel } from "../src/providers";\nvoid runModel;\n',
+  );
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/note-T03-provider-behavior-tests.a1.json'),
+    JSON.stringify({
+      ...implementationNote,
+      task: 'T03-provider-behavior-tests',
+      files_touched: ['test/provider-adapters.test.ts'],
+    }),
+  );
+  writeFileSync(
+    join(repoPath, '.delivery/artifacts/judgments/implementation-T03-provider-behavior-tests-a1.judgment.json'),
+    JSON.stringify({
+      rubric: 'implementation',
+      overall: 0.91,
+      passed: true,
+      gates_failed: [],
+      dimensions_missing: [],
+    }),
+  );
+  const plan = taskPlan([
+    { id: 'T01', depends_on: [], owned_surfaces: ['src/contracts.ts'] },
+    { id: 'T03', depends_on: ['T01'], owned_surfaces: ['src/providers.ts'] },
+    {
+      id: 'T03-provider-behavior-tests',
+      depends_on: ['T03'],
+      owned_surfaces: ['test/provider-adapters.test.ts'],
+    },
+  ]);
+  const failure = [
+    'src/providers.ts(1,10): error TS2305: Module "./contracts" has no exported member runFailure.',
+    'test/provider-adapters.test.ts(1,10): error TS2305: Module "../src/providers" has no exported member runModel.',
+  ].join('\n');
+
+  assert.deepEqual(
+    staleDownstreamVerificationSurfacePaths({
+      repoPath,
+      taskPlan: plan,
+      currentTaskIndex: 0,
+      failure,
+    }),
+    ['src/providers.ts', 'test/provider-adapters.test.ts'],
+  );
+
+  assert.equal(
+    await repairStaleDownstreamVerificationSurfaces({
+      repoPath,
+      stage: 'build:T01',
+      taskPlan: plan,
+      currentTaskIndex: 0,
+      failure,
+    }),
+    true,
+  );
+  assert.match(readFileSync(join(repoPath, 'src/providers.ts'), 'utf8'), /Delivery preflight stub/);
+  assert.match(readFileSync(join(repoPath, 'test/provider-adapters.test.ts'), 'utf8'), /Delivery preflight stub/);
+});
+
 test('out-of-plan verification failures are classified as stale workspace contamination', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-stale-out-of-plan-'));
   mkdirSync(join(repoPath, 'src/workflows/steps'), { recursive: true });

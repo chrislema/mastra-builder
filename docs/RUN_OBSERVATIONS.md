@@ -844,3 +844,76 @@ For each run, record:
 - Stop decision: do not run another paid benchmark pass until preserved
   scaffold materialization and reusable-artifact freshness are committed and
   pushed.
+
+### 2026-07-09 00:50 CDT - CLI Preserved Benchmark Rerun Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: preserved/non-empty rerun. Do not clear generated files,
+  dependencies, git metadata, or `.delivery`; this run should test whether
+  preserved scaffold materialization and artifact freshness let the existing
+  project move past the stale `T01-model-catalog-behavior-tests` blocker.
+- Forward-progress question: after `edac5b8`, does scaffold preserve existing
+  implementation files, does the build cursor reject stale downstream reuse,
+  and does the workflow progress beyond `T01-model-catalog-behavior-tests`
+  toward `T03`, `T04`, and local human review?
+- Cheap/static verification already tried before this run:
+  - `npm test -- test/delivery-engine/scaffold-workflow.test.ts
+    test/delivery-engine/workflow-policy.test.ts
+    test/delivery-engine/operator-docs.test.ts` passed with 414 tests.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+  - Commit `edac5b8` was pushed to `main`.
+- Guardrail: this is a paid preserved rerun. Monitor CLI output and
+  `.delivery` artifacts, classify any stop from structured evidence first, and
+  avoid brittle string/pattern fixes.
+- Workflow run ID: `66062add-b66f-4472-88c3-70897536b2a5`
+- Delivery run ID: `run-mrczcx9t-ba0dc939`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/66062add-b66f-4472-88c3-70897536b2a5.json`
+- Result: workflow status `success`, delivery status `stuck`.
+- Progress:
+  - The run confirmed `edac5b8` changed preserved rerun behavior: scaffold
+    did not overwrite existing project files during this run.
+  - Artifact freshness rejected the old T01 artifact and the build started at
+    `T01` instead of blindly reusing stale contract evidence.
+  - On `T01` attempt 1, repo-wide typecheck failed on stale downstream
+    `src/providers.ts` and `test/provider-adapters.test.ts` errors.
+  - The stale downstream repair correctly reset `src/providers.ts` to a
+    compile-safe preflight stub, which was the exact downstream surface missed
+    by the prior run.
+- Farthest verified task: the run moved from the prior
+  `T01-model-catalog-behavior-tests` stop back to active `T01` repair and
+  proved stale downstream implementation reset works for `src/providers.ts`.
+- Concrete blocker:
+  - After `src/providers.ts` was reset, `test/provider-adapters.test.ts`
+    remained stale and kept importing old provider exports such as
+    `MAX_TOKENS`, `runModel`, `runModelDispatcher`, and `toProviderMessages`.
+  - That provider behavior test belongs to a downstream evidence task that
+    depends on the provider implementation task. The current stale-downstream
+    classifier can invalidate a stale implementation task, but it still treats
+    a downstream evidence task as reusable if that evidence task's own note is
+    fresh enough.
+  - This means reusable evidence tasks need transitive dependency invalidation:
+    if `T03` is stale/non-reusable, then `T03-provider-behavior-tests` must not
+    be considered reusable during upstream repair.
+- Failure class: preserved-rerun harness bug in downstream reuse invalidation.
+  This is a structural dependency/reuse problem, not a product-code problem and
+  not a text parsing problem.
+- Current hypothesis:
+  - `staleDownstreamVerificationSurfacePathsFromOrderedTasks` should compute
+    reusable downstream tasks in topological order and reject reuse for any
+    task whose dependency is the active task or a downstream task already
+    marked non-reusable.
+  - Then stale verification paths in transitive evidence surfaces, such as
+    `test/provider-adapters.test.ts`, can be reset along with the stale
+    implementation surface.
+- Cheap/static verification before another paid delivery pass:
+  - Add a regression where a stale downstream implementation task has a
+    seemingly reusable downstream evidence task; both failure paths should be
+    returned and reset.
+  - Run focused workflow-policy tests, operator-docs, and `npm run typecheck`.
+- Stop decision: do not run another paid benchmark pass until transitive
+  downstream reuse invalidation is committed and pushed.
