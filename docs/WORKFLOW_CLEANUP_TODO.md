@@ -188,6 +188,8 @@ Do not redo these:
 - Native planning workflow, run initialization, planner cache, question
   suspension, plan-gate repair, and plan-state sync:
   `workflows/planning.workflow.ts`
+- Top-level native delivery workflow composition and workflow barrel exports:
+  `workflows/delivery.workflow.ts`, `workflows/index.ts`
 
 ## Cleanup Rules
 

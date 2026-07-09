@@ -14,6 +14,8 @@ import {
 import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaffold-workflow.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
+const deliveryWorkflowSource = () =>
+  readFileSync('src/mastra/delivery-engine/workflows/delivery.workflow.ts', 'utf8');
 const planningWorkflowSource = () =>
   readFileSync('src/mastra/delivery-engine/workflows/planning.workflow.ts', 'utf8');
 const buildWorkflowSource = () =>
@@ -64,7 +66,7 @@ test('delivery workflow is split into native stage workflows', () => {
 });
 
 test('delivery workflow scaffolds deterministically between planning and review', () => {
-  const source = [workflowSource(), buildTaskWorkflowSource()].join('\n');
+  const source = [workflowSource(), deliveryWorkflowSource(), buildTaskWorkflowSource()].join('\n');
   const promptSource = implementationAttemptPromptSource();
 
   assert.match(source, /\.then\(deliveryPlanningWorkflow\)\s+\.then\(createScaffoldArtifactsStep\)\s+\.then\(deliveryReviewWorkflow\)/);

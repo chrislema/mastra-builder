@@ -509,6 +509,8 @@ Completed extraction:
 - `workflows/planning.workflow.ts` for native run initialization, planner
   artifact/cache handling, question suspension, deterministic plan gates,
   bounded plan-gate repair, and plan-state sync.
+- `workflows/delivery.workflow.ts` and `workflows/index.ts` for the top-level
+  native delivery workflow composition and workflow barrel exports.
 
 Keep `workflow.ts` temporarily as a compatibility barrel:
 
