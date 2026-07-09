@@ -119,6 +119,10 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
   assert.match(workerSource, /DB: D1Database;/);
   assert.match(workerSource, /BOOKMARKS: Fetcher;/);
   assert.doesNotMatch(workerSource, /AI\?: Ai/);
+
+  const workerSmokeTest = fileContent(scaffold, 'test/worker-smoke.test.ts');
+  assert.match(workerSmokeTest, /serves static assets through the ASSETS fallback/);
+  assert.match(workerSmokeTest, /asset shell/);
 });
 
 test('project factory keeps a minimal plain JavaScript Worker when source asks for vanilla JS', () => {
