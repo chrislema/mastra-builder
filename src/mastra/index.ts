@@ -24,7 +24,7 @@ import {
   deliveryReleaseGateWorkflow,
   deliveryReviewWorkflow,
   deliveryWorkflow,
-} from './delivery-engine/workflow';
+} from './delivery-engine/workflows';
 import { deliveryWorkspace } from './delivery-engine/workspace';
 
 export {

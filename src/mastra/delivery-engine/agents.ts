@@ -13,7 +13,7 @@ import {
   deliveryReleaseGateWorkflow,
   deliveryReviewWorkflow,
   deliveryWorkflow,
-} from './workflow';
+} from './workflows';
 import {
   architectModel,
   deliveryModel,

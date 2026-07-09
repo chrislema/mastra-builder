@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import type { WorkflowErrorCallbackInfo } from '@mastra/core/workflows';
-import { markDeliveryRunFailedOnWorkflowError } from '../../src/mastra/delivery-engine/workflow.ts';
+import { markDeliveryRunFailedOnWorkflowError } from '../../src/mastra/delivery-engine/workflow-support/errors.ts';
 import { initializeDeliveryRun, readDeliveryRun } from '../../src/mastra/delivery-engine/state.ts';
 
 const createRepo = () => {

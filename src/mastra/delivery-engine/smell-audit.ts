@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { isBehaviorLikeAcceptanceCriterion } from './acceptance-evidence-policy';
-import { acceptanceContractsForTask, normalizeTaskPlanCloudflareWorkerContracts } from './workflow';
+import { acceptanceContractsForTask } from './implementation/evidence';
+import { normalizeTaskPlanCloudflareWorkerContracts } from './planning/cloudflare-worker-contracts-policy';
 import { taskPlanSchema, type TaskPlan } from './workflow-schemas';
 
 type AcceptanceContract = ReturnType<typeof acceptanceContractsForTask>[number];

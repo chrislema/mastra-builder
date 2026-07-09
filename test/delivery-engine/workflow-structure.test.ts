@@ -9,9 +9,9 @@ import {
   deliveryReleaseGateWorkflow,
   deliveryReviewWorkflow,
   deliveryWorkflow,
-  markDeliveryRunFailedOnWorkflowError,
-} from '../../src/mastra/delivery-engine/workflow.ts';
+} from '../../src/mastra/delivery-engine/workflows/index.ts';
 import { deliveryScaffoldWorkflow } from '../../src/mastra/delivery-engine/scaffold-workflow.ts';
+import { markDeliveryRunFailedOnWorkflowError } from '../../src/mastra/delivery-engine/workflow-support/errors.ts';
 
 const workflowSource = () => readFileSync('src/mastra/delivery-engine/workflow.ts', 'utf8');
 const deliveryWorkflowSource = () =>
@@ -63,6 +63,16 @@ test('delivery workflow is split into native stage workflows', () => {
       'delivery-deployment',
     ],
   );
+});
+
+test('historical workflow entrypoint stays a thin compatibility barrel', () => {
+  const source = workflowSource();
+  const nonEmptyLines = source.split('\n').filter((line) => line.trim().length > 0);
+
+  assert.ok(nonEmptyLines.length <= 5, 'workflow.ts should stay a small barrel; put workflow logic in workflows/');
+  assert.match(source, /export \* from '\.\/workflows'/);
+  assert.doesNotMatch(source, /createWorkflow/);
+  assert.doesNotMatch(source, /createStep/);
 });
 
 test('delivery workflow scaffolds deterministically between planning and review', () => {

@@ -6,7 +6,7 @@ import { deliveryMemoryResourceId } from './memory';
 import { finishDeliveryRunState } from './state-service';
 import type { MastraLike } from './observability';
 import { assertDeliveryModelEnvironment } from './models';
-import { deliveryWorkflow } from './workflow';
+import { deliveryWorkflow } from './workflows';
 import {
   deliveryWorkflowInputBaseSchema,
   normalizeDeliveryWorkflowInput,

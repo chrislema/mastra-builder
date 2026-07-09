@@ -5,108 +5,148 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   acceptanceContractsForTask,
-  buildTimeoutRemediation,
-  buildVerificationCommandPlan,
-  buildVerificationCommandPlans,
-  canSalvageTimedOutBuildAttempt,
-  createMissingOwnedSurfaceStubs,
-  deliveryBuildResumePlan,
-  deploymentReportSuccessNextSteps,
-  directDependencySurfacePaths,
-  implementationActionableJudgmentRemediation,
-  implementationDeterministicResults,
   implementationDeterministicRemediation,
+  implementationDeterministicResults,
+  verificationWithAcceptanceGaps,
+} from '../../src/mastra/delivery-engine/implementation/evidence.ts';
+import {
+  buildTimeoutRemediation,
+  canSalvageTimedOutBuildAttempt,
   implementationEnginePolicyMismatch,
-  implementationFilesTouched,
   implementationFailureClass,
-  implementationJudgmentCanComplete,
   implementationRetryMode,
   implementationToolChoiceForRetryMode,
-  implementationWeakDimensionRemediation,
-  generatedTaskSurfacePaths,
-  isTrueBlockingAmbiguity,
-  generatedSliceDependencyHygiene,
-  judgeProviderErrorDetails,
-  judgeUnavailableOutputForRubric,
-  judgeUnavailableRemediation,
-  latestSuccessfulWorkspaceWriteEventTimestamp,
-  lifecycleStatusSchemaGaps,
-  localDeploymentReportFromReleaseGateEvidence,
-  configSchemaTaskSplitHygiene,
-  missingInstalledPackageNames,
-  normalizeTaskPlanLargeStorageTasks,
-  normalizeTaskPlanConfigSchemaTasks,
-  normalizeTaskPlanGeneratedSliceDependencies,
-  normalizeTaskPlanOperatorDocumentation,
-  normalizeTaskPlanCloudflareWorkerContracts,
-  normalizeReadoutSafeAdapterAmbiguities,
-  missingOwnedSurfacePaths,
-  normalizeTaskPlanProfileContractDependencies,
-  normalizeTaskPlanScaffoldDependencies,
-  normalizeTaskPlanRoleBoundaries,
-  operatorDocumentationHygiene,
-  openDecisionHygiene,
-  ownedSurfaceHygiene,
-  pagesFunctionsExceptionHygiene,
-  profileContractDependencyHygiene,
-  profileKindContractGaps,
-  profileKindTaskPacketPolicy,
-  profileKindTaskPacketPolicyForTask,
-  preserveTaskPlanAcceptanceContracts,
   outOfPlanVerificationFailurePaths,
-  priorStoppedBuildTaskIds,
-  productionDeploymentReportFromWranglerResult,
-  productionWranglerDeployCommand,
-  projectScaffoldHygiene,
-  readBudgetBlockedToolCount,
   repairStaleDownstreamVerificationSurfaces,
   repairStaleOutOfPlanVerificationSurfaces,
   repairUnknownNumberIntegerNarrowing,
-  releaseGateForInvalidTesterOutput,
+  staleDownstreamVerificationSurfacePaths,
+  staleOutOfPlanVerificationSurfacePaths,
+  typeScriptDiagnosticsFromRemediation,
+  typeScriptDiagnosticsFromText,
+} from '../../src/mastra/delivery-engine/implementation/retry-runtime.ts';
+import {
+  createMissingOwnedSurfaceStubs,
+  generatedTaskSurfacePaths,
+  missingInstalledPackageNames,
+  missingOwnedSurfacePaths,
+  taskBoundarySurfaces,
+  taskSourceBoundarySurfaces,
+  unreplacedPreflightStubPaths,
+  workerConfigHygieneGaps,
+  workerEnvBindingAlignmentGaps,
+  workerConfigTaskPacketPolicy,
+  workerConfigTaskPacketPolicyForTask,
+  workerPackageScaffoldGaps,
+  workersAiBindingGaps,
+  wranglerConfigHasWorkersAiBinding,
+} from '../../src/mastra/delivery-engine/implementation/task-boundaries.ts';
+import { directDependencySurfacePaths } from '../../src/mastra/delivery-engine/implementation/task-packet.ts';
+import {
+  lifecycleStatusSchemaGaps,
+  profileKindContractGaps,
+  profileKindTaskPacketPolicy,
+  profileKindTaskPacketPolicyForTask,
+  routeMiddlewareBypassGaps,
+  workflowEntrypointImportGaps,
+  workflowStepIntegrationGaps,
+} from '../../src/mastra/delivery-engine/implementation/deterministic-gates.ts';
+import {
+  deliveryBuildResumePlan,
+  implementationFilesTouched,
+  priorStoppedBuildTaskIds,
+  reusableImplementationArtifactForTask,
+} from '../../src/mastra/delivery-engine/implementation/reusable-artifacts.ts';
+import {
+  implementationActionableJudgmentRemediation,
+  implementationJudgmentCanComplete,
+  implementationWeakDimensionRemediation,
+  shouldProceedAfterNonActionableImplementationJudgment,
+} from '../../src/mastra/delivery-engine/implementation/judgment-policy.ts';
+import {
+  buildVerificationCommandPlan,
+  buildVerificationCommandPlans,
+} from '../../src/mastra/delivery-engine/evidence/build-verification.ts';
+import {
   releaseGateEvidenceCommandPlan,
-  releaseGateLocalAdminSecretPath,
   releaseGateLocalD1DatabaseName,
-  releaseGateRuntimeProbePlan,
-  releaseGateRuntimeProbePlanRequiresAdminSecret,
   releaseGateRequiredEvidencePassed,
   releaseGateRequiredStaticEvidenceFailures,
+  releaseGateRuntimeProbePlan,
+  releaseGateRuntimeProbePlanRequiresAdminSecret,
   releaseGateStaticEvidenceResults,
   releaseGateTranscriptFixtureSchemaGaps,
   releaseGateWorkerDeployDryRunCommand,
   releaseGateWorkerDevCommand,
   releaseGateWorkerStartupCheckCommand,
   releaseGateWorkerTypesCheckCommand,
-  routeBoundaryConsistencyHygiene,
-  routeMiddlewareBypassGaps,
-  reusableImplementationArtifactForTask,
-  shouldProceedAfterNonActionableImplementationJudgment,
+} from '../../src/mastra/delivery-engine/evidence/release-gate-evidence.ts';
+import { releaseGateLocalAdminSecretPath } from '../../src/mastra/delivery-engine/evidence/local-admin-secret.ts';
+import {
+  deploymentReportSuccessNextSteps,
+  localDeploymentReportFromReleaseGateEvidence,
+} from '../../src/mastra/delivery-engine/deployment/local-report.ts';
+import {
+  productionDeploymentReportFromWranglerResult,
+  productionWranglerDeployCommand,
+} from '../../src/mastra/delivery-engine/deployment/production-wrangler.ts';
+import {
+  latestSuccessfulWorkspaceWriteEventTimestamp,
+  readBudgetBlockedToolCount,
+} from '../../src/mastra/delivery-engine/agent-runtime/stage-timeout.ts';
+import {
+  judgeProviderErrorDetails,
+  judgeUnavailableOutputForRubric,
+  judgeUnavailableRemediation,
+} from '../../src/mastra/delivery-engine/agent-runtime/judge-runtime.ts';
+import {
+  isTrueBlockingAmbiguity,
+  normalizeReadoutSafeAdapterAmbiguities,
+  openDecisionHygiene,
   shouldSuspendForPlannerQuestions,
+} from '../../src/mastra/delivery-engine/planning/readout-policy.ts';
+import {
   sourceDocumentsDeclareExternalServiceBindings,
   sourceDocumentsDeclareLatestTranscriptContract,
   sourceDocumentsDeclarePages,
   sourceDocumentsDeclareShortLinkLifecycle,
   sourceDocumentsRequiredProfileKinds,
   sourcePolicyFromDocuments,
-  staleDownstreamVerificationSurfacePaths,
-  staleOutOfPlanVerificationSurfacePaths,
+} from '../../src/mastra/delivery-engine/source-policy.ts';
+import { pagesFunctionsExceptionHygiene } from '../../src/mastra/delivery-engine/planning/pages-policy.ts';
+import { ownedSurfaceHygiene } from '../../src/mastra/delivery-engine/planning/owned-surface-policy.ts';
+import {
+  normalizeTaskPlanRoleBoundaries,
   taskOwnedSurfaceRoleHygiene,
+} from '../../src/mastra/delivery-engine/planning/role-boundary-policy.ts';
+import { normalizeTaskPlanLargeStorageTasks } from '../../src/mastra/delivery-engine/planning/large-task-policy.ts';
+import {
+  configSchemaTaskSplitHygiene,
+  normalizeTaskPlanConfigSchemaTasks,
+} from '../../src/mastra/delivery-engine/planning/config-schema-policy.ts';
+import {
+  normalizeTaskPlanOperatorDocumentation,
+  operatorDocumentationHygiene,
+} from '../../src/mastra/delivery-engine/planning/operator-documentation-policy.ts';
+import {
+  normalizeTaskPlanProfileContractDependencies,
+  profileContractDependencyHygiene,
+} from '../../src/mastra/delivery-engine/planning/profile-contract-policy.ts';
+import {
+  normalizeTaskPlanScaffoldDependencies,
+  projectScaffoldHygiene,
+} from '../../src/mastra/delivery-engine/planning/scaffold-policy.ts';
+import {
+  preserveTaskPlanAcceptanceContracts,
   taskPlanAcceptanceContractRegression,
-  taskBoundarySurfaces,
-  taskSourceBoundarySurfaces,
-  typeScriptDiagnosticsFromRemediation,
-  typeScriptDiagnosticsFromText,
-  unreplacedPreflightStubPaths,
-  verificationWithAcceptanceGaps,
-  workflowEntrypointImportGaps,
-  workflowStepIntegrationGaps,
-  workersAiBindingGaps,
-  workerConfigHygieneGaps,
-  workerEnvBindingAlignmentGaps,
-  workerConfigTaskPacketPolicy,
-  workerConfigTaskPacketPolicyForTask,
-  workerPackageScaffoldGaps,
-  wranglerConfigHasWorkersAiBinding,
-} from '../../src/mastra/delivery-engine/workflow.ts';
+} from '../../src/mastra/delivery-engine/planning/acceptance-contract-preservation.ts';
+import {
+  generatedSliceDependencyHygiene,
+  normalizeTaskPlanGeneratedSliceDependencies,
+} from '../../src/mastra/delivery-engine/planning/generated-slice-policy.ts';
+import { routeBoundaryConsistencyHygiene } from '../../src/mastra/delivery-engine/planning/route-boundary-policy.ts';
+import { normalizeTaskPlanCloudflareWorkerContracts } from '../../src/mastra/delivery-engine/planning/cloudflare-worker-contracts-policy.ts';
+import { releaseGateForInvalidTesterOutput } from '../../src/mastra/delivery-engine/release-gate-policy.ts';
 import { fileOwnership } from '../../src/mastra/delivery-engine/checks.ts';
 import { renderProjectScaffold } from '../../src/mastra/delivery-engine/project-factory/index.ts';
 import { verificationFailureSummaryFromCommandError } from '../../src/mastra/delivery-engine/implementation-retry-policy.ts';

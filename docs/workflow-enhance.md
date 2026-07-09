@@ -467,7 +467,7 @@ Verification:
 
 ### Phase 7: Stage Workflow Modules
 
-Status: in progress.
+Status: complete.
 
 Goal: move native workflow definitions out of the root workflow file.
 
@@ -531,6 +531,8 @@ Verification:
 
 ### Phase 8: Final Workflow Slimming And Audit
 
+Status: complete.
+
 Goal: prove the monolith is gone and expert-readable.
 
 Tasks:
@@ -541,6 +543,15 @@ Tasks:
 - Update `docs/WORKFLOW_CLEANUP_TODO.md` with completed phases.
 - Update README only if public operator behavior changed.
 - Run all local quality gates.
+
+Completed final slimming:
+
+- `workflow.ts` is a one-line compatibility barrel that exports native workflow
+  modules from `workflows/`.
+- Runtime registration, agents, runner, smell audit, and tests import workflow
+  and policy modules directly from their focused homes.
+- `workflow-structure.test.ts` now fails if `workflow.ts` grows back into a
+  workflow or policy implementation file.
 
 Verification:
 

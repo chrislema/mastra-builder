@@ -34,8 +34,8 @@ natural T06 failure.
 
 ## Active Cleanup Queue
 
-The active queue is the ordered phase list in `docs/workflow-enhance.md`.
-Continue there first; keep this file as the compact status and guardrail page.
+The ordered workflow-enhance extraction plan is complete. Keep this file as the
+compact status and guardrail page before future workflow-adjacent work.
 
 Acceptance-contract smell cleanup is active. Read
 `docs/DELIVERY_SMELL_AUDIT.md` before editing acceptance evidence,
@@ -190,6 +190,9 @@ Do not redo these:
   `workflows/planning.workflow.ts`
 - Top-level native delivery workflow composition and workflow barrel exports:
   `workflows/delivery.workflow.ts`, `workflows/index.ts`
+- Historical workflow entrypoint reduced to a one-line compatibility barrel,
+  guarded by `workflow-structure.test.ts`:
+  `src/mastra/delivery-engine/workflow.ts`
 
 ## Cleanup Rules
 
