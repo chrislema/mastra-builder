@@ -78,11 +78,21 @@ If a feature claims to generate working software, Level 1 is not enough.
 
 | Status | Area | Source Requirement | Producer | Artifact | Current Verifier | Gap |
 | --- | --- | --- | --- | --- | --- | --- |
-| P0 | Worker scaffold Vitest matrix | Generated Worker projects must typecheck and test with declared dependencies. | `project-factory/test-runtime-matrix.ts` | `vitest.config.ts` | Structural matrix tests only. | Fresh benchmark typecheck failed with current Vitest types. Need generated-project compile proof. |
-| P0 | Fresh failure classification | Clean generated projects should not be labeled stale workspace contamination. | implementation verification/retry classification | `STALE_WORKSPACE_VERIFICATION` remediation | Resume-oriented tests. | Fresh scaffold-owned `vitest.config.ts` failure was misclassified as stale. |
+| Closed | Worker scaffold Vitest matrix | Generated Worker projects must typecheck and test with declared dependencies. | `project-factory/test-runtime-matrix.ts`, `project-factory/toolchain.ts` | `vitest.config.ts`, generated `package.json` | `project-factory.test.ts` materializes scaffold and runs TypeScript against pinned Vitest/Cloudflare pool types. | Closed in `3d129a7`; per-project `passWithNoTests` removed and Worker test toolchain pinned. |
+| Closed | Fresh failure classification | Clean generated projects should not be labeled stale workspace contamination. | implementation verification/retry classification using recorded scaffold manifest provenance | `SCAFFOLD_BASELINE_VERIFICATION` remediation | `workflow-policy.test.ts` covers fresh scaffold-owned `vitest.config.ts` failure. | Closed in `fc4617e`; scaffold-owned verification failures are not stale and stop as harness scaffold baseline failures. |
 | P1 | Scaffold validation gate | Deterministic scaffold should be safe before T01 builds on it. | `project-factory/validation.ts`, scaffold workflow | scaffold manifest and checks | File/script/binding/runtime-matrix checks. | No generated-project typecheck/test proof before build tasks begin. |
-| P1 | Dependency drift | Generated projects using `latest` must not silently drift under the harness. | `project-factory/package-manifest.ts` | `package.json` | Package-shape tests. | No proof that latest dependency ranges still support generated config. |
+| Closed | Dependency drift | Generated project toolchain versions must not silently drift under the harness. | `project-factory/toolchain.ts`, `project-factory/package-manifest.ts` | generated `package.json` | Exact-version package assertions plus generated `vitest.config.ts` compile proof. | Closed in `3d129a7`; generated packages no longer use `latest`. |
 | P1 | Acceptance-contract sequencing | Source contract tasks should not be blocked by behavior only provable in downstream tests. | acceptance contract/evidence policy | implementation notes and deterministic gates | Mixed structural/behavior checks. | Fresh T01 still reports unverified behavior-like contract criteria; review after scaffold P0. |
+
+## Completed Checkpoints
+
+- `e65e40b`: Added this traceability doctrine and wired it into
+  `AGENTS.md` / `docs/OPERATING_DOCTRINE.md`.
+- `3d129a7`: Removed invalid generated Vitest project options, pinned the Worker
+  test toolchain, and added a generated-config TypeScript compile proof.
+- `fc4617e`: Classified fresh scaffold-owned verification failures as
+  `SCAFFOLD_BASELINE_VERIFICATION` using the recorded scaffold manifest instead
+  of calling them stale workspace contamination.
 
 ## Ordered Repo-Wide Pass
 
@@ -144,8 +154,10 @@ If a feature claims to generate working software, Level 1 is not enough.
 
 Do not run another paid benchmark delivery pass until:
 
-- The generated `vitest.config.ts` scaffold typechecks against current generated
-  project dependency types, or dependencies are pinned and validated.
-- A focused regression test proves fresh scaffold-owned verification failures
-  are not classified as stale workspace contamination.
-- The new proof is committed and pushed.
+- Phase 1 P1 is addressed: either the scaffold workflow gains a cheap
+  generated-project command/type proof before T01, or this document records a
+  conscious reason the harness-level materialized scaffold proof is sufficient.
+- Phase 3 P1 acceptance-contract sequencing is reviewed so behavior-only source
+  requirements do not block early implementation tasks that cannot yet prove
+  runtime behavior.
+- The new proof or decision is committed and pushed.
