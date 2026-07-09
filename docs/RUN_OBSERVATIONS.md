@@ -690,3 +690,26 @@ For each run, record:
 - Stop decision: do not run another paid benchmark pass until the renamed
   evidence-task preservation gap is fixed with deterministic tests and this run
   result is committed and pushed.
+
+### 2026-07-08 23:01 CDT - CLI Fresh Benchmark Rerun Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: clean slate requested; preserve only `vision.md` and remove
+  all generated project files, dependencies, git metadata, and `.delivery`
+  artifacts before starting.
+- Forward-progress question: after `bac3699` fixed deterministic preservation
+  for renamed evidence/test tasks, can the Delivery Engine start from only
+  `vision.md`, pass planning, scaffold, architect review, and the
+  architect-bounce task-plan gates, then progress into implementation/build
+  beyond the previous pre-implementation stop?
+- Cheap/static verification already tried before this run:
+  - `npm test -- test/delivery-engine/workflow-policy.test.ts
+    test/delivery-engine/operator-docs.test.ts` passed with 410 tests,
+    including the renamed-evidence-task preservation regression.
+  - `npm run typecheck` passed.
+  - `git diff --check` passed.
+- Guardrail: this is a paid full run. Watch progress from CLI output and
+  `.delivery` artifacts. If it stalls, read the latest run report, classify the
+  failure first, and avoid patching forward with brittle text/string matching.
