@@ -27,6 +27,10 @@ export {
   packageScriptsForLanguage,
   renderPackageJson,
 } from './package-manifest';
+export {
+  workerToolchainDevDependencies,
+  workerToolchainVersions,
+} from './toolchain';
 export type {
   GeneratedScaffoldFile,
   NormalizedProjectFactoryInput,

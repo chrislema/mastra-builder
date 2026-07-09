@@ -1309,7 +1309,7 @@ export function workerPackageScaffoldGaps(repoPath: string, task?: Task, guards:
   if (!wranglerVersion) {
     gaps.push('package.json: devDependencies.wrangler is missing; new Worker scaffolds need Wrangler installed locally.');
   } else if (!dependencyRangeAllowsWranglerV4(wranglerVersion)) {
-    gaps.push(`package.json: devDependencies.wrangler is "${wranglerVersion}", but new Worker scaffolds should use "latest" or a v4+ range.`);
+    gaps.push(`package.json: devDependencies.wrangler is "${wranglerVersion}", but new Worker scaffolds should use pinned/current Wrangler v4+ tooling.`);
   }
 
   if (usesTypeScript) {

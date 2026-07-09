@@ -1,4 +1,5 @@
 import type { ProjectLanguage } from './schemas';
+import { workerToolchainDevDependencies } from './toolchain';
 
 export function packageScriptsForLanguage(language: ProjectLanguage) {
   const scripts: Record<string, string> = {
@@ -22,18 +23,6 @@ export function packageScriptsForLanguage(language: ProjectLanguage) {
 }
 
 export function renderPackageJson(projectName: string, language: ProjectLanguage) {
-  const devDependencies: Record<string, string> = {
-    '@cloudflare/vitest-pool-workers': 'latest',
-    jsdom: 'latest',
-    vitest: 'latest',
-    wrangler: 'latest',
-  };
-
-  if (language === 'typescript') {
-    devDependencies['@types/node'] = 'latest';
-    devDependencies.typescript = 'latest';
-  }
-
   return `${JSON.stringify(
     {
       name: projectName,
@@ -41,7 +30,7 @@ export function renderPackageJson(projectName: string, language: ProjectLanguage
       private: true,
       type: 'module',
       scripts: packageScriptsForLanguage(language),
-      devDependencies,
+      devDependencies: workerToolchainDevDependencies(language),
     },
     null,
     2,

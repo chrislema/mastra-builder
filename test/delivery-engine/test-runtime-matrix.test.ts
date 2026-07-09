@@ -47,6 +47,10 @@ test('generated Vitest config uses Cloudflare worker plugin only for worker test
   assert.match(vitestConfig, /include: \["test\/api-routes\.test\.ts"/);
   assert.match(vitestConfig, /name: 'frontend'/);
   assert.match(vitestConfig, /environment: 'jsdom'/);
+  assert.match(vitestConfig, /passWithNoTests: true/);
+  assert.doesNotMatch(vitestConfig, /name: 'node'[\s\S]*?passWithNoTests: true/);
+  assert.doesNotMatch(vitestConfig, /name: 'worker'[\s\S]*?passWithNoTests: true/);
+  assert.doesNotMatch(vitestConfig, /name: 'frontend'[\s\S]*?passWithNoTests: true/);
   assert.doesNotMatch(vitestConfig, /test\/\*\*\/\*\.test\.ts/);
   assert.doesNotMatch(vitestConfig, /@cloudflare\/vitest-pool-workers\/config/);
 });

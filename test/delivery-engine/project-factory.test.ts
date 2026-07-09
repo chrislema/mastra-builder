@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,6 +9,7 @@ import {
   renderProjectScaffold,
   selectProjectProfiles,
   validateMaterializedScaffold,
+  workerToolchainVersions,
 } from '../../src/mastra/delivery-engine/project-factory/index.ts';
 
 function fileContent(scaffold: ReturnType<typeof renderProjectScaffold>, path: string) {
@@ -66,6 +68,10 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
   assert.equal(packageJson.scripts.dev, 'wrangler dev --env staging');
   assert.equal(packageJson.scripts.deploy, 'wrangler deploy --env production');
   assert.equal(packageJson.scripts.typecheck, 'npm run generate-types && tsc --noEmit');
+  assert.equal(packageJson.devDependencies['@cloudflare/vitest-pool-workers'], workerToolchainVersions.cloudflareVitestPoolWorkers);
+  assert.equal(packageJson.devDependencies.vitest, workerToolchainVersions.vitest);
+  assert.equal(packageJson.devDependencies.wrangler, workerToolchainVersions.wrangler);
+  assert.equal(packageJson.devDependencies.typescript, workerToolchainVersions.typescript);
   assert.equal(packageJson.devDependencies.react, undefined);
   assert.equal(packageJson.devDependencies.vite, undefined);
 
@@ -162,6 +168,51 @@ test('project factory validates materialized scaffold against the manifest', () 
   rmSync(join(projectFolder, 'test/contracts.test.ts'));
   const driftChecks = validateMaterializedScaffold(projectFolder, scaffold.manifest);
   assert.equal(driftChecks.find((check) => check.check === 'scaffold_generated_files_present')?.passed, false);
+});
+
+test('generated Vitest config typechecks against the pinned Worker test toolchain', () => {
+  const projectFolder = mkdtempSync(join(tmpdir(), 'project-factory-vitest-typecheck-'));
+  const scaffold = renderProjectScaffold({ projectName: 'Vitest Compile Worker' });
+  materializeProjectScaffold(projectFolder, scaffold);
+  symlinkSync(join(process.cwd(), 'node_modules'), join(projectFolder, 'node_modules'), 'dir');
+  writeFileSync(
+    join(projectFolder, 'tsconfig.vitest.json'),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ES2022',
+          moduleResolution: 'Bundler',
+          strict: true,
+          skipLibCheck: true,
+          types: ['node'],
+          noEmit: true,
+        },
+        include: ['vitest.config.ts'],
+      },
+      null,
+      2,
+    ),
+  );
+
+  try {
+    execFileSync(process.execPath, [join(process.cwd(), 'node_modules/typescript/bin/tsc'), '--project', 'tsconfig.vitest.json'], {
+      cwd: projectFolder,
+      stdio: 'pipe',
+    });
+  } catch (error) {
+    const commandError = error as { message?: string; stdout?: Buffer; stderr?: Buffer };
+    assert.fail(
+      [
+        'Generated vitest.config.ts must compile against the pinned Worker test toolchain.',
+        commandError.message,
+        commandError.stdout?.toString(),
+        commandError.stderr?.toString(),
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
 });
 
 test('project factory composes workflow and admin profiles without moving away from Workers', () => {
