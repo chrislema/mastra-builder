@@ -38,6 +38,7 @@ export const projectFactorySourcePolicySchema = z.object({
   latestTranscriptRequired: z.boolean().default(false),
   shortLinkLifecycleRequired: z.boolean().default(false),
   externalServiceBindings: z.array(z.string()).default([]),
+  customDomains: z.array(z.string()).default([]),
 });
 
 export const projectFactoryInputSchema = z.object({
@@ -52,6 +53,7 @@ export const projectFactoryInputSchema = z.object({
     latestTranscriptRequired: false,
     shortLinkLifecycleRequired: false,
     externalServiceBindings: [],
+    customDomains: [],
   }),
 });
 

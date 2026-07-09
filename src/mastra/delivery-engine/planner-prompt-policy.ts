@@ -1,5 +1,5 @@
 import type { AggregatedJudgment, DeterministicGateResult } from './judgment';
-import { externalServiceAdapterPolicyLine, type SourceDocument } from './source-policy';
+import { customDomainPolicyLine, externalServiceAdapterPolicyLine, type SourceDocument } from './source-policy';
 import type { ReviewReport, SourcePolicy, TaskPlan } from './workflow-schemas';
 
 export type PlannerRepoScaffoldState = {
@@ -72,6 +72,7 @@ Open-decision hygiene:
 - If an unknown can be resolved by a safe default, put it in readout.safe_assumptions, not taskPlan.open_decisions.
 - If an unknown is a non-blocking delivery concern, put it in taskPlan.risks.
 ${externalServiceAdapterPolicyLine(sourcePolicy)}
+${customDomainPolicyLine(sourcePolicy)}
 ${initialSpecContextLine(hasSpecPath)}
 - Every open_decisions entry must be one string with this exact field shape:
   "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
@@ -123,6 +124,7 @@ Task-plan quality requirements:
 - Do not plan functions/** owned surfaces unless vision.md/spec.md declaratively require Cloudflare Pages or Pages Functions.
 - Keep taskPlan.open_decisions limited to genuine blockers only. Non-blocking unknowns belong in risks.
 ${externalServiceAdapterPolicyLine(sourcePolicy)}
+${customDomainPolicyLine(sourcePolicy)}
 - Every taskPlan.open_decisions entry must use this exact field shape:
 "Topic: ... | Why it matters: ... | Options considered: ... | Follow-up impact: ..."
 - The "Why it matters" or "Follow-up impact" field must name what task or implementation work is blocked.

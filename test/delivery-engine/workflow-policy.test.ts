@@ -108,6 +108,7 @@ import {
   shouldSuspendForPlannerQuestions,
 } from '../../src/mastra/delivery-engine/planning/readout-policy.ts';
 import {
+  sourceDocumentsDeclareCustomDomains,
   sourceDocumentsDeclareExternalServiceBindings,
   sourceDocumentsDeclareLatestTranscriptContract,
   sourceDocumentsDeclarePages,
@@ -496,7 +497,15 @@ test('source docs declare product-specific profile and transcript policies', () 
     latestTranscriptRequired: true,
     shortLinkLifecycleRequired: false,
     externalServiceBindings: ['BOOKMARKS'],
+    customDomains: [],
   });
+
+  const customDomainDocs = [
+    { path: 'vision.md', content: 'Deploy the production Worker on the custom domain app.example.com.' },
+    { path: 'spec.md', content: 'Do not use custom domains for staging.' },
+  ];
+  assert.deepEqual(sourceDocumentsDeclareCustomDomains(customDomainDocs), ['app.example.com']);
+  assert.deepEqual(sourcePolicyFromDocuments(customDomainDocs).customDomains, ['app.example.com']);
 
   const shortLinkDocs = [
     { path: 'vision.md', content: 'Build a Cloudflare Worker URL shortener for customer short links.' },
@@ -536,6 +545,7 @@ test('source policy can be declared through delivery.intent.json beside vision',
         latestTranscriptRequired: false,
         requiredProfileKinds: ['audience_segments'],
         externalServiceBindings: ['analytics'],
+        customDomains: ['App.Example.com'],
       },
       null,
       2,
@@ -548,6 +558,7 @@ test('source policy can be declared through delivery.intent.json beside vision',
     latestTranscriptRequired: false,
     shortLinkLifecycleRequired: true,
     externalServiceBindings: ['ANALYTICS'],
+    customDomains: ['app.example.com'],
   });
 });
 

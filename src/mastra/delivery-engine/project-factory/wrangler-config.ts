@@ -49,12 +49,14 @@ export function wranglerConfigObject({
   compatibilityDate,
   profiles,
   externalServiceBindings = [],
+  customDomains = [],
 }: {
   projectName: string;
   main: string;
   compatibilityDate: string;
   profiles: ProjectProfile[];
   externalServiceBindings?: string[];
+  customDomains?: string[];
 }) {
   const config: JsonObject = {
     $schema: './node_modules/wrangler/config-schema.json',
@@ -99,9 +101,20 @@ export function wranglerConfigObject({
     }));
   }
 
+  const env = environmentMirror(config);
+  const productionRoutes = Array.from(new Set(customDomains.map((domain) => domain.trim().toLowerCase()).filter(Boolean))).map(
+    (domain) => ({
+      pattern: domain,
+      custom_domain: true,
+    }),
+  );
+  if (productionRoutes.length > 0) {
+    env.production = { ...env.production, routes: productionRoutes };
+  }
+
   return {
     ...config,
-    env: environmentMirror(config),
+    env,
   };
 }
 
@@ -111,6 +124,7 @@ export function renderWranglerConfig(input: {
   compatibilityDate: string;
   profiles: ProjectProfile[];
   externalServiceBindings?: string[];
+  customDomains?: string[];
 }) {
   return `${JSON.stringify(wranglerConfigObject(input), null, 2)}\n`;
 }

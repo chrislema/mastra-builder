@@ -10,6 +10,7 @@ const sourceFeatureIntentSchema = z.enum([
   'latest-transcript',
   'short-link-lifecycle',
   'external-service-bindings',
+  'custom-domains',
   'pages',
 ]);
 
@@ -21,6 +22,7 @@ export const sourcePolicyIntentSchema = z
     latestTranscriptRequired: z.boolean().optional(),
     shortLinkLifecycleRequired: z.boolean().optional(),
     externalServiceBindings: z.array(z.string().min(1)).optional(),
+    customDomains: z.array(z.string().min(1)).optional(),
   })
   .passthrough();
 
@@ -122,12 +124,43 @@ export function sourceDocumentsDeclareShortLinkLifecycle(sourceDocuments: Source
   return /\b(?:short[-\s]?links?|url\s+shorteners?|link\s+shorteners?|shortened\s+urls?)\b/i.test(positiveText);
 }
 
+function sourceLineNegatesCustomDomain(line: string) {
+  return /\b(?:no|not|never|avoid|without|forbid|forbidden|ban|banned|do\s+not|don't)\b.{0,100}\b(?:custom\s+domains?|domain\s+routes?)\b/i.test(
+    line,
+  );
+}
+
+function normalizeCustomDomain(domain: string) {
+  return domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.$/, '');
+}
+
+export function sourceDocumentsDeclareCustomDomains(sourceDocuments: SourceDocument[]) {
+  const domains = new Set<string>();
+  const hostnamePattern = /\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62})\b/gi;
+
+  for (const line of sourceDocuments.flatMap((document) => document.content.split(/\r?\n/))) {
+    if (sourceLineNegatesCustomDomain(line)) continue;
+    if (!/\b(?:custom\s+domains?|domain\s+route|production\s+domain|deploy(?:ment)?\s+domain)\b/i.test(line)) continue;
+
+    for (const match of line.matchAll(hostnamePattern)) {
+      const domain = normalizeCustomDomain(match[1]);
+      if (domain && !domain.endsWith('.workers.dev')) domains.add(domain);
+    }
+  }
+
+  return [...domains].sort();
+}
+
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function normalizeBindingName(binding: string) {
   return binding.trim().toUpperCase();
+}
+
+function normalizeDomainName(domain: string) {
+  return normalizeCustomDomain(domain);
 }
 
 export function sourcePolicyFromDocuments(sourceDocuments: SourceDocument[], intentInput?: unknown): SourcePolicy {
@@ -149,6 +182,10 @@ export function sourcePolicyFromDocuments(sourceDocuments: SourceDocument[], int
       ...sourceDocumentsDeclareExternalServiceBindings(sourceDocuments),
       ...(intent?.externalServiceBindings ?? []).map(normalizeBindingName),
     ]).sort(),
+    customDomains: uniqueStrings([
+      ...sourceDocumentsDeclareCustomDomains(sourceDocuments),
+      ...(intent?.customDomains ?? []).map(normalizeDomainName),
+    ]).sort(),
   };
 }
 
@@ -156,6 +193,13 @@ export function externalServiceAdapterPolicyLine(sourcePolicy: SourcePolicy) {
   const bindings = sourcePolicy.externalServiceBindings.map((binding) => `env.${binding}`);
   return bindings.length
     ? `\n- Source docs declare external Worker service binding(s): ${bindings.join(', ')}. Unknown service API shapes are not human blockers. Create a small typed adapter boundary around each source-declared binding, use the safest minimal fetch/RPC assumption from the source docs, and record unresolved contract details as risks instead of blocking unrelated tasks.`
+    : '';
+}
+
+export function customDomainPolicyLine(sourcePolicy: SourcePolicy) {
+  const customDomains = sourcePolicy.customDomains ?? [];
+  return customDomains.length
+    ? `\n- Source docs declare production custom domain route(s): ${customDomains.join(', ')}. Keep local validation on Wrangler staging, configure production custom-domain routing in wrangler.jsonc, and leave actual production activation behind the human-approved Wrangler deploy step.`
     : '';
 }
 

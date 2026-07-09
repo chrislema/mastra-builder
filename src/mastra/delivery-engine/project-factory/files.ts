@@ -399,7 +399,18 @@ export function renderProjectScaffold(input: unknown): ProjectScaffold {
   const externalServiceBindings = normalized.sourcePolicy.externalServiceBindings;
   const files: GeneratedScaffoldFile[] = [
     scaffoldFile('package.json', renderPackageJson(projectName, language), 'metadata'),
-    scaffoldFile('wrangler.jsonc', renderWranglerConfig({ projectName, main, compatibilityDate: normalized.compatibilityDate, profiles, externalServiceBindings }), 'config'),
+    scaffoldFile(
+      'wrangler.jsonc',
+      renderWranglerConfig({
+        projectName,
+        main,
+        compatibilityDate: normalized.compatibilityDate,
+        profiles,
+        externalServiceBindings,
+        customDomains: normalized.sourcePolicy.customDomains,
+      }),
+      'config',
+    ),
     scaffoldFile('.gitignore', renderGitignore(), 'metadata'),
     scaffoldFile('.dev.vars.example', renderDevVarsExample(profiles), 'metadata'),
     scaffoldFile('vitest.config.ts', renderVitestConfig(language), 'config'),

@@ -37,6 +37,7 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
       requiredProfileKinds: ['audience_segments', 'voice_profile'],
       latestTranscriptRequired: true,
       externalServiceBindings: ['BOOKMARKS'],
+      customDomains: ['app.example.com'],
     },
   });
 
@@ -87,7 +88,7 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
     services: Array<{ binding: string }>;
     env: {
       staging: Record<string, unknown>;
-      production: Record<string, unknown>;
+      production: Record<string, unknown> & { routes?: Array<{ pattern: string; custom_domain: boolean }> };
     };
   };
   assert.equal(wrangler.compatibility_date, currentWorkerCompatibilityDate());
@@ -99,6 +100,8 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
   assert.equal(wrangler.services[0]?.binding, 'BOOKMARKS');
   assert.deepEqual(wrangler.env.staging.ai, wrangler.ai);
   assert.deepEqual(wrangler.env.production.d1_databases, wrangler.d1_databases);
+  assert.equal(wrangler.env.staging.routes, undefined);
+  assert.deepEqual(wrangler.env.production.routes, [{ pattern: 'app.example.com', custom_domain: true }]);
 
   const tsconfig = JSON.parse(fileContent(scaffold, 'tsconfig.json')) as {
     compilerOptions: { module: string; lib: string[] };

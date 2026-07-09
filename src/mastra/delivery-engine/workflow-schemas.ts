@@ -177,6 +177,7 @@ export const sourcePolicySchema = z.object({
   latestTranscriptRequired: z.boolean().default(false),
   shortLinkLifecycleRequired: z.boolean().default(false),
   externalServiceBindings: z.array(z.string()).default([]),
+  customDomains: z.array(z.string()).optional(),
 });
 
 export const plannerCacheSchema = z.object({
