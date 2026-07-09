@@ -10,6 +10,11 @@ After loading the `mastra` skill, read `docs/OPERATING_DOCTRINE.md` before makin
 
 For repo-wide review, correctness claims, benchmark failures, scaffold changes, or any request to make sure the system is "right" or "not guessing", also read `docs/TRACEABILITY_ASSESSMENT.md`. Use it to map source requirement -> producer -> generated artifact -> verifier -> observed evidence before proposing another paid delivery run.
 
+If context was compacted, treat the first open row and current stop condition in
+`docs/TRACEABILITY_ASSESSMENT.md` as the live task cursor. Do not restart from
+chat memory, chase the most recent symptom, or run a paid delivery pass until
+the traceability stop condition says it is allowed.
+
 For workflow cleanup or delivery-run iteration, also read `docs/WORKFLOW_CLEANUP_TODO.md` before editing. For work that changes `src/mastra/delivery-engine/workflow.ts`, read `docs/workflow-enhance.md` as the active ordered plan.
 
 ## Rules

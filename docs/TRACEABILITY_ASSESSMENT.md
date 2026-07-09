@@ -25,6 +25,38 @@ cheap deterministic tests before any paid delivery rerun. Keep this process
 durable across context compaction by updating this file at each natural
 checkpoint.
 
+This is the active repo-wide loop until explicitly replaced:
+
+1. Start from the first open row in the Active Traceability Matrix.
+2. Decompose that row into concrete claims the harness makes.
+3. For each claim, map source requirement -> producer -> generated artifact ->
+   verifier -> observed evidence.
+4. If evidence is lower than the claim requires, add the smallest deterministic
+   proof or record an explicit decision that the claim is out of scope.
+5. Update this file with the proof or decision, then commit and push.
+
+The current cursor is Phase 5: Cloudflare runtime proof. The next loop should
+close the remaining Cloudflare subclaims without a paid delivery rerun:
+Workers AI, Static Assets, Wrangler env mirrors, D1, KV, R2, Durable Object and
+Workflow decisions, Pages exceptions, generated scripts, local probes, and
+release-gate evidence.
+
+## Traceability Assessment Trigger
+
+When Chris asks for the repo to be reviewed "like a traceability assessment,"
+"no more guessing," "make sure everything is right and intelligent," "would an
+expert be impressed," or any similar wording, do not answer with confidence
+alone. Run this assessment loop and report evidence level by evidence level.
+
+The exact operating sentence is:
+
+> Run a traceability assessment. For every important claim this harness makes,
+> map source requirement to harness producer, generated artifact, verifier, and
+> observed evidence. Do not accept structural checks as proof of executable
+> correctness. Use current installed dependency schemas and types where
+> available. Fix missing proof with cheap deterministic tests before any paid
+> model run.
+
 ## Compaction Re-Entry Checklist
 
 When context has been compressed, resume from here before touching code:

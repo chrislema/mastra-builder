@@ -64,6 +64,24 @@ The current traceability stop condition blocks another paid benchmark run until
 fresh scaffold typecheck and fresh-scaffold failure classification are fixed and
 committed.
 
+## No-Guessing Assessment Rule
+
+Chris should not need special prompt words to get a rigorous review. Whenever
+the work asks whether the repo is correct, expert-level, Cloudflare-safe, or
+Mastra-native, run a traceability assessment before making broad changes.
+
+For each claim, name the source requirement, producer, generated artifact,
+verifier, and observed evidence. If the verifier is missing, weak, stale, or
+only structural, write the cheapest deterministic proof first. If current
+dependency types or schemas can answer the question, inspect those instead of
+guessing from memory.
+
+Do not repair generated-project failures by adding prompt pressure, text-string
+exceptions, or workflow special cases when a typed module, schema, fixture,
+generated-project command, or local runtime probe would prove the real
+invariant. The right loop is: trace the claim, prove the gap, make the smallest
+structural fix, verify it, record it, then commit and push.
+
 ## Run Journal Rule
 
 Every CLI or Studio delivery run must be recorded in
