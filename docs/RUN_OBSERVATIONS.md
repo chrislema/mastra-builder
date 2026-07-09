@@ -250,6 +250,7 @@ For each run, record:
     are separate from the stale-file resume blocker.
 - Guardrail: if this run stalls, classify the failure from the report first.
   Do not add broad string matching in `workflow.ts`.
+
 - Workflow run ID: `6c40fcd1-e676-45c5-ba79-c1a535685d27`
 - Delivery run ID: `run-mrcdeqju-f58f244e`
 - Resource ID: `delivery:9ec42a6ede484450`
@@ -532,3 +533,84 @@ For each run, record:
     --assume-tests` reported `Total smells: 0` on the active benchmark plan.
 - Guardrail: if this run stalls, classify the failure from the report first.
   Do not add broad string matching in `workflow.ts`.
+
+### 2026-07-08 19:34 CDT - CLI Fresh Benchmark Run Started
+
+- Project folder: `/Users/chrislema/mastra/projects/benchmark`
+- Command:
+  `npm run delivery:run -- --projectFolder /Users/chrislema/mastra/projects/benchmark --deploy local`
+- Folder handling: clean slate requested; remove every generated file,
+  dependency directory, git ignore, and `.delivery` artifact except
+  `vision.md` before starting.
+- Forward-progress question: after the workflow module extraction and final
+  `workflow.ts` barrel cleanup, can the Delivery Engine start from only
+  `vision.md`, create a fresh Worker-first project, and reach the local-test /
+  human-in-the-loop deployment handoff?
+- Cheap/static verification already tried before this run:
+  - `npm run typecheck` passed.
+  - `npm test` passed with 393 tests.
+  - `npm run eval:delivery:gate` passed.
+  - `npm run eval:cloudflare:gate` passed.
+  - `npm run build` passed with network access.
+- Guardrail: this is a paid full run. Watch progress from CLI output and
+  `.delivery` artifacts. If it stalls, classify the report first and avoid
+  patching forward with brittle text/string matching.
+- Workflow run ID: `45d2f39e-2578-45d6-99e3-057567be7136`
+- Delivery run ID: `run-mrcs3wgp-2ef8ad82`
+- Resource ID: `delivery:9ec42a6ede484450`
+- Report path:
+  `/Users/chrislema/mastra/projects/benchmark/.delivery/runs/45d2f39e-2578-45d6-99e3-057567be7136.json`
+- Result: workflow status `success`, delivery status `stuck`.
+- Progress:
+  - Fresh folder was cleared to only `vision.md` before the run.
+  - Planner completed and deterministic plan gate passed.
+  - Task-plan judge passed at `0.762`.
+  - Deterministic scaffold generated a Worker TypeScript + Workers AI project,
+    including `wrangler.jsonc`, Static Assets, `AI` binding, vanilla public UI,
+    and tests.
+  - Architect review completed and judge passed at `0.792`.
+  - Planner bounce produced `task-plan.revision-1.json`; task-plan revision
+    judge passed at `1.0`.
+  - Build emitted 18 typed task packets and began `T01`.
+  - `T01` wrote `src/contracts.ts`, installed dependencies successfully, then
+    started `npm run typecheck`.
+- Farthest verified stage/task: build `T01` attempt 1 reached generated-project
+  verification after successful dependency install and source write.
+- Concrete blocker:
+  - `npm run typecheck` failed in scaffold-owned `vitest.config.ts`:
+    `TS2769: No overload matches this call` at lines 13, 28, and 36, all
+    `passWithNoTests: true` entries inside per-project `test` configs.
+  - The harness then classified the failure as
+    `STALE_WORKSPACE_VERIFICATION` because `vitest.config.ts` was outside
+    `T01`'s owned surfaces.
+  - Because this was a clean slate, that classification is wrong: this is not
+    stale preserved workspace contamination. It is an invalid deterministic
+    scaffold baseline or scaffold verification gap.
+- Additional deterministic blocker:
+  - T01 also had unverified acceptance contracts around validation helpers,
+    shared client-safe error shape, provider failure normalization, and
+    frontend single-model request expectations. Those may be legitimate
+    contract/evidence sequencing questions, but the first hard blocker is the
+    scaffold-generated Vitest config type failure.
+- Failure class: harness bug / scaffold baseline bug, with a secondary
+  misclassification bug in stale-workspace verification for fresh projects.
+- Current hypothesis:
+  - The project factory renders a Vitest project matrix that compiles under
+    runtime expectations but not current Vitest TypeScript types.
+  - Deterministic scaffold validation checks file presence/script shape/runtime
+    matrix, but it does not run or typecheck the scaffold before allowing T01.
+  - When a fresh scaffold-owned file breaks repo-wide verification during a
+    later task, the repair classifier treats it as stale instead of routing it
+    to scaffold/config ownership.
+- Cheap/static verification to run before another paid delivery pass:
+  - Add or update a project-factory regression test that renders the scaffold
+    Vitest config and typechecks or structurally validates the current accepted
+    Vitest project shape.
+  - Add a stale-workspace classification regression proving fresh
+    scaffold-owned verification failures are reported as scaffold baseline
+    failures, not preserved-workspace stale contamination.
+  - Run focused project-factory/workflow-policy tests, `npm run typecheck`,
+    `npm test`, and build before another full run.
+- Stop decision: do not run another paid benchmark pass until the scaffold
+  Vitest config and fresh-scaffold verification classification are fixed with
+  cheap tests.
