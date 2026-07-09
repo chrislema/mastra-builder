@@ -376,3 +376,85 @@ export function withValidationBehaviorTestTasks(tasks: Task[]) {
 
   return { tasks: next, changed };
 }
+
+function taskOwnsModelCatalogSurface(task: Task) {
+  return taskOwnsPathMatching(task, /^src\/(?:models|modelCatalog|catalog)\.[cm]?[jt]s$/i);
+}
+
+function taskLooksLikeModelCatalogBehaviorTest(task: Task, sourceTaskId: string) {
+  return (
+    task.owner === 'engineer' &&
+    task.depends_on.includes(sourceTaskId) &&
+    taskOwnedBoundaryPaths(task).some((path) => /^test\/.*(?:model|catalog).*\.test\.[cm]?[jt]s$/i.test(path)) &&
+    /\b(?:model catalog|public catalog|unknown model|configured state|secretKey|baseUrl)\b/i.test(
+      [task.deliverable, ...task.acceptance_criteria, ...task.owned_surfaces].join('\n'),
+    )
+  );
+}
+
+function modelCatalogBehaviorTestTask(sourceTask: Task, testId: string, criteria: string[]): Task {
+  const extension = taskTestSurfaceExtension(sourceTask);
+  const testSurface = `test/model-catalog.test.${extension}`;
+  return {
+    id: testId,
+    owner: 'engineer',
+    deliverable:
+      'Add model catalog behavior tests that prove public catalog projection, configured-state helpers, and unknown-model lookup behavior without exposing provider secrets.',
+    depends_on: [sourceTask.id],
+    acceptance_criteria: Array.from(
+      new Set([
+        `${testSurface} imports the model catalog helpers directly and uses fake Env bindings with no provider API calls.`,
+        `${testSurface} proves public catalog records expose only id, label, vendor, provider, and configured while excluding secretKey, model, and baseUrl.`,
+        `${testSurface} proves unknown model lookup and unconfigured keyed model behavior returns client-safe errors without exposing secrets.`,
+        'npm test passes and includes model catalog behavior coverage.',
+      ]),
+    ),
+    source_acceptance_criteria: Array.from(new Set(criteria)),
+    owned_surfaces: [testSurface],
+  };
+}
+
+export function withModelCatalogBehaviorTestTasks(tasks: Task[]) {
+  let changed = false;
+  let next = [...tasks];
+
+  for (const sourceTask of tasks) {
+    if (!taskOwnsModelCatalogSurface(sourceTask)) continue;
+    const evidenceCriteria = Array.from(
+      new Set(
+        [...sourceTask.acceptance_criteria, ...(sourceTask.source_acceptance_criteria ?? [])].filter(
+          isBehaviorLikeAcceptanceCriterion,
+        ),
+      ),
+    );
+    if (!evidenceCriteria.length) continue;
+
+    const existingTestTask = next.find((task) => taskLooksLikeModelCatalogBehaviorTest(task, sourceTask.id));
+    const testId = existingTestTask?.id ?? uniqueTaskIdFromTasks(next, `${sourceTask.id}-model-catalog-behavior-tests`);
+
+    if (!existingTestTask) {
+      const sourceIndex = next.findIndex((task) => task.id === sourceTask.id);
+      const insertionIndex = sourceIndex < 0 ? next.length : sourceIndex + 1;
+      next = [
+        ...next.slice(0, insertionIndex),
+        modelCatalogBehaviorTestTask(sourceTask, testId, evidenceCriteria),
+        ...next.slice(insertionIndex),
+      ];
+      changed = true;
+    }
+
+    next = next.map((task) => {
+      if (task.id === testId) {
+        const updated = appendTaskSourceAcceptanceCriteria(task, evidenceCriteria);
+        if (updated !== task) changed = true;
+        return updated;
+      }
+      if (task.id === testId || !task.depends_on.includes(sourceTask.id) || task.depends_on.includes(testId)) return task;
+      if (!taskCanDependOnTaskList(next, task.id, testId)) return task;
+      changed = true;
+      return appendDependencies(task, [testId]);
+    });
+  }
+
+  return { tasks: next, changed };
+}

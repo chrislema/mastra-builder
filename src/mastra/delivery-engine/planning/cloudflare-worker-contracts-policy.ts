@@ -46,6 +46,7 @@ import {
 import {
   withApiRouteBehaviorTestTasks,
   withFrontendBehaviorTestTasks,
+  withModelCatalogBehaviorTestTasks,
   withProviderAdapterBehaviorTestTasks,
   withValidationBehaviorTestTasks,
 } from './behavior-evidence-task-policy';
@@ -426,6 +427,12 @@ export function normalizeTaskPlanCloudflareWorkerContracts(taskPlan: TaskPlan, s
   if (withValidationBehaviorTests.changed) {
     changed = true;
     tasks = withValidationBehaviorTests.tasks;
+  }
+
+  const withModelCatalogBehaviorTests = withModelCatalogBehaviorTestTasks(tasks);
+  if (withModelCatalogBehaviorTests.changed) {
+    changed = true;
+    tasks = withModelCatalogBehaviorTests.tasks;
   }
 
   const withDependencies = withCloudflareWorkerDependencyContracts(tasks);

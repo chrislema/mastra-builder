@@ -103,3 +103,45 @@ test('task verification criteria stay backward-compatible when no plan context i
 
   assert.deepEqual(taskVerificationAcceptanceContractCriteria(sourceTask), [structuralModelFields, validationBehavior]);
 });
+
+test('model catalog helper behavior is routed to a catalog evidence task', () => {
+  const publicCatalogBehavior =
+    'A helper returns public catalog records with id, label, vendor, provider, and configured, excluding secretKey, model, and baseUrl from API output.';
+  const unknownModelBehavior = 'A model lookup helper rejects unknown model IDs without exposing secrets.';
+  const structuralCatalog =
+    'Catalog includes multiple keyless Workers AI models using provider "workers-ai" and no secretKey.';
+  const normalized = normalizeTaskPlanCloudflareWorkerContracts(
+    taskPlan([
+      {
+        id: 'T03',
+        owner: 'engineer',
+        deliverable: 'Create the typed launch model catalog and configured-state helpers.',
+        depends_on: ['T01'],
+        acceptance_criteria: [structuralCatalog, publicCatalogBehavior, unknownModelBehavior],
+        owned_surfaces: ['src/models.ts'],
+      },
+      {
+        id: 'T04',
+        owner: 'engineer',
+        deliverable: 'Use model catalog helpers from provider adapters.',
+        depends_on: ['T03'],
+        acceptance_criteria: ['Provider adapters read the model catalog.'],
+        owned_surfaces: ['src/providers.ts'],
+      },
+    ]),
+  );
+  const sourceTask = normalized.tasks.find((task) => task.id === 'T03');
+  const evidenceTask = normalized.tasks.find((task) => task.id === 'T03-model-catalog-behavior-tests');
+  const consumerTask = normalized.tasks.find((task) => task.id === 'T04');
+
+  assert.ok(sourceTask);
+  assert.ok(evidenceTask);
+  assert.ok(consumerTask);
+  assert.deepEqual(taskVerificationAcceptanceContractCriteria(sourceTask, normalized), [structuralCatalog]);
+  assert.deepEqual(taskDeferredAcceptanceContractCriteria(normalized, sourceTask), [
+    publicCatalogBehavior,
+    unknownModelBehavior,
+  ]);
+  assert.match((evidenceTask.source_acceptance_criteria ?? []).join('\n'), /public catalog records/);
+  assert.ok(consumerTask.depends_on.includes('T03-model-catalog-behavior-tests'));
+});

@@ -418,6 +418,12 @@ function packageScriptContractEvidence(context: AcceptanceContractContext) {
   const scriptMatches = Array.from(
     context.criterion.matchAll(/\bscripts\.([A-Za-z0-9:_-]+)\b[\s\S]{0,80}?\bexactly(?:\s+as)?\s+["']([^"']+)["']/gi),
   );
+  if (!scriptMatches.length && /\bWrangler-based scripts\b|\bscripts?\b/i.test(context.criterion)) {
+    const scriptNames = new Set(['dev', 'deploy', 'generate-types', 'typecheck', 'test', 'check']);
+    for (const match of context.criterion.matchAll(/\b([A-Za-z0-9:_-]+)\s+as\s+["']([^"']+)["']/gi)) {
+      if (scriptNames.has(match[1])) scriptMatches.push(match);
+    }
+  }
   if (!scriptMatches.length) return undefined;
 
   const gaps: string[] = [];
@@ -693,6 +699,51 @@ function workerConfigEnvironmentContractEvidence(context: AcceptanceContractCont
         '/',
       )} environments with ${requiredBindings.map((binding) => `${binding.kind}:${binding.name}`).join(', ')}`,
     ],
+    gaps: [],
+  };
+}
+
+function workerConfigEntrypointCompatibilityDateContractEvidence(context: AcceptanceContractContext) {
+  const target = ensureTaskRepo(context);
+  if (!target || !taskOwns(context, 'wrangler.jsonc')) return undefined;
+  if (!/\bwrangler\.jsonc\b/i.test(context.criterion)) return undefined;
+  if (!/\bmain\b|\bcompatibility_date\b/i.test(context.criterion)) return undefined;
+
+  const config = wranglerJsonConfig(target.repoPath);
+  if (!config) {
+    return {
+      passed: false,
+      evidence: [],
+      gaps: ['wrangler.jsonc is not valid JSONC, so main and compatibility_date could not be verified.'],
+    };
+  }
+
+  const gaps: string[] = [];
+  const expectedMain = /\bmain\s+["']([^"']+)["']/i.exec(context.criterion)?.[1];
+  const expectedCompatibilityDate = /\bcompatibility_date\s+["'](\d{4}-\d{2}-\d{2})["']/i.exec(context.criterion)?.[1];
+
+  if (expectedMain && config.main !== expectedMain) {
+    gaps.push(
+      `wrangler.jsonc main must be "${expectedMain}"${
+        typeof config.main === 'string' ? `, but found "${config.main}".` : ', but it is missing.'
+      }`,
+    );
+  }
+  if (expectedCompatibilityDate && config.compatibility_date !== expectedCompatibilityDate) {
+    gaps.push(
+      `wrangler.jsonc compatibility_date must be "${expectedCompatibilityDate}"${
+        typeof config.compatibility_date === 'string'
+          ? `, but found "${config.compatibility_date}".`
+          : ', but it is missing.'
+      }`,
+    );
+  }
+
+  if (gaps.length) return { passed: false, evidence: [], gaps };
+
+  return {
+    passed: true,
+    evidence: ['structured wrangler.jsonc evidence verified Worker entrypoint main and compatibility_date'],
     gaps: [],
   };
 }
@@ -1146,6 +1197,14 @@ export const workerScaffoldAcceptanceContracts: AcceptanceContractDefinition[] =
       return /\bwrangler\.jsonc\b/i.test(criterion) && mentionsDeploymentEnvironments;
     },
     evaluate: workerConfigEnvironmentContractEvidence,
+  },
+  {
+    id: 'worker.config.entrypointCompatibilityDate',
+    title: 'Wrangler entrypoint and compatibility date',
+    surfaces: ['wrangler.jsonc'],
+    matches: ({ criterion }) =>
+      /\bwrangler\.jsonc\b/i.test(criterion) && /\bmain\b/i.test(criterion) && /\bcompatibility_date\b/i.test(criterion),
+    evaluate: workerConfigEntrypointCompatibilityDateContractEvidence,
   },
   {
     id: 'worker.config.staticAssets',
