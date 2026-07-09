@@ -26,7 +26,18 @@ function sourceExtension(language: ProjectLanguage) {
 }
 
 function renderGitignore() {
-  return ['node_modules/', '.wrangler/', '.dev.vars', 'worker-configuration.d.ts', 'dist/', 'coverage/', ''].join('\n');
+  return [
+    'node_modules/',
+    '.wrangler/',
+    '.delivery/',
+    '.dev.vars*',
+    '.env*',
+    'worker-configuration.d.ts',
+    '*.cpuprofile',
+    'dist/',
+    'coverage/',
+    '',
+  ].join('\n');
 }
 
 function renderDevVarsExample(profiles: ProjectProfile[]) {
@@ -40,9 +51,9 @@ function renderTsConfig() {
     {
       compilerOptions: {
         target: 'ES2022',
-        module: 'ES2022',
+        module: 'ESNext',
         moduleResolution: 'Bundler',
-        lib: ['ES2022'],
+        lib: ['ES2022', 'WebWorker'],
         types: ['node'],
         strict: true,
         noEmit: true,

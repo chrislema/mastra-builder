@@ -11,6 +11,7 @@ import {
   validateMaterializedScaffold,
   workerToolchainVersions,
 } from '../../src/mastra/delivery-engine/project-factory/index.ts';
+import { workerPackageScaffoldGaps } from '../../src/mastra/delivery-engine/worker-hygiene.ts';
 
 function fileContent(scaffold: ReturnType<typeof renderProjectScaffold>, path: string) {
   const file = scaffold.files.find((candidate) => candidate.path === path);
@@ -96,6 +97,17 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
   assert.deepEqual(wrangler.env.staging.ai, wrangler.ai);
   assert.deepEqual(wrangler.env.production.d1_databases, wrangler.d1_databases);
 
+  const tsconfig = JSON.parse(fileContent(scaffold, 'tsconfig.json')) as {
+    compilerOptions: { module: string; lib: string[] };
+  };
+  assert.equal(tsconfig.compilerOptions.module, 'ESNext');
+  assert.deepEqual(tsconfig.compilerOptions.lib, ['ES2022', 'WebWorker']);
+
+  assert.match(fileContent(scaffold, '.gitignore'), /^\.delivery\/$/m);
+  assert.match(fileContent(scaffold, '.gitignore'), /^\.dev\.vars\*$/m);
+  assert.match(fileContent(scaffold, '.gitignore'), /^\.env\*$/m);
+  assert.match(fileContent(scaffold, '.gitignore'), /^\*\.cpuprofile$/m);
+
   const workerSource = fileContent(scaffold, 'src/index.ts');
   assert.match(workerSource, /export interface Env/);
   assert.match(workerSource, /AI: Ai;/);
@@ -169,6 +181,14 @@ test('project factory validates materialized scaffold against the manifest', () 
   rmSync(join(projectFolder, 'test/contracts.test.ts'));
   const driftChecks = validateMaterializedScaffold(projectFolder, scaffold.manifest);
   assert.equal(driftChecks.find((check) => check.check === 'scaffold_generated_files_present')?.passed, false);
+});
+
+test('project factory materialized scaffold passes Worker package hygiene used by release gate', () => {
+  const projectFolder = mkdtempSync(join(tmpdir(), 'project-factory-worker-hygiene-'));
+  const scaffold = renderProjectScaffold({ projectName: 'Worker Hygiene Proof', requestedProfiles: ['worker-workers-ai'] });
+  materializeProjectScaffold(projectFolder, scaffold);
+
+  assert.deepEqual(workerPackageScaffoldGaps(projectFolder), []);
 });
 
 test('generated Vitest config typechecks against the pinned Worker test toolchain', () => {
