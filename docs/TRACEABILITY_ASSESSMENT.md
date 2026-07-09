@@ -38,8 +38,7 @@ This is the active repo-wide loop until explicitly replaced:
 The current cursor is Phase 5: Cloudflare runtime proof. The all-profile Worker
 binding scaffold now has deterministic Wrangler schema and hygiene proof. The
 next loop should close the remaining Cloudflare subclaims without a paid
-delivery rerun: Durable Object decisions, generated scripts, local probes, and
-release-gate evidence.
+delivery rerun: generated scripts, local probes, and release-gate evidence.
 
 ## Traceability Assessment Trigger
 
@@ -144,7 +143,8 @@ If a feature claims to generate working software, Level 1 is not enough.
 | Closed | Source-declared custom domain routes | Custom domains are in Chris's Worker deployment scope, but should only affect config when source docs or intent declare exact domains. | `source-policy.ts`, `planner-prompt-policy.ts`, `project-factory/wrangler-config.ts` | source policy `customDomains`, planner policy line, generated production `routes` entries with `custom_domain: true` | `workflow-policy.test.ts`, `project-factory.test.ts`, full test suite, `npm run typecheck`, custom-domain generated scaffold `workerConfigHygieneGaps`, `npm run typecheck`, and `npm test` | Closed in this checkpoint; exact custom domains are normalized from source docs/intent, production-only custom-domain routes are emitted, staging remains route-neutral, and a fresh custom-domain scaffold has zero config hygiene gaps. |
 | Closed | Cloudflare binding profile schema and hygiene proof | Worker-first profiles for Workers AI, D1, KV, R2, Workers Workflows, Static Assets, and Wrangler env mirrors must compose in one generated scaffold and match the installed Wrangler toolchain. | `project-factory/profiles.ts`, `project-factory/files.ts`, `project-factory/wrangler-config.ts`, `worker-hygiene.ts` | generated `wrangler.jsonc`, `src/index.ts`, scaffold manifest binding map, generated environment mirrors | `project-factory.test.ts` materializes an all-profile scaffold, validates `wrangler.jsonc` against `node_modules/wrangler/config-schema.json` with AJV, runs `workerConfigHygieneGaps`, runs `validateMaterializedScaffold`, full test suite, and `npm run typecheck` | Closed in this checkpoint; the combined scaffold now proves schema-valid Wrangler config, top-level/staging/production binding mirrors, Env binding alignment, and scaffold validation for AI, D1, KV, R2, Workflows, and Static Assets without a paid delivery run. |
 | Closed | Pages exception scope guard | Pages Functions are allowed only when source docs require Pages, but the deterministic scaffold baseline must not pretend to support Pages runtime output. | `source-policy.ts`, `planning/pages-policy.ts`, `scaffold-workflow.ts`, README operator scope | source policy `pagesRequired`, task-plan Pages hygiene, scaffold fail-fast error, no Worker scaffold written for explicit Pages source | `workflow-policy.test.ts`, `project-factory.test.ts`, `project-factory-fixtures.test.ts`, `scaffold-workflow.test.ts`, full test suite, and `npm run typecheck` | Closed in this checkpoint; Pages remains a source-gated planning/scoring exception, and explicit Pages projects now fail fast at the Worker-only deterministic scaffold boundary until a dedicated Pages scaffold and runtime proof are intentionally added. |
-| P1 | Cloudflare runtime proof | Worker-first Cloudflare policy must be executable, not only structurally asserted. | project factory, Cloudflare profile policy, Worker config/package hygiene, release-gate evidence planner | generated Worker project config, bindings, scripts, tests, local evidence plans, release gate | Existing Cloudflare unit fixtures plus next repo-wide runtime proof audit. | Next loop: map Durable Object scope decisions, generated scripts, local probes, and release-gate evidence to concrete verifiers or explicit out-of-scope decisions. |
+| Closed | Durable Object scope and hygiene proof | Durable Objects are a Worker architecture choice for real-time coordination/stateful connections, but not a deterministic scaffold profile in Chris's default Worker harness. If a task introduces DO config, binding names must align across Wrangler config, environments, and Env. | `cloudflare-evals.ts`, `skills/select-cloudflare-components/SKILL.md`, `worker-hygiene.ts`, task-boundary hygiene | Cloudflare architecture eval fixture, generated task-level `durable_objects.bindings`, `Env` `DurableObjectNamespace`, env mirrors | `scorers.test.ts`, Cloudflare eval fixtures/gates, `workflow-policy.test.ts` DO binding-alignment regression, full test suite, and `npm run typecheck` | Closed in this checkpoint; DO remains an architecture/scorer/task-level capability rather than a project-factory scaffold claim, and Worker config hygiene now explicitly catches and accepts DO binding alignment. |
+| P1 | Cloudflare runtime proof | Worker-first Cloudflare policy must be executable, not only structurally asserted. | project factory, Cloudflare profile policy, Worker config/package hygiene, release-gate evidence planner | generated Worker project config, bindings, scripts, tests, local evidence plans, release gate | Existing Cloudflare unit fixtures plus next repo-wide runtime proof audit. | Next loop: map generated scripts, local probes, and release-gate evidence to concrete verifiers or explicit out-of-scope decisions. |
 
 ## Completed Checkpoints
 
@@ -189,6 +189,9 @@ If a feature claims to generate working software, Level 1 is not enough.
   Worker-only deterministic scaffold boundary instead of writing a misleading
   standalone Worker scaffold; Pages remains a planning/scoring exception until
   a dedicated Pages scaffold and runtime proof exist.
+- this checkpoint: Clarified Durable Objects as an architecture/scorer/task-level
+  capability, not a deterministic scaffold profile, and added Worker config
+  hygiene coverage for DO binding alignment.
 
 ## Ordered Repo-Wide Pass
 

@@ -7428,6 +7428,66 @@ test('Worker config hygiene aligns Cloudflare binding names with Env declaration
   assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
 });
 
+test('Worker config hygiene aligns Durable Object binding names with Env declarations', () => {
+  const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-do-binding-align-'));
+  mkdirSync(join(repoPath, 'src'), { recursive: true });
+  writeFileSync(join(repoPath, 'src/index.ts'), 'export default { fetch: () => new Response("ok") };\n');
+  const [task] = taskPlan([{ depends_on: [], owned_surfaces: ['wrangler.jsonc'] }]).tasks;
+
+  writeFileSync(
+    join(repoPath, 'src', 'env.ts'),
+    [
+      'export interface Env {',
+      '  ROOM_OBJECT: DurableObjectNamespace<RoomObject>;',
+      '}',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      withWorkerDeploymentEnvironments({
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'room-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        durable_objects: {
+          bindings: [{ name: 'ROOMS', class_name: 'RoomObject' }],
+        },
+        migrations: [{ tag: 'v1', new_sqlite_classes: ['RoomObject'] }],
+      }),
+      null,
+      2,
+    ),
+  );
+
+  assert.match(workerConfigHygieneGaps(repoPath, task).join('\n'), /ROOM_OBJECT.*durable_object binding/);
+
+  writeFileSync(
+    join(repoPath, 'wrangler.jsonc'),
+    JSON.stringify(
+      withWorkerDeploymentEnvironments({
+        $schema: './node_modules/wrangler/config-schema.json',
+        name: 'room-worker',
+        main: 'src/index.ts',
+        compatibility_date: currentCompatibilityDate(),
+        compatibility_flags: ['nodejs_compat'],
+        observability: { enabled: true, head_sampling_rate: 1 },
+        durable_objects: {
+          bindings: [{ name: 'ROOM_OBJECT', class_name: 'RoomObject' }],
+        },
+        migrations: [{ tag: 'v1', new_sqlite_classes: ['RoomObject'] }],
+      }),
+      null,
+      2,
+    ),
+  );
+
+  assert.deepEqual(workerEnvBindingAlignmentGaps(repoPath), []);
+  assert.deepEqual(workerConfigHygieneGaps(repoPath, task), []);
+});
+
 test('Worker config hygiene requires Workers Static Assets for public UI files', () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'delivery-worker-static-assets-'));
   mkdirSync(join(repoPath, 'src'), { recursive: true });
