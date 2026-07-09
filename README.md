@@ -40,18 +40,21 @@ bundle that happens to run inside Mastra:
 
 `src/mastra/index.ts` registers:
 
-- `deliveryWorkflow` plus native stage workflows: `deliveryPlanningWorkflow`,
+- `deliveryStartWorkflow`, the one-field Studio/API facade, plus `deliveryWorkflow` and
+  native stage workflows: `deliveryPlanningWorkflow`, `deliveryScaffoldWorkflow`,
   `deliveryReviewWorkflow`, `deliveryBuildWorkflow`, `deliveryBuildTaskWorkflow`,
   `deliveryReleaseGateWorkflow`, and `deliveryDeploymentWorkflow`
 - role agents: planner, architect, engineer, designer, tester, deployment advisor, judge
 - delivery state tools for `.delivery/`, including observability persistence/list tools
-- delivery scorers for handoff readiness, workflow completion, rubric floor, judgment
-  pass rate, and deterministic check pass rate
+- delivery scorers for handoff readiness, workflow completion, scaffold readiness, local
+  evidence, model spend, rubric floor, judgment pass rate, deterministic checks, and
+  Cloudflare architecture hygiene
 - `deliveryMemory`, a thread-scoped Mastra working-memory contract for live run coordination
 - delivery processors for repo-bound execution, policy override blocking, evidence-backed
   completion claims, token limiting, Unicode normalization, and secret redaction
 - a dynamic delivery workspace rooted by `requestContext.repoPath`
-- custom route `POST /delivery/run` for starting a resource-scoped delivery workflow run
+- custom routes `GET/POST /delivery/launcher` and `POST /delivery/run` for starting
+  resource-scoped delivery workflow runs
 - storage-backed observability for final delivery run state snapshots and events
 
 The default weather scaffold has been removed.
@@ -80,9 +83,14 @@ npm run build
 npm run dev
 ```
 
-Open the Studio URL printed by `npm run dev`, then run `deliveryWorkflow` from the
-Workflows tab. On Chris's machine this is commonly `http://localhost:4112`, but Mastra may
-choose a different port if another Studio process is already running.
+Open the Studio URL printed by `npm run dev`. On Chris's machine this is commonly
+`http://localhost:4112`, but Mastra may choose a different port if another Studio process
+is already running. For the simplest browser entry point, open the API route
+`/api/delivery/launcher` on that same server and enter only the project folder.
+
+In Studio, use `deliveryStartWorkflow` when you want the facade with one required field:
+`projectFolder`. Use `deliveryWorkflow` only when you intentionally want the full internal
+workflow input surface.
 
 ## Run A Delivery Workflow
 
@@ -109,11 +117,20 @@ curl -X POST http://localhost:4112/api/delivery/run \
 Use the API base URL printed by `npm run dev`; in local Studio output this is usually
 `http://localhost:4112/api`, making the route `/api/delivery/run`.
 
+For a small HTML launcher instead of raw JSON, open:
+
+```text
+http://localhost:4112/api/delivery/launcher
+```
+
+Use the actual host and port printed by `npm run dev`.
+
 Both paths call `deliveryWorkflow.createRun({ resourceId })`, pass
 `requestContext.repoPath`, and include delivery trace metadata. The CLI waits for the native
 workflow result with workflow state by default. The HTTP route uses `startAsync()` and
 returns `{ workflowId, runId, resourceId, status }` immediately so long-running delivery
-builds do not block the request.
+builds do not block the request. CLI runs also write `.delivery/runs/<workflowRunId>.json`
+and `.delivery/runs/latest.json` inside the target project for post-run diagnosis.
 
 ## Workflow Input
 
@@ -163,9 +180,11 @@ New Worker package scripts should match those explicit environments: `scripts.de
 When a target project does use TypeScript Worker source, the scaffold should use Wrangler's
 generated types instead of hand-written Worker runtime types: `scripts.generate-types` runs
 `wrangler types`, `scripts.typecheck` runs `npm run generate-types && tsc --noEmit`, and
-`tsconfig.json` includes `./worker-configuration.d.ts` plus `node`. The release gate also
-requires `wrangler types --check` before package checks, dry-run deploy, startup profiling,
-staging-aware local D1 migrations, and local `wrangler dev --env staging` probes.
+`tsconfig.json` includes `./worker-configuration.d.ts` plus `node`. On a fresh scaffold the
+release gate runs `wrangler types` before package checks when `worker-configuration.d.ts`
+does not exist yet; when generated types already exist, it runs `wrangler types --check`
+before package checks. It then plans dry-run deploy, startup profiling, staging-aware local
+D1 migrations, and local `wrangler dev --env staging` probes.
 During implementation, vanilla JavaScript Worker slices fall back to Wrangler deploy dry-run
 verification when the target project has no explicit `typecheck`, `check`, `test`, or `build`
 script, so the build loop can keep validating Worker bundles without forcing TypeScript.
@@ -253,6 +272,12 @@ The current scorer set covers:
 - build -> tester handoff readiness
 - tester -> native deployment handoff readiness
 - workflow completion
+- deterministic scaffold profile fit
+- scaffold test runtime matrix hygiene
+- scaffold binding completeness
+- vanilla frontend compliance
+- local evidence readiness
+- model spend per completed task
 - lowest rubric judgment score
 - rubric judgment pass rate
 - deterministic check pass rate
@@ -267,7 +292,9 @@ The current scorer set covers:
 The delivery eval suite uses a Mastra Dataset named `delivery-scorecard-regression` with
 `targetType: scorer`, scorer IDs attached as dataset metadata, and stored experiments for CI
 history. Each fixture carries explicit expected scores for every registered delivery scorer,
-with positive and negative coverage for each scorer.
+with positive and negative coverage for each scorer. The eval tests also read back native
+Mastra `scores` rows from the LibSQL `scores` domain for every scorer, so this is a stored
+Mastra eval path rather than only an in-memory assertion.
 
 The Cloudflare architecture eval suite uses a second Mastra Dataset named
 `cloudflare-architecture-regression`. It evaluates content decisions instead of workflow
@@ -284,8 +311,9 @@ direct Wrangler deployment instead of GitHub Actions deployment.
 - trend deltas when `DELIVERY_EVAL_BASELINE` points to a previous report
 
 `npm run eval:cloudflare:gate` does the same for the Cloudflare architecture dataset and
-can write a report to `CLOUDFLARE_EVAL_REPORT`. `npm run ci:delivery` runs both native
-eval gates after typecheck and tests.
+can write a report to `CLOUDFLARE_EVAL_REPORT`. Its tests also prove score rows are
+persisted in the native `scores` domain. `npm run ci:delivery` runs both native eval gates
+after typecheck and tests.
 
 ## Native HITL
 

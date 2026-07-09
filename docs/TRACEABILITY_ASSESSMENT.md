@@ -47,7 +47,14 @@ now prove scorer fixtures, gate thresholds, isolated Mastra experiment runs, and
 native `scores` domain read-back. Observability state, spans/logs, rubric score
 mirroring, and runner reports are covered by deterministic tests.
 
-The current cursor is Phase 7: operator docs and run discipline.
+The Phase 7 deterministic audit is closed. README/operator docs now match
+registered routes, package scripts, Studio facade behavior, source-document
+defaults, Wrangler type-generation behavior, score persistence claims, and run
+journal discipline.
+
+The repo-wide traceability pass has no open P1 rows. The next paid delivery run
+is allowed only when Chris explicitly approves a specific forward-progress
+question.
 
 ## Traceability Assessment Trigger
 
@@ -156,7 +163,7 @@ If a feature claims to generate working software, Level 1 is not enough.
 | Closed | Generated scripts and release-gate command alignment | Generated Worker package scripts and release-gate commands must agree, avoid redundant composite checks, and generate Wrangler types before checking freshness when `worker-configuration.d.ts` is absent. | `project-factory/package-manifest.ts`, `build-deployment-policy.ts`, `release-gate-command-plan.ts`, `evidence/release-gate-evidence.ts` | generated `package.json` scripts, scaffold `validationCommands`, release-gate command plan | `workflow-policy.test.ts` materializes a generated Worker scaffold and checks the release-gate command plan, `project-factory.test.ts`, full test suite, and `npm run typecheck` | Closed in this checkpoint; fresh TypeScript Worker scaffolds now plan `wrangler types` before package checks, existing generated types still use `wrangler types --check`, and generated `check` scripts no longer duplicate `typecheck`/`test` evidence. |
 | Closed | Local runtime probe planning boundary | Local runtime probes must be planned deterministically from Worker config, public assets, health/API routes, and source-gated product routes. Actual `wrangler dev` execution requires a local process that can bind `127.0.0.1`. | `release-gate-runtime-probe-plan.ts`, `release-gate-probes.ts`, `evidence/release-gate-evidence.ts` | `ReleaseGateRuntimeProbePlan`, static asset probes, health probes, short-link/profile/latest-transcript probes | `workflow-policy.test.ts` runtime-probe planner tests, release-gate evidence planner tests, full test suite, `npm run typecheck`, and observed sandbox `listen EPERM` for nested Worker-pool command execution | Closed as a deterministic audit decision; unit tests own probe planning, while live Wrangler listener/runtime evidence is deferred to the next approved local release gate outside the restricted sandbox. |
 | Closed | Evals, scorers, and observability proof | Every scorer/eval/observability claim should map to fixtures, registration, persisted state, score records, and diagnostic reports that a Mastra expert can inspect. | `scorers.ts`, `evals.ts`, `cloudflare-evals.ts`, `observability.ts`, `state-service.ts`, `runner.ts`, Mastra registration | scorer outputs, eval gate reports, native `scores` rows, observability logs/spans/score events, `.delivery` projections, `.delivery/runs/latest.json` | `evals.test.ts` and `cloudflare-evals.test.ts` run isolated Mastra scorer experiments and read back native `scores` rows for every scorer; `observability.test.ts` writes/reads LibSQL observability state and rubric scores; `index-registration.test.ts`; `runner.test.ts`; full test suite; `npm run typecheck` | Closed in this checkpoint; scorer/eval/observability claims are backed by fixture coverage, threshold gate reports, persisted score read-back, storage-backed state diagnostics, and run reports without a paid delivery run. |
-| P1 | Operator docs and run discipline | Operator-facing docs should match actual Studio/CLI commands, source-document defaults, paid-run stop conditions, and run-journal discipline. | README, `docs/RUN_OBSERVATIONS.md`, runner/API schemas, launcher route, package scripts | documented commands, Studio launcher behavior, run observation entries, stop condition wording | Existing README/runner tests plus next Phase 7 audit. | Next loop: map README/operator claims to real package scripts, Studio entrypoints, default inputs, benchmark-run journal requirements, and current stop conditions. |
+| Closed | Operator docs and run discipline | Operator-facing docs should match actual Studio/CLI commands, source-document defaults, paid-run stop conditions, and run-journal discipline. | README, `docs/RUN_OBSERVATIONS.md`, runner/API schemas, launcher route, package scripts | documented commands, Studio launcher behavior, run observation entries, stop condition wording | `operator-docs.test.ts` checks README commands/routes against `package.json` and registered API routes, verifies fresh-vs-existing Wrangler type-generation wording, and fails orphaned run-journal start entries; `runner.test.ts`; full test suite; `npm run typecheck` | Closed in this checkpoint; README reflects the `deliveryStartWorkflow` facade, `/api/delivery/launcher`, CLI/API reports, native score persistence, and current release-gate type-generation behavior, while the run journal no longer has an orphaned Run 9 start entry. |
 
 ## Completed Checkpoints
 
@@ -216,6 +223,10 @@ If a feature claims to generate working software, Level 1 is not enough.
   Mastra score rows for every registered scorer, and tied Phase 6 to
   registration, threshold gate reports, observability storage, and runner report
   tests.
+- this checkpoint: Aligned operator docs with package scripts, registered API
+  routes, Studio facade guidance, CLI/API report behavior, Wrangler type
+  generation, native score persistence, and fixed the misplaced Run 9 journal
+  outcome with a regression test for orphaned started runs.
 
 ## Ordered Repo-Wide Pass
 
@@ -283,11 +294,14 @@ reports.
 - Ensure no next paid run is recommended when a cheap traceability test can
   answer the question first.
 
+Status: closed. README and run-journal discipline are covered by
+`operator-docs.test.ts`, runner schema tests, the active stop condition, and the
+compaction re-entry instructions in this file.
+
 ## Current Stop Condition
 
 Do not run another paid benchmark delivery pass until:
 
-- The active traceability matrix has no P1 rows, or Chris explicitly approves a
-  paid run for a specific forward-progress question.
-- The current P1 row is Phase 7: operator docs and run discipline.
-- The next proof or explicit decision is committed and pushed.
+- Chris explicitly approves a paid run for a specific forward-progress question.
+- `docs/RUN_OBSERVATIONS.md` has a pre-run entry for that question.
+- The next proof, run result, or explicit stop decision is committed and pushed.
