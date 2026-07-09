@@ -162,6 +162,7 @@ test('project factory validates materialized scaffold against the manifest', () 
       ['scaffold_bindings_match', true],
       ['scaffold_test_runtime_matrix_match', true],
       ['scaffold_test_runtime_no_broad_worker_glob', true],
+      ['scaffold_vitest_config_typecheck', true],
     ],
   );
 

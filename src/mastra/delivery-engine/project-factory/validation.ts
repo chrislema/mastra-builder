@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import type { ScaffoldManifest } from './schemas';
 
 export type ScaffoldValidationResult = {
@@ -25,6 +27,73 @@ function containsBinding(value: unknown, binding: string): boolean {
   if ((value as { binding?: unknown }).binding === binding) return true;
   if (Array.isArray(value)) return value.some((item) => containsBinding(item, binding));
   return Object.values(value).some((item) => containsBinding(item, binding));
+}
+
+function projectRootWithValidationToolchain() {
+  const candidates = [
+    process.env.MASTRA_PROJECT_ROOT,
+    process.env.SKILLS_BASE_DIR,
+    process.env.INIT_CWD,
+    process.cwd(),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.map((candidate) => resolve(candidate)).find((candidate) =>
+    existsSync(join(candidate, 'node_modules/typescript/bin/tsc')) &&
+    existsSync(join(candidate, 'node_modules/@cloudflare/vitest-pool-workers')) &&
+    existsSync(join(candidate, 'node_modules/vitest')),
+  );
+}
+
+function validateVitestConfigTypecheck(projectFolder: string): ScaffoldValidationResult {
+  const vitestConfigPath = join(projectFolder, 'vitest.config.ts');
+  if (!existsSync(vitestConfigPath)) return fail('scaffold_vitest_config_typecheck', 'vitest.config.ts is missing.');
+
+  const toolchainRoot = projectRootWithValidationToolchain();
+  if (!toolchainRoot) {
+    return fail(
+      'scaffold_vitest_config_typecheck',
+      'Scaffold validation toolchain is missing; install the pinned project-factory Cloudflare/Vitest dev dependencies.',
+    );
+  }
+
+  const tempProject = mkdtempSync(join(tmpdir(), 'scaffold-vitest-typecheck-'));
+  try {
+    copyFileSync(vitestConfigPath, join(tempProject, 'vitest.config.ts'));
+    symlinkSync(join(toolchainRoot, 'node_modules'), join(tempProject, 'node_modules'), 'dir');
+    writeFileSync(
+      join(tempProject, 'tsconfig.vitest.json'),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: 'ES2022',
+            module: 'ES2022',
+            moduleResolution: 'Bundler',
+            strict: true,
+            skipLibCheck: true,
+            types: ['node'],
+            noEmit: true,
+          },
+          include: ['vitest.config.ts'],
+        },
+        null,
+        2,
+      ),
+    );
+    execFileSync(process.execPath, [join(toolchainRoot, 'node_modules/typescript/bin/tsc'), '--project', 'tsconfig.vitest.json'], {
+      cwd: tempProject,
+      stdio: 'pipe',
+    });
+    return pass('scaffold_vitest_config_typecheck', 'vitest.config.ts typechecks against the pinned Worker test toolchain.');
+  } catch (error) {
+    const commandError = error as { message?: string; stdout?: Buffer; stderr?: Buffer };
+    const diagnostic = [commandError.stdout?.toString(), commandError.stderr?.toString(), commandError.message]
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 1200);
+    return fail('scaffold_vitest_config_typecheck', `vitest.config.ts failed typecheck: ${diagnostic}`);
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+  }
 }
 
 export function validateMaterializedScaffold(projectFolder: string, manifest: ScaffoldManifest): ScaffoldValidationResult[] {
@@ -76,6 +145,7 @@ export function validateMaterializedScaffold(projectFolder: string, manifest: Sc
       ? fail('scaffold_test_runtime_no_broad_worker_glob', 'vitest.config.ts contains a broad test/**/*.test.* glob.')
       : pass('scaffold_test_runtime_no_broad_worker_glob', 'Vitest config avoids broad all-test runtime globs.'),
   );
+  results.push(validateVitestConfigTypecheck(projectFolder));
 
   return results;
 }
