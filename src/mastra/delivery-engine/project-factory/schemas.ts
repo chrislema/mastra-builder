@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { currentWorkerCompatibilityDate } from '../worker-compatibility-date';
 
 export const projectProfileSchema = z.enum([
   'worker-vanilla-js',
@@ -41,7 +42,7 @@ export const projectFactorySourcePolicySchema = z.object({
 
 export const projectFactoryInputSchema = z.object({
   projectName: z.string().min(1).default('worker-app'),
-  compatibilityDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default('2026-07-01'),
+  compatibilityDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default(currentWorkerCompatibilityDate),
   language: projectLanguageSchema.optional(),
   requestedProfiles: z.array(projectProfileSchema).default([]),
   sourceDocuments: z.array(sourceDocumentSchema).default([]),

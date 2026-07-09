@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { normalizeDeliveryPathReference } from './checks';
+import { currentWorkerCompatibilityDate } from './worker-compatibility-date';
 import type { Task } from './workflow-schemas';
 
 export const workerConfigSurfacePaths = ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml'] as const;
@@ -190,14 +191,10 @@ function isoDateParts(value: string) {
   return { year, month, day, time };
 }
 
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 export function workerConfigTaskPacketPolicy() {
   return {
     schema: './node_modules/wrangler/config-schema.json',
-    compatibility_date: todayIsoDate(),
+    compatibility_date: currentWorkerCompatibilityDate(),
     compatibility_flags: ['nodejs_compat'],
     observability: {
       enabled: true,
@@ -469,7 +466,7 @@ export function workersAiBindingGaps(repoPath: string, task?: Task, guards: Work
 
 function workerCompatibilityDateGaps(value: unknown) {
   if (typeof value !== 'string') {
-    return [`compatibility_date is missing; set it to today's date (${todayIsoDate()}) for new Worker projects.`];
+    return [`compatibility_date is missing; set it to today's date (${currentWorkerCompatibilityDate()}) for new Worker projects.`];
   }
 
   const parsed = isoDateParts(value);
@@ -477,16 +474,18 @@ function workerCompatibilityDateGaps(value: unknown) {
     return [`compatibility_date "${value}" is not a valid YYYY-MM-DD date.`];
   }
 
-  const today = isoDateParts(todayIsoDate());
+  const today = isoDateParts(currentWorkerCompatibilityDate());
   if (!today) return [];
 
   const ageDays = Math.floor((today.time - parsed.time) / 86_400_000);
   if (ageDays < 0) {
-    return [`compatibility_date "${value}" is in the future; use today's date (${todayIsoDate()}) or a recent released date.`];
+    return [
+      `compatibility_date "${value}" is in the future; use today's date (${currentWorkerCompatibilityDate()}) or a recent released date.`,
+    ];
   }
   if (ageDays > 30) {
     return [
-      `compatibility_date "${value}" is stale by ${ageDays} days; set it to today's date (${todayIsoDate()}) or a date within the last 30 days.`,
+      `compatibility_date "${value}" is stale by ${ageDays} days; set it to today's date (${currentWorkerCompatibilityDate()}) or a date within the last 30 days.`,
     ];
   }
 

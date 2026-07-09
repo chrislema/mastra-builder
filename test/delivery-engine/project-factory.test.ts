@@ -11,6 +11,7 @@ import {
   validateMaterializedScaffold,
   workerToolchainVersions,
 } from '../../src/mastra/delivery-engine/project-factory/index.ts';
+import { currentWorkerCompatibilityDate } from '../../src/mastra/delivery-engine/worker-compatibility-date.ts';
 import { workerPackageScaffoldGaps } from '../../src/mastra/delivery-engine/worker-hygiene.ts';
 
 function fileContent(scaffold: ReturnType<typeof renderProjectScaffold>, path: string) {
@@ -79,6 +80,7 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
   const wrangler = JSON.parse(fileContent(scaffold, 'wrangler.jsonc')) as {
     ai: { binding: string; remote: boolean };
     assets: { binding: string };
+    compatibility_date: string;
     d1_databases: Array<{ binding: string }>;
     kv_namespaces: Array<{ binding: string }>;
     r2_buckets: Array<{ binding: string }>;
@@ -88,6 +90,7 @@ test('project factory renders a TypeScript Worker scaffold with Cloudflare bindi
       production: Record<string, unknown>;
     };
   };
+  assert.equal(wrangler.compatibility_date, currentWorkerCompatibilityDate());
   assert.deepEqual(wrangler.ai, { binding: 'AI', remote: true });
   assert.deepEqual(wrangler.assets, { directory: './public', binding: 'ASSETS' });
   assert.equal(wrangler.d1_databases[0]?.binding, 'DB');
